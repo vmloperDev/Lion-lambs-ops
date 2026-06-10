@@ -186,87 +186,91 @@ function App() {
         </div>
       </nav>
 
-      <section className="home-hero">
-        <div className="hero-copy">
-          <p>Welcome, Floyd Allen B. Bueno</p>
-          <h1>Manage travel projects with confidence.</h1>
-          <span>
-            Create quotations, invoices, customer records, and travel documents
-            from one clean dashboard.
-          </span>
-          <button type="button" className="create-project-btn">
-            <Plus size={20} />
-            Create New Project
-          </button>
-        </div>
-        <div className="hero-image">
-          <img src={travelBanner} alt="Lion and Lamb travel banner" />
-        </div>
-      </section>
+      <div className="home-body">
+        <section className="home-main">
+          <section className="home-hero">
+            <div className="hero-copy">
+              <p>Welcome, Floyd Allen B. Bueno</p>
+              <h1>Manage travel projects with confidence.</h1>
+              <span>
+                Create quotations, invoices, customer records, and travel
+                documents from one clean dashboard.
+              </span>
+              <button type="button" className="create-project-btn">
+                <Plus size={20} />
+                Create New Project
+              </button>
+            </div>
+            <div className="hero-image">
+              <img src={travelBanner} alt="Lion and Lamb travel banner" />
+            </div>
+          </section>
 
-      <section className="dashboard-grid">
-        <article className="summary-card">
-          <div className="summary-icon blue">
-            <FolderKanban size={22} />
-          </div>
-          <span>Active Projects</span>
-          <strong>12</strong>
-        </article>
-        <article className="summary-card">
-          <div className="summary-icon green">
-            <FileText size={22} />
-          </div>
-          <span>Invoices</span>
-          <strong>8</strong>
-        </article>
-        <article className="summary-card">
-          <div className="summary-icon gold">
-            <Sparkles size={22} />
-          </div>
-          <span>Pending Quotations</span>
-          <strong>4</strong>
-        </article>
-      </section>
-
-      <section className="projects-panel">
-        <div className="section-heading">
-          <div>
-            <p>Previous Project</p>
-            <h2>Recent work</h2>
-          </div>
-          <button type="button">
-            View All
-            <ArrowRight size={17} />
-          </button>
-        </div>
-
-        <div className="project-list">
-          {previousProjects.map((project) => (
-            <article className="project-card" key={project.id}>
-              <div className="project-main">
-                <div className="project-icon">
-                  <FileText size={20} />
-                </div>
-                <div>
-                  <strong>{project.title}</strong>
-                  <span>{project.client}</span>
-                </div>
+          <section className="dashboard-grid">
+            <article className="summary-card">
+              <div className="summary-icon blue">
+                <FolderKanban size={22} />
               </div>
-              <div className="project-meta">
-                <span className="status-pill">{project.status}</span>
-                <span>
-                  <CalendarDays size={15} />
-                  {project.date}
-                </span>
-                <span>
-                  <MapPin size={15} />
-                  {project.amount}
-                </span>
-              </div>
+              <span>Active Projects</span>
+              <strong>12</strong>
             </article>
-          ))}
-        </div>
-      </section>
+            <article className="summary-card">
+              <div className="summary-icon green">
+                <FileText size={22} />
+              </div>
+              <span>Invoices</span>
+              <strong>8</strong>
+            </article>
+            <article className="summary-card">
+              <div className="summary-icon gold">
+                <Sparkles size={22} />
+              </div>
+              <span>Pending Quotations</span>
+              <strong>4</strong>
+            </article>
+          </section>
+        </section>
+
+        <section className="projects-panel">
+          <div className="section-heading">
+            <div>
+              <p>Previous Project</p>
+              <h2>Recent work</h2>
+            </div>
+            <button type="button">
+              View All
+              <ArrowRight size={17} />
+            </button>
+          </div>
+
+          <div className="project-list">
+            {previousProjects.map((project) => (
+              <article className="project-card" key={project.id}>
+                <div className="project-main">
+                  <div className="project-icon">
+                    <FileText size={20} />
+                  </div>
+                  <div>
+                    <strong>{project.title}</strong>
+                    <span>{project.client}</span>
+                  </div>
+                </div>
+                <div className="project-meta">
+                  <span className="status-pill">{project.status}</span>
+                  <span>
+                    <CalendarDays size={15} />
+                    {project.date}
+                  </span>
+                  <span>
+                    <MapPin size={15} />
+                    {project.amount}
+                  </span>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
     </main>
   )
 }
