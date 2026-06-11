@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import {
   createUserWithEmailAndPassword,
   type AuthError,
-  fetchSignInMethodsForEmail,
   onAuthStateChanged,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
@@ -127,9 +126,10 @@ function App() {
     if (code) {
       switch (code) {
         case 'auth/invalid-credential':
-        case 'auth/user-not-found':
         case 'auth/wrong-password':
           return 'Email or password is incorrect.'
+        case 'auth/user-not-found':
+          return 'User does not exist.'
         case 'auth/email-already-in-use':
           return 'That email already has an account.'
         case 'auth/invalid-email':
@@ -216,14 +216,6 @@ function App() {
 
     try {
       setIsAuthLoading(true)
-      const signInMethods = await fetchSignInMethodsForEmail(auth, email)
-
-      if (signInMethods.length === 0) {
-        setAuthError('User does not exist.')
-        setAuthMessage('')
-        return
-      }
-
       await sendPasswordResetEmail(auth, email)
       setAuthError('')
       setAuthMessage('Password reset email sent. Check your inbox.')
