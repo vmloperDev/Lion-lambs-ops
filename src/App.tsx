@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   createUserWithEmailAndPassword,
   type AuthError,
+  fetchSignInMethodsForEmail,
   onAuthStateChanged,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
@@ -215,6 +216,14 @@ function App() {
 
     try {
       setIsAuthLoading(true)
+      const signInMethods = await fetchSignInMethodsForEmail(auth, email)
+
+      if (signInMethods.length === 0) {
+        setAuthError('User does not exist.')
+        setAuthMessage('')
+        return
+      }
+
       await sendPasswordResetEmail(auth, email)
       setAuthError('')
       setAuthMessage('Password reset email sent. Check your inbox.')
