@@ -71,6 +71,18 @@ type BookingFormData = {
   supplier: string
   nettCost: string
   sellingPrice: string
+  paymentMethod: string
+  paymentRecords: string
+  optionDate: string
+  flightDetails: string
+  accommodation: string
+  hotelAddress: string
+  emergencyContact: string
+  inclusions: string
+  exclusions: string
+  itinerary: string
+  specialInstructions: string
+  preparedBy: string
   status: BookingStatus
   notes: string
 }
@@ -105,6 +117,18 @@ const emptyBookingForm: BookingFormData = {
   supplier: '',
   nettCost: '',
   sellingPrice: '',
+  paymentMethod: '',
+  paymentRecords: '',
+  optionDate: '',
+  flightDetails: '',
+  accommodation: '',
+  hotelAddress: '',
+  emergencyContact: '',
+  inclusions: '',
+  exclusions: '',
+  itinerary: '',
+  specialInstructions: '',
+  preparedBy: '',
   status: 'Inquiry',
   notes: '',
 }
@@ -154,6 +178,18 @@ const sampleBookings: BookingRecord[] = previousProjects.map((project) => ({
   supplier: '',
   nettCost: '',
   sellingPrice: project.amount,
+  paymentMethod: '',
+  paymentRecords: '',
+  optionDate: '',
+  flightDetails: '',
+  accommodation: '',
+  hotelAddress: '',
+  emergencyContact: '',
+  inclusions: '',
+  exclusions: '',
+  itinerary: '',
+  specialInstructions: '',
+  preparedBy: '',
   status: project.status === 'Draft' ? 'Inquiry' : (project.status as BookingStatus),
   notes: '',
 }))
@@ -220,6 +256,15 @@ function formatProjectDate(value: string) {
     day: 'numeric',
     year: 'numeric',
   })
+}
+
+function getLines(value: string, fallback: string[]) {
+  const lines = value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  return lines.length > 0 ? lines : fallback
 }
 
 function App() {
@@ -1015,6 +1060,151 @@ function App() {
 
           <section className="form-section">
             <div className="form-section-heading">
+              <p>Invoice</p>
+              <h2>Payment details</h2>
+            </div>
+            <div className="field-grid three">
+              <label>
+                Payment method
+                <input
+                  value={bookingForm.paymentMethod}
+                  onChange={(event) =>
+                    updateBookingField('paymentMethod', event.target.value)
+                  }
+                  placeholder="Bank transfer, cash, GCash"
+                />
+              </label>
+              <label>
+                Option date
+                <input
+                  type="date"
+                  value={bookingForm.optionDate}
+                  onChange={(event) =>
+                    updateBookingField('optionDate', event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Prepared by
+                <input
+                  value={bookingForm.preparedBy}
+                  onChange={(event) =>
+                    updateBookingField('preparedBy', event.target.value)
+                  }
+                  placeholder="Staff name"
+                />
+              </label>
+            </div>
+            <label className="textarea-field">
+              Payment records
+              <textarea
+                value={bookingForm.paymentRecords}
+                onChange={(event) =>
+                  updateBookingField('paymentRecords', event.target.value)
+                }
+                placeholder="One payment update per line, e.g. DP MAR 3 PAID - PHP 40,000"
+              />
+            </label>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>Voucher</p>
+              <h2>Travel confirmation details</h2>
+            </div>
+            <div className="field-grid three">
+              <label>
+                Flight details
+                <input
+                  value={bookingForm.flightDetails}
+                  onChange={(event) =>
+                    updateBookingField('flightDetails', event.target.value)
+                  }
+                  placeholder="CRK-HKG 07:00AM"
+                />
+              </label>
+              <label>
+                Accommodation
+                <input
+                  value={bookingForm.accommodation}
+                  onChange={(event) =>
+                    updateBookingField('accommodation', event.target.value)
+                  }
+                  placeholder="Hotel / resort name"
+                />
+              </label>
+              <label>
+                Emergency contact
+                <input
+                  value={bookingForm.emergencyContact}
+                  onChange={(event) =>
+                    updateBookingField('emergencyContact', event.target.value)
+                  }
+                  placeholder="Emergency contact number"
+                />
+              </label>
+            </div>
+            <label className="textarea-field">
+              Hotel address
+              <textarea
+                value={bookingForm.hotelAddress}
+                onChange={(event) =>
+                  updateBookingField('hotelAddress', event.target.value)
+                }
+                placeholder="Full hotel address for voucher"
+              />
+            </label>
+            <label className="textarea-field">
+              Itinerary
+              <textarea
+                value={bookingForm.itinerary}
+                onChange={(event) => updateBookingField('itinerary', event.target.value)}
+                placeholder="One itinerary note per line"
+              />
+            </label>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>Package</p>
+              <h2>Inclusions and exclusions</h2>
+            </div>
+            <div className="field-grid two">
+              <label className="textarea-field">
+                Inclusions
+                <textarea
+                  value={bookingForm.inclusions}
+                  onChange={(event) =>
+                    updateBookingField('inclusions', event.target.value)
+                  }
+                  placeholder="One inclusion per line"
+                />
+              </label>
+              <label className="textarea-field">
+                Exclusions
+                <textarea
+                  value={bookingForm.exclusions}
+                  onChange={(event) =>
+                    updateBookingField('exclusions', event.target.value)
+                  }
+                  placeholder="One exclusion per line"
+                />
+              </label>
+            </div>
+            <label className="textarea-field">
+              Special instructions
+              <textarea
+                value={bookingForm.specialInstructions}
+                onChange={(event) =>
+                  updateBookingField('specialInstructions', event.target.value)
+                }
+                placeholder="Supplier instructions, voucher reminders, booking notes..."
+              />
+            </label>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
               <p>Notes</p>
               <h2>Remarks</h2>
             </div>
@@ -1149,6 +1339,14 @@ function App() {
                 <strong>{selectedBooking.quotationNo || 'Not assigned'}</strong>
               </article>
               <article>
+                <span>Flight details</span>
+                <strong>{selectedBooking.flightDetails || 'Not provided'}</strong>
+              </article>
+              <article>
+                <span>Accommodation</span>
+                <strong>{selectedBooking.accommodation || 'Not provided'}</strong>
+              </article>
+              <article>
                 <span>Client price</span>
                 <strong>
                   {formatAmount(
@@ -1239,6 +1437,13 @@ function App() {
     const quantity = Number(selectedBooking.quantity) || 1
     const unitPrice = Number(selectedBooking.unitPrice || selectedBooking.sellingPrice) || 0
     const totalPrice = unitPrice * quantity
+    const inclusions = getLines(selectedBooking.inclusions, [
+      'Travel arrangement based on selected package',
+    ])
+    const exclusions = getLines(selectedBooking.exclusions, [
+      'Meals not stated',
+      'Other incidental charges not stated',
+    ])
 
     return (
       <main className="preview-screen">
@@ -1333,6 +1538,25 @@ function App() {
             <strong>RATE SUBJECT TO CHANGE AND AVAILABILITY</strong>
           </section>
 
+          <section className="preview-list-grid">
+            <div>
+              <h2>Inclusions</h2>
+              <ul>
+                {inclusions.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <h2>Exclusions</h2>
+              <ul>
+                {exclusions.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          </section>
+
           <section className="quote-filter-warning">
             <ListChecks size={19} />
             <p>
@@ -1365,6 +1589,9 @@ function App() {
     const quantity = Number(selectedBooking.quantity) || 1
     const unitPrice = Number(selectedBooking.unitPrice || selectedBooking.sellingPrice) || 0
     const totalPrice = unitPrice * quantity
+    const paymentRecords = getLines(selectedBooking.paymentRecords, [
+      'No payment updates yet.',
+    ])
 
     return (
       <main className="preview-screen">
@@ -1450,15 +1677,19 @@ function App() {
             </div>
             <div className="payment-placeholder">
               <span>Payment Updates</span>
-              <p>Editable payment records will be added here before final PDF.</p>
+              <ul>
+                {paymentRecords.map((record) => (
+                  <li key={record}>{record}</li>
+                ))}
+              </ul>
             </div>
           </section>
 
           <section className="invoice-notes">
             <h2>Note to Customer</h2>
             <p>
-              Payment records, inclusions, exclusions, flight details, and booking
-              policy will be editable in the next invoice phase.
+              Payment method: {selectedBooking.paymentMethod || 'To be advised'}.
+              Flight details: {selectedBooking.flightDetails || 'To be advised'}.
             </p>
           </section>
 
@@ -1552,7 +1783,10 @@ function App() {
             <div>
               <span>Vendor:</span>
               <strong>{selectedBooking.supplier || 'To be assigned'}</strong>
-              <small>Agent: {authUser?.displayName ?? 'LLT Staff'}</small>
+              <small>
+                Agent:{' '}
+                {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
+              </small>
               <small>Contact No.: {selectedBooking.contactNumber || 'N/A'}</small>
             </div>
             <div>
@@ -1577,7 +1811,7 @@ function App() {
             </thead>
             <tbody>
               <tr>
-                <td>Bank Transfer</td>
+                <td>{selectedBooking.paymentMethod || 'Bank Transfer'}</td>
                 <td>{selectedBooking.destination || 'Tours and Transfers'}</td>
                 <td>
                   {selectedBooking.travelStart
@@ -1588,7 +1822,11 @@ function App() {
                       }`
                     : 'TBA'}
                 </td>
-                <td>TBA</td>
+                <td>
+                  {selectedBooking.optionDate
+                    ? formatProjectDate(selectedBooking.optionDate)
+                    : 'TBA'}
+                </td>
               </tr>
             </tbody>
           </table>
@@ -1622,20 +1860,22 @@ function App() {
           <section className="po-notes-grid">
             <div>
               <span>Hotel:</span>
-              <strong>{selectedBooking.packageName || 'N/A'}</strong>
+              <strong>{selectedBooking.accommodation || selectedBooking.packageName || 'N/A'}</strong>
             </div>
             <div>
               <span>Flight Details:</span>
-              <strong>N/A</strong>
+              <strong>{selectedBooking.flightDetails || 'N/A'}</strong>
             </div>
             <div>
               <span>Special Instructions:</span>
-              <strong>{selectedBooking.notes || 'N/A'}</strong>
+              <strong>
+                {selectedBooking.specialInstructions || selectedBooking.notes || 'N/A'}
+              </strong>
             </div>
           </section>
 
           <footer className="po-footer">
-            Prepared By: {authUser?.displayName ?? 'LLT Staff'}
+            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
           </footer>
         </section>
       </main>
@@ -1659,24 +1899,37 @@ function App() {
       )
     }
 
-    const itineraryRows = [
-      {
-        date: selectedBooking.travelStart
-          ? formatProjectDate(selectedBooking.travelStart)
-          : 'Day 1',
-        itinerary:
-          selectedBooking.itemDescription ||
-          `Arrival and start of ${selectedBooking.packageName}`,
-        hotel: selectedBooking.packageName || 'Accommodation to be advised',
-      },
-      {
-        date: selectedBooking.travelEnd
-          ? formatProjectDate(selectedBooking.travelEnd)
-          : 'Final Day',
-        itinerary: 'Free own leisure. Final reminders and departure arrangements.',
-        hotel: selectedBooking.destination || 'Home sweet home',
-      },
-    ]
+    const itineraryLines = getLines(selectedBooking.itinerary, [
+      selectedBooking.itemDescription ||
+        `Arrival and start of ${selectedBooking.packageName}`,
+      'Free own leisure. Final reminders and departure arrangements.',
+    ])
+    const inclusions = getLines(selectedBooking.inclusions, [
+      'Travel arrangement based on confirmed package',
+      'Accommodation / service details as stated above',
+      'Assistance from Lion and Lamb Travel',
+    ])
+    const exclusions = getLines(selectedBooking.exclusions, [
+      'Meals not stated',
+      'Optional tours or personal expenses',
+      'Other incidental charges not stated',
+    ])
+    const itineraryRows = itineraryLines.map((line, index) => ({
+      date:
+        index === 0
+          ? selectedBooking.travelStart
+            ? formatProjectDate(selectedBooking.travelStart)
+            : `Day ${index + 1}`
+          : index === itineraryLines.length - 1 && selectedBooking.travelEnd
+            ? formatProjectDate(selectedBooking.travelEnd)
+            : `Day ${index + 1}`,
+      itinerary: line,
+      hotel:
+        selectedBooking.hotelAddress ||
+        selectedBooking.accommodation ||
+        selectedBooking.destination ||
+        'Accommodation to be advised',
+    }))
 
     return (
       <main className="preview-screen">
@@ -1739,14 +1992,19 @@ function App() {
                     }`
                   : 'TBA'}
               </small>
-              <small>Flight Details: TBA</small>
-              <small>Emergency Contact #: {selectedBooking.contactNumber || 'TBA'}</small>
+              <small>Flight Details: {selectedBooking.flightDetails || 'TBA'}</small>
+              <small>
+                Emergency Contact #: {selectedBooking.emergencyContact || 'TBA'}
+              </small>
             </div>
             <div>
               <span>Client Details:</span>
               <strong>Name: {selectedBooking.clientName}</strong>
               <small>Guest Contact Number: {selectedBooking.contactNumber || 'TBA'}</small>
-              <small>Accommodation: {selectedBooking.packageName || 'TBA'}</small>
+              <small>
+                Accommodation:{' '}
+                {selectedBooking.accommodation || selectedBooking.packageName || 'TBA'}
+              </small>
             </div>
           </section>
 
@@ -1773,17 +2031,17 @@ function App() {
             <div>
               <h2>Package Inclusions</h2>
               <ul>
-                <li>Travel arrangement based on confirmed package</li>
-                <li>Accommodation / service details as stated above</li>
-                <li>Assistance from Lion and Lamb Travel</li>
+                {inclusions.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
               </ul>
             </div>
             <div>
               <h2>Package Exclusions</h2>
               <ul>
-                <li>Meals not stated</li>
-                <li>Optional tours or personal expenses</li>
-                <li>Other incidental charges not stated</li>
+                {exclusions.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
               </ul>
             </div>
           </section>
@@ -1792,10 +2050,13 @@ function App() {
             <p>Itinerary may change depending on local weather condition or other unavoidable circumstances.</p>
             <p>Any unused portion for land arrangement is non-refundable.</p>
             <p>All rights reserved by Lion and Lamb Travel if any changes occur without prior notice.</p>
+            {selectedBooking.specialInstructions && (
+              <p>{selectedBooking.specialInstructions}</p>
+            )}
           </section>
 
           <footer className="voucher-footer">
-            Prepared By: {authUser?.displayName ?? 'LLT Staff'}
+            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
           </footer>
         </section>
       </main>

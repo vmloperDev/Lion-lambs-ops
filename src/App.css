@@ -825,6 +825,10 @@ button {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.field-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .field-grid.four {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -1227,6 +1231,33 @@ button {
   margin: 0;
 }
 
+.preview-list-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 20px;
+}
+
+.preview-list-grid > div {
+  padding: 12px;
+  background: #f5f7f8;
+}
+
+.preview-list-grid h2 {
+  margin: 0 0 8px;
+  color: #102a43;
+  font-size: 0.95rem;
+  text-transform: uppercase;
+}
+
+.preview-list-grid ul,
+.payment-placeholder ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 20px;
+}
+
 .invoice-preview {
   width: min(920px, 100%);
   margin: 18px auto 0;
@@ -1379,8 +1410,9 @@ button {
   font-size: 0.84rem;
 }
 
-.payment-placeholder p {
-  margin: 5px 0 0;
+.payment-placeholder p,
+.payment-placeholder li {
+  margin: 0;
   line-height: 1.4;
 }
 
@@ -1896,6 +1928,7 @@ button {
   .voucher-meta,
   .voucher-party-grid,
   .voucher-lists,
+  .preview-list-grid,
   .breakdown-info,
   .breakdown-total-grid {
     grid-template-columns: 1fr;
@@ -1913,6 +1946,7 @@ button {
   }
 
   .field-grid.three,
+  .field-grid.two,
   .field-grid.four {
     grid-template-columns: 1fr 1fr;
   }
@@ -2217,6 +2251,7 @@ button {
   }
 
   .field-grid.three,
+  .field-grid.two,
   .field-grid.four {
     grid-template-columns: 1fr;
   }
