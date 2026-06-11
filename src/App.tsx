@@ -2090,8 +2090,8 @@ function App() {
             <strong>RATE SUBJECT TO CHANGE AND AVAILABILITY</strong>
           </section>
 
-          <section className="preview-list-grid">
-            <div>
+          <section className="preview-list-grid document-checklists">
+            <div className="included-list">
               <h2>Inclusions</h2>
               <ul>
                 {inclusions.map((item) => (
@@ -2099,7 +2099,7 @@ function App() {
                 ))}
               </ul>
             </div>
-            <div>
+            <div className="excluded-list">
               <h2>Exclusions</h2>
               <ul>
                 {exclusions.map((item) => (
@@ -2300,6 +2300,13 @@ function App() {
     const paymentRecords = getLines(selectedBooking.paymentRecords, [
       'No payment updates yet.',
     ])
+    const inclusions = getLines(selectedBooking.inclusions, [
+      'Travel arrangement based on confirmed package',
+    ])
+    const exclusions = getLines(selectedBooking.exclusions, [
+      'Meals not stated',
+      'Other services not mentioned above',
+    ])
 
     return (
       <main className="preview-screen">
@@ -2417,8 +2424,26 @@ function App() {
             </div>
           </section>
 
-          <section className="invoice-notes">
+          <section className="invoice-notes document-checklists">
             <h2>Note to Customer</h2>
+            <div className="invoice-note-grid">
+              <div className="included-list">
+                <strong>Inclusions</strong>
+                <ul>
+                  {inclusions.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="excluded-list">
+                <strong>Exclusions</strong>
+                <ul>
+                  {exclusions.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
             <p>
               Status: {selectedBooking.invoicePaymentStatus || 'Unpaid'}.
               Payment method: {selectedBooking.paymentMethod || 'To be advised'}.
@@ -2429,6 +2454,11 @@ function App() {
               Reference: {selectedBooking.invoiceReference || 'N/A'}.
               Flight details: {selectedBooking.flightDetails || 'To be advised'}.
             </p>
+            <div className="transaction-box">
+              <strong>For faster transactions</strong>
+              <span>Send deposit or payment proof with your booking reference.</span>
+              <span>BDO - OLONGAPO / SHARON R MORINE</span>
+            </div>
           </section>
 
           <section className="quote-filter-warning">
@@ -2784,8 +2814,8 @@ function App() {
             </tbody>
           </table>
 
-          <section className="voucher-lists">
-            <div>
+          <section className="voucher-lists document-checklists">
+            <div className="included-list">
               <h2>Package Inclusions</h2>
               <ul>
                 {inclusions.map((item) => (
@@ -2793,7 +2823,7 @@ function App() {
                 ))}
               </ul>
             </div>
-            <div>
+            <div className="excluded-list">
               <h2>Package Exclusions</h2>
               <ul>
                 {exclusions.map((item) => (
