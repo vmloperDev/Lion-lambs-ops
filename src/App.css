@@ -649,10 +649,170 @@ button {
   color: #137152;
 }
 
+.data-screen {
+  min-height: 100vh;
+  padding: 24px;
+  background: #f3f6fa;
+  color: #102a43;
+}
+
+.data-form {
+  display: grid;
+  gap: 16px;
+  width: min(1180px, 100%);
+  margin: 18px auto 0;
+}
+
+.data-form-header,
+.form-section {
+  border: 1px solid #dfe7f0;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 50px rgba(34, 63, 95, 0.08);
+}
+
+.data-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 22px;
+}
+
+.data-form-header p,
+.form-section-heading p {
+  margin: 0 0 6px;
+  color: #d9961b;
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.data-form-header h1,
+.form-section-heading h2 {
+  margin: 0;
+  color: #102a43;
+}
+
+.data-form-header h1 {
+  font-size: clamp(1.65rem, 3vw, 2.3rem);
+}
+
+.data-form-header span {
+  display: block;
+  max-width: 680px;
+  margin-top: 8px;
+  color: #63758c;
+  line-height: 1.5;
+}
+
+.save-booking-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 46px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 12px;
+  background: #1d64c8;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.form-section {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+
+.internal-section {
+  border-color: #f0d7a4;
+  background: #fffaf0;
+}
+
+.form-section-heading h2 {
+  font-size: 1.2rem;
+}
+
+.field-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.field-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.field-grid.four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.wide-field {
+  grid-column: span 2;
+}
+
+.field-grid label,
+.textarea-field {
+  display: grid;
+  gap: 7px;
+  color: #52667f;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.field-grid input,
+.field-grid select,
+.textarea-field textarea {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #dbe4ee;
+  border-radius: 11px;
+  background: #fff;
+  color: #102a43;
+  font: inherit;
+  outline: 0;
+  padding: 0 12px;
+}
+
+.field-grid input:focus,
+.field-grid select:focus,
+.textarea-field textarea:focus {
+  border-color: #1d64c8;
+  box-shadow: 0 0 0 3px rgba(29, 100, 200, 0.12);
+}
+
+.textarea-field textarea {
+  min-height: 110px;
+  padding: 12px;
+  resize: vertical;
+}
+
+.internal-note {
+  margin: 0;
+  color: #7a5b19;
+  font-size: 0.84rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
 @media (max-width: 900px) {
   .auth-card,
   .home-hero {
     grid-template-columns: 1fr;
+  }
+
+  .data-form-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .field-grid.three,
+  .field-grid.four {
+    grid-template-columns: 1fr 1fr;
   }
 
   .auth-image-panel {
@@ -719,7 +879,8 @@ button {
 
 @media (max-width: 620px) {
   .auth-screen,
-  .home-screen {
+  .home-screen,
+  .data-screen {
     padding: 14px;
   }
 
@@ -815,7 +976,28 @@ button {
   }
 
   .create-project-btn,
-  .section-heading button {
+  .section-heading button,
+  .save-booking-btn {
     width: 100%;
+  }
+
+  .data-form {
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  .data-form-header,
+  .form-section {
+    padding: 14px;
+    border-radius: 14px;
+  }
+
+  .field-grid.three,
+  .field-grid.four {
+    grid-template-columns: 1fr;
+  }
+
+  .wide-field {
+    grid-column: auto;
   }
 }

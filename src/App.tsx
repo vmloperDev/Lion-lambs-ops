@@ -22,9 +22,11 @@ import {
   Plane,
   Plus,
   RefreshCw,
+  Save,
   Search,
   Sparkles,
   UserRound,
+  X,
 } from 'lucide-react'
 import { auth } from './firebase'
 import logo from './assets/brand/logo.png'
@@ -32,10 +34,55 @@ import travelHero from './assets/brand/travel-hero.jpg'
 import travelBanner from './assets/brand/travel-banner.png'
 import './App.css'
 
-type Screen = 'splash' | 'login' | 'signup' | 'verify-email' | 'home'
+type Screen = 'splash' | 'login' | 'signup' | 'verify-email' | 'home' | 'data-form'
 type PasswordStrength = {
   label: 'Weak' | 'Fair' | 'Strong'
   score: 1 | 2 | 3
+}
+type BookingStatus = 'Inquiry' | 'Breakdown' | 'Quotation' | 'Purchase Order' | 'Invoice' | 'Confirmed'
+type BookingFormData = {
+  clientName: string
+  contactNumber: string
+  clientEmail: string
+  packageName: string
+  destination: string
+  travelStart: string
+  travelEnd: string
+  pax: string
+  quotationNo: string
+  itemDescription: string
+  quantity: string
+  unitPrice: string
+  supplier: string
+  nettCost: string
+  sellingPrice: string
+  status: BookingStatus
+  notes: string
+}
+type BookingRecord = BookingFormData & {
+  id: string
+  createdAt: string
+}
+
+const bookingStorageKey = 'lion-lamb-bookings'
+const emptyBookingForm: BookingFormData = {
+  clientName: '',
+  contactNumber: '',
+  clientEmail: '',
+  packageName: '',
+  destination: '',
+  travelStart: '',
+  travelEnd: '',
+  pax: '',
+  quotationNo: '',
+  itemDescription: '',
+  quantity: '1',
+  unitPrice: '',
+  supplier: '',
+  nettCost: '',
+  sellingPrice: '',
+  status: 'Inquiry',
+  notes: '',
 }
 
 const previousProjects = [
@@ -65,6 +112,28 @@ const previousProjects = [
   },
 ]
 
+const sampleBookings: BookingRecord[] = previousProjects.map((project) => ({
+  id: project.id,
+  createdAt: project.date,
+  clientName: project.client,
+  contactNumber: '',
+  clientEmail: '',
+  packageName: project.title,
+  destination: '',
+  travelStart: '',
+  travelEnd: '',
+  pax: '',
+  quotationNo: project.id,
+  itemDescription: project.title,
+  quantity: '1',
+  unitPrice: '',
+  supplier: '',
+  nettCost: '',
+  sellingPrice: project.amount,
+  status: project.status === 'Draft' ? 'Inquiry' : (project.status as BookingStatus),
+  notes: '',
+}))
+
 function getDisplayName(emailAddress: string) {
   const username = emailAddress.split('@')[0] || 'Team Member'
 
@@ -88,6 +157,47 @@ function getPasswordStrength(passwordValue: string): PasswordStrength {
   return { label: 'Weak', score: 1 }
 }
 
+function getStoredBookings() {
+  const storedBookings = window.localStorage.getItem(bookingStorageKey)
+
+  if (!storedBookings) {
+    return sampleBookings
+  }
+
+  try {
+    return JSON.parse(storedBookings) as BookingRecord[]
+  } catch {
+    return sampleBookings
+  }
+}
+
+function formatAmount(value: string) {
+  const amount = Number(value.replace(/[^\d.]/g, ''))
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return 'PHP 0.00'
+  }
+
+  return `PHP ${amount.toLocaleString('en-PH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+}
+
+function formatProjectDate(value: string) {
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return value || 'No date'
+  }
+
+  return date.toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
 function App() {
   const [screen, setScreen] = useState<Screen>('splash')
   const [name, setName] = useState('')
@@ -98,6 +208,8 @@ function App() {
   const [authError, setAuthError] = useState('')
   const [authMessage, setAuthMessage] = useState('')
   const [isAuthLoading, setIsAuthLoading] = useState(true)
+  const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
+  const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
   const passwordStrength = getPasswordStrength(password)
 
   useEffect(() => {
@@ -106,6 +218,10 @@ function App() {
       setIsAuthLoading(false)
     })
   }, [])
+
+  useEffect(() => {
+    window.localStorage.setItem(bookingStorageKey, JSON.stringify(bookings))
+  }, [bookings])
 
   useEffect(() => {
     if (isAuthLoading) {
@@ -298,6 +414,37 @@ function App() {
     setPassword('')
     setConfirmPassword('')
     setScreen('login')
+  }
+
+  function handleNewBooking() {
+    setBookingForm({
+      ...emptyBookingForm,
+      quotationNo: `QT-${new Date().getFullYear()}-${String(bookings.length + 1).padStart(4, '0')}`,
+    })
+    setScreen('data-form')
+  }
+
+  function updateBookingField<Field extends keyof BookingFormData>(
+    field: Field,
+    value: BookingFormData[Field],
+  ) {
+    setBookingForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }))
+  }
+
+  function handleSaveBooking(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    const booking: BookingRecord = {
+      ...bookingForm,
+      id: `BK-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+    }
+
+    setBookings((currentBookings) => [booking, ...currentBookings])
+    setScreen('home')
   }
 
   if (screen === 'splash') {
@@ -555,6 +702,277 @@ function App() {
     )
   }
 
+  if (screen === 'data-form') {
+    return (
+      <main className="data-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Data Gathering</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button type="button" onClick={() => setScreen('home')} title="Close">
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <form className="data-form" onSubmit={handleSaveBooking}>
+          <header className="data-form-header">
+            <div>
+              <p>New booking inquiry</p>
+              <h1>Data Gathering Form</h1>
+              <span>
+                Capture the master details once. Later documents will use only
+                the fields meant for each output.
+              </span>
+            </div>
+            <button type="submit" className="save-booking-btn">
+              <Save size={18} />
+              Save Inquiry
+            </button>
+          </header>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>Client</p>
+              <h2>Client info</h2>
+            </div>
+            <div className="field-grid three">
+              <label>
+                Client name
+                <input
+                  required
+                  value={bookingForm.clientName}
+                  onChange={(event) =>
+                    updateBookingField('clientName', event.target.value)
+                  }
+                  placeholder="Ms. Joanna Pico"
+                />
+              </label>
+              <label>
+                Contact number
+                <input
+                  value={bookingForm.contactNumber}
+                  onChange={(event) =>
+                    updateBookingField('contactNumber', event.target.value)
+                  }
+                  placeholder="09xxxxxxxxx"
+                />
+              </label>
+              <label>
+                Email
+                <input
+                  type="email"
+                  value={bookingForm.clientEmail}
+                  onChange={(event) =>
+                    updateBookingField('clientEmail', event.target.value)
+                  }
+                  placeholder="client@email.com"
+                />
+              </label>
+            </div>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>Travel</p>
+              <h2>Package details</h2>
+            </div>
+            <div className="field-grid three">
+              <label>
+                Package name
+                <input
+                  required
+                  value={bookingForm.packageName}
+                  onChange={(event) =>
+                    updateBookingField('packageName', event.target.value)
+                  }
+                  placeholder="3D2N Clark and Olongapo"
+                />
+              </label>
+              <label>
+                Destination
+                <input
+                  value={bookingForm.destination}
+                  onChange={(event) =>
+                    updateBookingField('destination', event.target.value)
+                  }
+                  placeholder="Clark, Boracay, Hong Kong"
+                />
+              </label>
+              <label>
+                No. of pax
+                <input
+                  value={bookingForm.pax}
+                  onChange={(event) => updateBookingField('pax', event.target.value)}
+                  placeholder="2 adults, 1 infant"
+                />
+              </label>
+              <label>
+                Travel start
+                <input
+                  type="date"
+                  value={bookingForm.travelStart}
+                  onChange={(event) =>
+                    updateBookingField('travelStart', event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Travel end
+                <input
+                  type="date"
+                  value={bookingForm.travelEnd}
+                  onChange={(event) =>
+                    updateBookingField('travelEnd', event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Status
+                <select
+                  value={bookingForm.status}
+                  onChange={(event) =>
+                    updateBookingField('status', event.target.value as BookingStatus)
+                  }
+                >
+                  <option>Inquiry</option>
+                  <option>Breakdown</option>
+                  <option>Quotation</option>
+                  <option>Purchase Order</option>
+                  <option>Invoice</option>
+                  <option>Confirmed</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>Quotation</p>
+              <h2>Client-facing quote basics</h2>
+            </div>
+            <div className="field-grid four">
+              <label>
+                Quotation no.
+                <input
+                  value={bookingForm.quotationNo}
+                  onChange={(event) =>
+                    updateBookingField('quotationNo', event.target.value)
+                  }
+                  placeholder="QTHK26031-04"
+                />
+              </label>
+              <label className="wide-field">
+                Item description
+                <input
+                  required
+                  value={bookingForm.itemDescription}
+                  onChange={(event) =>
+                    updateBookingField('itemDescription', event.target.value)
+                  }
+                  placeholder="3D2N Hong Kong Free and Easy"
+                />
+              </label>
+              <label>
+                Quantity
+                <input
+                  inputMode="numeric"
+                  value={bookingForm.quantity}
+                  onChange={(event) =>
+                    updateBookingField('quantity', event.target.value)
+                  }
+                  placeholder="2"
+                />
+              </label>
+              <label>
+                Unit price
+                <input
+                  inputMode="decimal"
+                  value={bookingForm.unitPrice}
+                  onChange={(event) =>
+                    updateBookingField('unitPrice', event.target.value)
+                  }
+                  placeholder="18888"
+                />
+              </label>
+            </div>
+          </section>
+
+          <section className="form-section internal-section">
+            <div className="form-section-heading">
+              <p>Internal</p>
+              <h2>Supplier and costing</h2>
+            </div>
+            <div className="field-grid three">
+              <label>
+                Supplier / operator
+                <input
+                  value={bookingForm.supplier}
+                  onChange={(event) =>
+                    updateBookingField('supplier', event.target.value)
+                  }
+                  placeholder="Vendor or tour operator"
+                />
+              </label>
+              <label>
+                Nett cost
+                <input
+                  inputMode="decimal"
+                  value={bookingForm.nettCost}
+                  onChange={(event) =>
+                    updateBookingField('nettCost', event.target.value)
+                  }
+                  placeholder="Internal only"
+                />
+              </label>
+              <label>
+                Selling price
+                <input
+                  inputMode="decimal"
+                  value={bookingForm.sellingPrice}
+                  onChange={(event) =>
+                    updateBookingField('sellingPrice', event.target.value)
+                  }
+                  placeholder="Client price"
+                />
+              </label>
+            </div>
+            <p className="internal-note">
+              Internal costing is for breakdown only and must not appear on
+              client-facing quotation or voucher documents.
+            </p>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>Notes</p>
+              <h2>Remarks</h2>
+            </div>
+            <label className="textarea-field">
+              Internal notes / special requests
+              <textarea
+                value={bookingForm.notes}
+                onChange={(event) => updateBookingField('notes', event.target.value)}
+                placeholder="Flight notes, hotel preferences, payment remarks, exclusions, reminders..."
+              />
+            </label>
+          </section>
+        </form>
+      </main>
+    )
+  }
+
+  const activeProjects = bookings.length
+  const invoiceCount = bookings.filter((booking) => booking.status === 'Invoice').length
+  const quotationCount = bookings.filter(
+    (booking) => booking.status === 'Quotation' || booking.status === 'Inquiry',
+  ).length
+
   return (
     <main className="home-screen">
       <nav className="app-nav">
@@ -589,7 +1007,11 @@ function App() {
                 Create quotations, invoices, customer records, and travel
                 documents from one clean dashboard.
               </span>
-              <button type="button" className="create-project-btn">
+              <button
+                type="button"
+                className="create-project-btn"
+                onClick={handleNewBooking}
+              >
                 <Plus size={20} />
                 Create New Project
               </button>
@@ -605,21 +1027,21 @@ function App() {
                 <FolderKanban size={22} />
               </div>
               <span>Active Projects</span>
-              <strong>12</strong>
+              <strong>{activeProjects}</strong>
             </article>
             <article className="summary-card">
               <div className="summary-icon green">
                 <FileText size={22} />
               </div>
               <span>Invoices</span>
-              <strong>8</strong>
+              <strong>{invoiceCount}</strong>
             </article>
             <article className="summary-card">
               <div className="summary-icon gold">
                 <Sparkles size={22} />
               </div>
               <span>Pending Quotations</span>
-              <strong>4</strong>
+              <strong>{quotationCount}</strong>
             </article>
           </section>
         </section>
@@ -627,8 +1049,8 @@ function App() {
         <section className="projects-panel">
           <div className="section-heading">
             <div>
-              <p>Previous Project</p>
-              <h2>Recent work</h2>
+              <p>Data Gathering</p>
+              <h2>Recent inquiries</h2>
             </div>
             <button type="button">
               View All
@@ -637,26 +1059,26 @@ function App() {
           </div>
 
           <div className="project-list">
-            {previousProjects.map((project) => (
-              <article className="project-card" key={project.id}>
+            {bookings.map((booking) => (
+              <article className="project-card" key={booking.id}>
                 <div className="project-main">
                   <div className="project-icon">
                     <FileText size={20} />
                   </div>
                   <div>
-                    <strong>{project.title}</strong>
-                    <span>{project.client}</span>
+                    <strong>{booking.packageName}</strong>
+                    <span>{booking.clientName}</span>
                   </div>
                 </div>
                 <div className="project-meta">
-                  <span className="status-pill">{project.status}</span>
+                  <span className="status-pill">{booking.status}</span>
                   <span>
                     <CalendarDays size={15} />
-                    {project.date}
+                    {formatProjectDate(booking.createdAt)}
                   </span>
                   <span>
                     <MapPin size={15} />
-                    {project.amount}
+                    {formatAmount(booking.sellingPrice || booking.unitPrice)}
                   </span>
                 </div>
               </article>
