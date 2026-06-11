@@ -45,6 +45,7 @@ type Screen =
   | 'home'
   | 'data-form'
   | 'booking-detail'
+  | 'invoice-editor'
   | 'quotation-preview'
   | 'invoice-preview'
   | 'purchase-order-preview'
@@ -74,6 +75,10 @@ type BookingFormData = {
   sellingPrice: string
   paymentMethod: string
   paymentRecords: string
+  invoiceAmountPaid: string
+  invoicePaymentDate: string
+  invoicePaymentStatus: string
+  invoiceReference: string
   optionDate: string
   flightDetails: string
   accommodation: string
@@ -120,6 +125,10 @@ const emptyBookingForm: BookingFormData = {
   sellingPrice: '',
   paymentMethod: '',
   paymentRecords: '',
+  invoiceAmountPaid: '',
+  invoicePaymentDate: '',
+  invoicePaymentStatus: 'Unpaid',
+  invoiceReference: '',
   optionDate: '',
   flightDetails: '',
   accommodation: '',
@@ -181,6 +190,10 @@ const sampleBookings: BookingRecord[] = previousProjects.map((project) => ({
   sellingPrice: project.amount,
   paymentMethod: '',
   paymentRecords: '',
+  invoiceAmountPaid: '',
+  invoicePaymentDate: '',
+  invoicePaymentStatus: 'Unpaid',
+  invoiceReference: '',
   optionDate: '',
   flightDetails: '',
   accommodation: '',
@@ -233,7 +246,7 @@ function getStoredBookings() {
 }
 
 function formatAmount(value?: string) {
-  const amount = Number((value ?? '').replace(/[^\d.]/g, ''))
+  const amount = parseAmount(value)
 
   if (!Number.isFinite(amount) || amount <= 0) {
     return 'PHP 0.00'
@@ -243,6 +256,10 @@ function formatAmount(value?: string) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`
+}
+
+function parseAmount(value?: string) {
+  return Number((value ?? '').replace(/[^\d.]/g, '')) || 0
 }
 
 function formatProjectDate(value: string) {
@@ -280,6 +297,14 @@ function App() {
   const [isAuthLoading, setIsAuthLoading] = useState(true)
   const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
+  const [invoiceForm, setInvoiceForm] = useState({
+    paymentMethod: '',
+    paymentRecords: '',
+    invoiceAmountPaid: '',
+    invoicePaymentDate: '',
+    invoicePaymentStatus: 'Unpaid',
+    invoiceReference: '',
+  })
   const [activeBookingFilter, setActiveBookingFilter] =
     useState<BookingListFilter>('All')
   const [selectedBookingId, setSelectedBookingId] = useState('')
@@ -538,8 +563,50 @@ function App() {
     setScreen('quotation-preview')
   }
 
-  function openInvoicePreview() {
+  function openInvoiceEditor() {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      setScreen('home')
+      return
+    }
+
+    setInvoiceForm({
+      paymentMethod: selectedBooking.paymentMethod || '',
+      paymentRecords: selectedBooking.paymentRecords || '',
+      invoiceAmountPaid: selectedBooking.invoiceAmountPaid || '',
+      invoicePaymentDate: selectedBooking.invoicePaymentDate || '',
+      invoicePaymentStatus: selectedBooking.invoicePaymentStatus || 'Unpaid',
+      invoiceReference: selectedBooking.invoiceReference || '',
+    })
     updateSelectedBookingStatus('Invoice')
+    setScreen('invoice-editor')
+  }
+
+  function updateInvoiceField<Field extends keyof typeof invoiceForm>(
+    field: Field,
+    value: (typeof invoiceForm)[Field],
+  ) {
+    setInvoiceForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }))
+  }
+
+  function handleSaveInvoiceUpdate(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    setBookings((currentBookings) =>
+      currentBookings.map((booking) =>
+        booking.id === selectedBookingId
+          ? {
+              ...booking,
+              ...invoiceForm,
+              status: 'Invoice',
+            }
+          : booking,
+      ),
+    )
     setScreen('invoice-preview')
   }
 
@@ -1080,6 +1147,51 @@ function App() {
                 />
               </label>
               <label>
+                Amount paid
+                <input
+                  value={bookingForm.invoiceAmountPaid}
+                  onChange={(event) =>
+                    updateBookingField('invoiceAmountPaid', event.target.value)
+                  }
+                  placeholder="PHP 0.00"
+                />
+              </label>
+              <label>
+                Payment status
+                <select
+                  value={bookingForm.invoicePaymentStatus}
+                  onChange={(event) =>
+                    updateBookingField('invoicePaymentStatus', event.target.value)
+                  }
+                >
+                  <option>Unpaid</option>
+                  <option>Partially Paid</option>
+                  <option>Paid</option>
+                </select>
+              </label>
+            </div>
+            <div className="field-grid three">
+              <label>
+                Payment date
+                <input
+                  type="date"
+                  value={bookingForm.invoicePaymentDate}
+                  onChange={(event) =>
+                    updateBookingField('invoicePaymentDate', event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Payment reference
+                <input
+                  value={bookingForm.invoiceReference}
+                  onChange={(event) =>
+                    updateBookingField('invoiceReference', event.target.value)
+                  }
+                  placeholder="OR / bank ref / GCash ref"
+                />
+              </label>
+              <label>
                 Option date
                 <input
                   type="date"
@@ -1089,6 +1201,8 @@ function App() {
                   }
                 />
               </label>
+            </div>
+            <div className="field-grid three">
               <label>
                 Prepared by
                 <input
@@ -1389,9 +1503,9 @@ function App() {
                     action.title === 'Quotation'
                       ? openQuotationPreview()
                       : action.title === 'Breakdown'
-                        ? openBreakdownPreview()
+                      ? openBreakdownPreview()
                       : action.title === 'Invoice'
-                        ? openInvoicePreview()
+                        ? openInvoiceEditor()
                         : action.title === 'Purchase Order'
                           ? openPurchaseOrderPreview()
                           : action.title === 'Service Voucher'
@@ -1581,6 +1695,159 @@ function App() {
     )
   }
 
+  if (screen === 'invoice-editor') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Invoice not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    const quantity = Number(selectedBooking.quantity) || 1
+    const unitPrice = parseAmount(selectedBooking.unitPrice || selectedBooking.sellingPrice)
+    const totalPrice = unitPrice * quantity
+    const amountPaid = parseAmount(invoiceForm.invoiceAmountPaid)
+    const balance = Math.max(totalPrice - amountPaid, 0)
+
+    return (
+      <main className="data-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Editable Invoice</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              type="button"
+              onClick={() => setScreen('booking-detail')}
+              title="Back"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <form className="data-form" onSubmit={handleSaveInvoiceUpdate}>
+          <header className="data-form-header">
+            <div>
+              <p>Invoice update</p>
+              <h1>{selectedBooking.packageName}</h1>
+              <span>
+                Edit payment details first. The invoice PDF preview will use
+                this saved payment update.
+              </span>
+            </div>
+            <button type="submit" className="save-booking-btn">
+              <Save size={18} />
+              Save and preview invoice
+            </button>
+          </header>
+
+          <section className="invoice-edit-summary">
+            <article>
+              <span>Total invoice</span>
+              <strong>{formatAmount(String(totalPrice))}</strong>
+            </article>
+            <article>
+              <span>Amount paid</span>
+              <strong>{formatAmount(invoiceForm.invoiceAmountPaid)}</strong>
+            </article>
+            <article>
+              <span>Balance</span>
+              <strong>{formatAmount(String(balance))}</strong>
+            </article>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>Editable invoice</p>
+              <h2>Payment update before PDF</h2>
+            </div>
+            <div className="field-grid three">
+              <label>
+                Payment status
+                <select
+                  value={invoiceForm.invoicePaymentStatus}
+                  onChange={(event) =>
+                    updateInvoiceField('invoicePaymentStatus', event.target.value)
+                  }
+                >
+                  <option>Unpaid</option>
+                  <option>Partially Paid</option>
+                  <option>Paid</option>
+                </select>
+              </label>
+              <label>
+                Amount paid
+                <input
+                  value={invoiceForm.invoiceAmountPaid}
+                  onChange={(event) =>
+                    updateInvoiceField('invoiceAmountPaid', event.target.value)
+                  }
+                  placeholder="PHP 0.00"
+                />
+              </label>
+              <label>
+                Payment date
+                <input
+                  type="date"
+                  value={invoiceForm.invoicePaymentDate}
+                  onChange={(event) =>
+                    updateInvoiceField('invoicePaymentDate', event.target.value)
+                  }
+                />
+              </label>
+            </div>
+            <div className="field-grid two">
+              <label>
+                Payment method
+                <input
+                  value={invoiceForm.paymentMethod}
+                  onChange={(event) =>
+                    updateInvoiceField('paymentMethod', event.target.value)
+                  }
+                  placeholder="Bank transfer, cash, GCash"
+                />
+              </label>
+              <label>
+                Payment reference
+                <input
+                  value={invoiceForm.invoiceReference}
+                  onChange={(event) =>
+                    updateInvoiceField('invoiceReference', event.target.value)
+                  }
+                  placeholder="OR / bank ref / GCash ref"
+                />
+              </label>
+            </div>
+            <label className="textarea-field">
+              Payment records
+              <textarea
+                value={invoiceForm.paymentRecords}
+                onChange={(event) =>
+                  updateInvoiceField('paymentRecords', event.target.value)
+                }
+                placeholder="One payment update per line, e.g. DP MAR 3 PAID - PHP 40,000"
+              />
+            </label>
+          </section>
+        </form>
+      </main>
+    )
+  }
+
   if (screen === 'invoice-preview') {
     const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
 
@@ -1599,8 +1866,10 @@ function App() {
     }
 
     const quantity = Number(selectedBooking.quantity) || 1
-    const unitPrice = Number(selectedBooking.unitPrice || selectedBooking.sellingPrice) || 0
+    const unitPrice = parseAmount(selectedBooking.unitPrice || selectedBooking.sellingPrice)
     const totalPrice = unitPrice * quantity
+    const amountPaid = parseAmount(selectedBooking.invoiceAmountPaid)
+    const balance = Math.max(totalPrice - amountPaid, 0)
     const paymentRecords = getLines(selectedBooking.paymentRecords, [
       'No payment updates yet.',
     ])
@@ -1622,6 +1891,13 @@ function App() {
               title="Print / Save PDF"
             >
               <Printer size={18} />
+            </button>
+            <button
+              type="button"
+              onClick={openInvoiceEditor}
+              title="Edit invoice"
+            >
+              <Save size={18} />
             </button>
             <button
               type="button"
@@ -1657,7 +1933,7 @@ function App() {
             </div>
             <div className="amount-due-box">
               <span>Amount Due</span>
-              <strong>{formatAmount(String(totalPrice))}</strong>
+              <strong>{formatAmount(String(balance))}</strong>
             </div>
           </section>
 
@@ -1694,6 +1970,14 @@ function App() {
               <span>Total</span>
               <strong>{formatAmount(String(totalPrice))}</strong>
             </div>
+            <div>
+              <span>Paid</span>
+              <strong>{formatAmount(selectedBooking.invoiceAmountPaid)}</strong>
+            </div>
+            <div>
+              <span>Balance</span>
+              <strong>{formatAmount(String(balance))}</strong>
+            </div>
             <div className="payment-placeholder">
               <span>Payment Updates</span>
               <ul>
@@ -1707,7 +1991,13 @@ function App() {
           <section className="invoice-notes">
             <h2>Note to Customer</h2>
             <p>
+              Status: {selectedBooking.invoicePaymentStatus || 'Unpaid'}.
               Payment method: {selectedBooking.paymentMethod || 'To be advised'}.
+              Payment date:{' '}
+              {selectedBooking.invoicePaymentDate
+                ? formatProjectDate(selectedBooking.invoicePaymentDate)
+                : 'To be advised'}.
+              Reference: {selectedBooking.invoiceReference || 'N/A'}.
               Flight details: {selectedBooking.flightDetails || 'To be advised'}.
             </p>
           </section>

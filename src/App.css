@@ -881,6 +881,35 @@ button {
   line-height: 1.45;
 }
 
+.invoice-edit-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.invoice-edit-summary article {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid #dfe7f0;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(34, 63, 95, 0.08);
+}
+
+.invoice-edit-summary span {
+  color: #6c7f96;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.invoice-edit-summary strong {
+  color: #257588;
+  font-size: 1.45rem;
+  overflow-wrap: anywhere;
+}
+
 .detail-screen {
   min-height: 100vh;
   padding: 24px;
@@ -2025,6 +2054,10 @@ button {
   .dashboard-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
+  }
+
+  .invoice-edit-summary {
+    grid-template-columns: 1fr;
   }
 
   .booking-tabs {
