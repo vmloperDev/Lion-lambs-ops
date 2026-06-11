@@ -1238,12 +1238,13 @@ button {
 
 .invoice-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 22px;
   align-items: start;
 }
 
-.invoice-header img {
+.invoice-header img,
+.po-header img {
   width: 110px;
   height: 90px;
   object-fit: contain;
@@ -1411,17 +1412,11 @@ button {
 
 .po-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 22px;
   align-items: start;
   border-top: 8px solid #25328a;
   padding-top: 18px;
-}
-
-.po-header img {
-  width: 115px;
-  height: 90px;
-  object-fit: contain;
 }
 
 .po-header div {
@@ -1835,7 +1830,8 @@ button {
     grid-template-columns: 1fr;
   }
 
-  .invoice-header img {
+  .invoice-header img,
+  .po-header img {
     width: 88px;
     height: 70px;
   }
@@ -1863,11 +1859,6 @@ button {
 
   .po-header {
     grid-template-columns: 1fr;
-  }
-
-  .po-header img {
-    width: 88px;
-    height: 70px;
   }
 
   .po-table {

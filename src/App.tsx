@@ -30,6 +30,7 @@ import {
   X,
 } from 'lucide-react'
 import { auth } from './firebase'
+import agencySeal from './assets/brand/agency-seal.png'
 import logo from './assets/brand/logo.png'
 import travelHero from './assets/brand/travel-hero.jpg'
 import travelBanner from './assets/brand/travel-banner.png'
@@ -1380,6 +1381,7 @@ function App() {
               <span>Rizal Ave. Olongapo City, Zambales 2200</span>
               <span>travel_lionlamb@yahoo.com</span>
             </div>
+            <img src={agencySeal} alt="DOT accreditation seal" />
           </header>
 
           <section className="invoice-strip">
@@ -1510,6 +1512,7 @@ function App() {
               <span>travel_lionlamb@yahoo.com</span>
               <span>DOT No: R03 - TTA 013652023</span>
             </div>
+            <img src={agencySeal} alt="DOT accreditation seal" />
           </header>
 
           <h1>Purchase Order</h1>
