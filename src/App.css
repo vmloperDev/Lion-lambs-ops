@@ -288,6 +288,26 @@ button {
   opacity: 0.65;
 }
 
+.verify-actions {
+  display: grid;
+  gap: 12px;
+}
+
+.secondary-auth-btn {
+  min-height: 46px;
+  border: 1px solid #dbe4ee;
+  border-radius: 12px;
+  background: #fff;
+  color: #173a6a;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.secondary-auth-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .login-btn,
 .create-project-btn {
   display: inline-flex;

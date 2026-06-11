@@ -3,6 +3,7 @@ import {
   createUserWithEmailAndPassword,
   type AuthError,
   onAuthStateChanged,
+  sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut,
@@ -20,6 +21,7 @@ import {
   MapPin,
   Plane,
   Plus,
+  RefreshCw,
   Search,
   Sparkles,
   UserRound,
@@ -30,7 +32,7 @@ import travelHero from './assets/brand/travel-hero.jpg'
 import travelBanner from './assets/brand/travel-banner.png'
 import './App.css'
 
-type Screen = 'splash' | 'login' | 'signup' | 'home'
+type Screen = 'splash' | 'login' | 'signup' | 'verify-email' | 'home'
 type PasswordStrength = {
   label: 'Weak' | 'Fair' | 'Strong'
   score: 1 | 2 | 3
@@ -111,7 +113,12 @@ function App() {
     }
 
     const timer = window.setTimeout(() => {
-      setScreen(authUser ? 'home' : 'login')
+      if (!authUser) {
+        setScreen('login')
+        return
+      }
+
+      setScreen(authUser.emailVerified ? 'home' : 'verify-email')
     }, 2600)
 
     return () => window.clearTimeout(timer)
@@ -132,6 +139,8 @@ function App() {
           return 'User does not exist.'
         case 'auth/email-already-in-use':
           return 'That email already has an account.'
+        case 'auth/too-many-requests':
+          return 'Too many attempts. Please wait a moment before trying again.'
         case 'auth/invalid-email':
           return 'Enter a valid email address.'
         case 'auth/missing-email':
@@ -192,14 +201,25 @@ function App() {
         await updateProfile(credential.user, {
           displayName: name.trim() || getDisplayName(email),
         })
-        setAuthUser(auth.currentUser)
+        await sendEmailVerification(credential.user)
+        setAuthUser(credential.user)
+        setAuthMessage('Verification email sent. Check your inbox.')
+        setScreen('verify-email')
       } else {
-        await signInWithEmailAndPassword(auth, email, password)
-      }
+        const credential = await signInWithEmailAndPassword(auth, email, password)
 
-      setAuthError('')
-      setAuthMessage('')
-      setScreen('home')
+        if (!credential.user.emailVerified) {
+          setAuthUser(credential.user)
+          setAuthError('Verify your email before opening the dashboard.')
+          setAuthMessage('')
+          setScreen('verify-email')
+          return
+        }
+
+        setAuthError('')
+        setAuthMessage('')
+        setScreen('home')
+      }
     } catch (error) {
       setAuthError(getAuthErrorMessage(error))
     } finally {
@@ -222,6 +242,52 @@ function App() {
     } catch (error) {
       setAuthError(getAuthErrorMessage(error))
       setAuthMessage('')
+    } finally {
+      setIsAuthLoading(false)
+    }
+  }
+
+  async function handleResendVerification() {
+    if (!auth.currentUser) {
+      setAuthError('Log in again before requesting a new verification email.')
+      setAuthMessage('')
+      setScreen('login')
+      return
+    }
+
+    try {
+      setIsAuthLoading(true)
+      await sendEmailVerification(auth.currentUser)
+      setAuthError('')
+      setAuthMessage('Verification email sent again. Check your inbox.')
+    } catch (error) {
+      setAuthError(getAuthErrorMessage(error))
+      setAuthMessage('')
+    } finally {
+      setIsAuthLoading(false)
+    }
+  }
+
+  async function handleVerificationRefresh() {
+    if (!auth.currentUser) {
+      setScreen('login')
+      return
+    }
+
+    try {
+      setIsAuthLoading(true)
+      await auth.currentUser.reload()
+      const refreshedUser = auth.currentUser
+      setAuthUser(refreshedUser)
+
+      if (refreshedUser?.emailVerified) {
+        setAuthError('')
+        setAuthMessage('')
+        setScreen('home')
+      } else {
+        setAuthError('Email is not verified yet.')
+        setAuthMessage('')
+      }
     } finally {
       setIsAuthLoading(false)
     }
@@ -409,6 +475,79 @@ function App() {
                 <span className="active"></span>
                 <span></span>
               </div>
+            </div>
+          </aside>
+        </section>
+      </main>
+    )
+  }
+
+  if (screen === 'verify-email') {
+    return (
+      <main className="auth-screen">
+        <section className="auth-card">
+          <div className="auth-form-panel">
+            <div className="auth-brand">
+              <img src={logo} alt="Lion and Lamb Travel logo" />
+              <div>
+                <strong>Lion and Lamb Travel</strong>
+                <span>Operations Desk</span>
+              </div>
+            </div>
+
+            <div className="auth-heading">
+              <p>Email verification</p>
+              <h1>Check your inbox</h1>
+              <span>
+                We sent a verification link to {authUser?.email ?? email}. Verify
+                that email before opening the dashboard.
+              </span>
+            </div>
+
+            <div className="verify-actions">
+              {authError && <p className="auth-error">{authError}</p>}
+              {authMessage && <p className="auth-success">{authMessage}</p>}
+
+              <button
+                className="login-btn"
+                type="button"
+                onClick={handleVerificationRefresh}
+                disabled={isAuthLoading}
+              >
+                {isAuthLoading ? 'Checking' : 'I verified my email'}
+                <RefreshCw size={18} />
+              </button>
+
+              <button
+                className="secondary-auth-btn"
+                type="button"
+                onClick={handleResendVerification}
+                disabled={isAuthLoading}
+              >
+                Resend verification email
+              </button>
+
+              <button
+                className="secondary-auth-btn"
+                type="button"
+                onClick={handleLogout}
+                disabled={isAuthLoading}
+              >
+                Use another account
+              </button>
+            </div>
+          </div>
+
+          <aside className="auth-image-panel">
+            <img src={travelHero} alt="Travel destinations collage" />
+            <div className="image-overlay">
+              <div className="floating-icon">
+                <Mail size={26} />
+              </div>
+              <h2>Secure access for the team.</h2>
+              <p>
+                Only verified email accounts can open the operations dashboard.
+              </p>
             </div>
           </aside>
         </section>
