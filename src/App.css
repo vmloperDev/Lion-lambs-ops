@@ -1997,6 +1997,24 @@ button {
   margin: 0;
 }
 
+.voucher-disclaimer {
+  display: grid;
+  gap: 8px;
+  margin-top: 22px;
+  color: #4a5568;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.voucher-disclaimer strong {
+  color: #102a43;
+  text-transform: uppercase;
+}
+
+.voucher-disclaimer p {
+  margin: 0;
+}
+
 .voucher-footer {
   margin-top: 28px;
   color: #52667f;
@@ -2083,16 +2101,18 @@ button {
 }
 
 .breakdown-table td:first-child {
-  width: 180px;
   font-weight: 900;
   text-transform: uppercase;
 }
 
+.breakdown-table td:not(:first-child),
+.breakdown-table th:not(:first-child) {
+  text-align: right;
+}
+
 .breakdown-table td:last-child {
-  width: 160px;
   color: #d94235;
   font-weight: 900;
-  text-align: right;
 }
 
 .breakdown-total-grid {

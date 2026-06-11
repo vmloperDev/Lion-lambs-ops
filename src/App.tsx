@@ -77,10 +77,12 @@ type BookingFormData = {
   travelEnd: string
   pax: string
   quotationNo: string
+  lineItems: string
   itemDescription: string
   quantity: string
   unitPrice: string
   supplier: string
+  supplierContact: string
   nettCost: string
   sellingPrice: string
   paymentMethod: string
@@ -106,6 +108,15 @@ type BookingRecord = BookingFormData & {
   id: string
   createdAt: string
 }
+type BookingLineItem = {
+  description: string
+  quantity: number
+  unitPrice: number
+  nettCost: number
+  total: number
+  nettTotal: number
+  profit: number
+}
 
 const bookingStorageKey = 'lion-lamb-bookings'
 const bookingsCollectionKey = 'bookings'
@@ -128,10 +139,12 @@ const emptyBookingForm: BookingFormData = {
   travelEnd: '',
   pax: '',
   quotationNo: '',
+  lineItems: '',
   itemDescription: '',
   quantity: '1',
   unitPrice: '',
   supplier: '',
+  supplierContact: '',
   nettCost: '',
   sellingPrice: '',
   paymentMethod: '',
@@ -193,10 +206,12 @@ const sampleBookings: BookingRecord[] = previousProjects.map((project) => ({
   travelEnd: '',
   pax: '',
   quotationNo: project.id,
+  lineItems: '',
   itemDescription: project.title,
   quantity: '1',
   unitPrice: '',
   supplier: '',
+  supplierContact: '',
   nettCost: '',
   sellingPrice: project.amount,
   paymentMethod: '',
@@ -281,6 +296,61 @@ function formatAmount(value?: string) {
 
 function parseAmount(value?: string) {
   return Number((value ?? '').replace(/[^\d.]/g, '')) || 0
+}
+
+function parseQuantity(value?: string) {
+  const quantity = Number((value ?? '').replace(/[^\d.]/g, ''))
+
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : 1
+}
+
+function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
+  const parsedItems = getLines(booking.lineItems, []).map((line) => {
+    const [description, quantity, unitPrice, nettCost] = line
+      .split('|')
+      .map((part) => part.trim())
+    const parsedQuantity = parseQuantity(quantity)
+    const parsedUnitPrice = parseAmount(unitPrice)
+    const parsedNettCost = parseAmount(nettCost)
+
+    return {
+      description: description || booking.itemDescription || booking.packageName,
+      quantity: parsedQuantity,
+      unitPrice: parsedUnitPrice,
+      nettCost: parsedNettCost,
+      total: parsedQuantity * parsedUnitPrice,
+      nettTotal: parsedQuantity * parsedNettCost,
+      profit: parsedQuantity * (parsedUnitPrice - parsedNettCost),
+    }
+  })
+
+  if (parsedItems.length > 0) {
+    return parsedItems
+  }
+
+  const quantity = parseQuantity(booking.quantity)
+  const unitPrice = parseAmount(booking.unitPrice || booking.sellingPrice)
+  const nettCost = parseAmount(booking.nettCost)
+
+  return [
+    {
+      description: booking.itemDescription || booking.packageName,
+      quantity,
+      unitPrice,
+      nettCost,
+      total: quantity * unitPrice,
+      nettTotal: quantity * nettCost,
+      profit: quantity * (unitPrice - nettCost),
+    },
+  ]
+}
+
+function sumLineItems(items: BookingLineItem[], field: 'total' | 'nettTotal' | 'profit') {
+  return items.reduce((sum, item) => sum + item[field], 0)
+}
+
+function getBookingClientTotal(booking: BookingFormData) {
+  return sumLineItems(getBookingLineItems(booking), 'total')
 }
 
 function formatProjectDate(value: string) {
@@ -669,7 +739,6 @@ function App() {
   }
 
   function openQuotationPreview() {
-    updateSelectedBookingStatus('Quotation')
     setScreen('quotation-preview')
   }
 
@@ -689,7 +758,6 @@ function App() {
       invoicePaymentStatus: selectedBooking.invoicePaymentStatus || 'Unpaid',
       invoiceReference: selectedBooking.invoiceReference || '',
     })
-    updateSelectedBookingStatus('Invoice')
     setScreen('invoice-editor')
   }
 
@@ -766,17 +834,14 @@ function App() {
   }
 
   function openPurchaseOrderPreview() {
-    updateSelectedBookingStatus('Purchase Order')
     setScreen('purchase-order-preview')
   }
 
   function openVoucherPreview() {
-    updateSelectedBookingStatus('Confirmed')
     setScreen('voucher-preview')
   }
 
   function openBreakdownPreview() {
-    updateSelectedBookingStatus('Breakdown')
     setScreen('breakdown-preview')
   }
 
@@ -1262,7 +1327,9 @@ function App() {
               <label>
                 Quantity
                 <input
-                  inputMode="numeric"
+                  type="number"
+                  min="1"
+                  step="1"
                   value={bookingForm.quantity}
                   onChange={(event) =>
                     updateBookingField('quantity', event.target.value)
@@ -1273,7 +1340,9 @@ function App() {
               <label>
                 Unit price
                 <input
-                  inputMode="decimal"
+                  type="number"
+                  min="0"
+                  step="0.01"
                   value={bookingForm.unitPrice}
                   onChange={(event) =>
                     updateBookingField('unitPrice', event.target.value)
@@ -1282,6 +1351,20 @@ function App() {
                 />
               </label>
             </div>
+            <label className="textarea-field">
+              Line items
+              <textarea
+                value={bookingForm.lineItems}
+                onChange={(event) =>
+                  updateBookingField('lineItems', event.target.value)
+                }
+                placeholder="One item per line: Description | Qty | Client price | Supplier nett"
+              />
+            </label>
+            <p className="field-help">
+              Use line items when quotation, invoice, P.O., or breakdown needs
+              more than one row. Example: Adult package | 4 | 17650 | 15000
+            </p>
           </section>
 
           <section className="form-section internal-section">
@@ -1301,9 +1384,21 @@ function App() {
                 />
               </label>
               <label>
+                Supplier contact
+                <input
+                  value={bookingForm.supplierContact}
+                  onChange={(event) =>
+                    updateBookingField('supplierContact', event.target.value)
+                  }
+                  placeholder="Vendor contact person / number"
+                />
+              </label>
+              <label>
                 Nett cost
                 <input
-                  inputMode="decimal"
+                  type="number"
+                  min="0"
+                  step="0.01"
                   value={bookingForm.nettCost}
                   onChange={(event) =>
                     updateBookingField('nettCost', event.target.value)
@@ -1314,7 +1409,9 @@ function App() {
               <label>
                 Selling price
                 <input
-                  inputMode="decimal"
+                  type="number"
+                  min="0"
+                  step="0.01"
                   value={bookingForm.sellingPrice}
                   onChange={(event) =>
                     updateBookingField('sellingPrice', event.target.value)
@@ -1348,6 +1445,9 @@ function App() {
               <label>
                 Amount paid
                 <input
+                  type="number"
+                  min="0"
+                  step="0.01"
                   value={bookingForm.invoiceAmountPaid}
                   onChange={(event) =>
                     updateBookingField('invoiceAmountPaid', event.target.value)
@@ -1649,7 +1749,7 @@ function App() {
                 <span>Client price</span>
                 <strong>
                   {formatAmount(
-                    selectedBooking.sellingPrice || selectedBooking.unitPrice,
+                    String(getBookingClientTotal(selectedBooking)),
                   )}
                 </strong>
               </article>
@@ -1735,16 +1835,16 @@ function App() {
       )
     }
 
-    const hasClientAmount = Boolean(
-      selectedBooking.sellingPrice || selectedBooking.unitPrice,
-    )
+    const hasClientAmount = sumLineItems(getBookingLineItems(selectedBooking), 'total') > 0
     const documentFolderItems = [
       {
         title: 'Breakdown',
         label: 'Internal sheet',
         description: 'Supplier nett, client price, and estimated profit.',
         requirement: 'Needs supplier nett and client selling price.',
-        ready: Boolean(selectedBooking.nettCost && hasClientAmount),
+        ready:
+          hasClientAmount &&
+          sumLineItems(getBookingLineItems(selectedBooking), 'nettTotal') > 0,
       },
       {
         title: 'Quotation',
@@ -1879,9 +1979,7 @@ function App() {
       )
     }
 
-    const quantity = Number(selectedBooking.quantity) || 1
-    const unitPrice = Number(selectedBooking.unitPrice || selectedBooking.sellingPrice) || 0
-    const totalPrice = unitPrice * quantity
+    const lineItems = getBookingLineItems(selectedBooking)
     const inclusions = getLines(selectedBooking.inclusions, [
       'Travel arrangement based on selected package',
     ])
@@ -1976,12 +2074,14 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>{selectedBooking.itemDescription || selectedBooking.packageName}</td>
-                <td>{quantity}</td>
-                <td>{formatAmount(String(unitPrice))}</td>
-                <td>{formatAmount(String(totalPrice))}</td>
-              </tr>
+              {lineItems.map((item) => (
+                <tr key={item.description}>
+                  <td>{item.description}</td>
+                  <td>{item.quantity}</td>
+                  <td>{formatAmount(String(item.unitPrice))}</td>
+                  <td>{formatAmount(String(item.total))}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
 
@@ -2038,9 +2138,8 @@ function App() {
       )
     }
 
-    const quantity = Number(selectedBooking.quantity) || 1
-    const unitPrice = parseAmount(selectedBooking.unitPrice || selectedBooking.sellingPrice)
-    const totalPrice = unitPrice * quantity
+    const lineItems = getBookingLineItems(selectedBooking)
+    const totalPrice = sumLineItems(lineItems, 'total')
     const amountPaid = parseAmount(invoiceForm.invoiceAmountPaid)
     const balance = Math.max(totalPrice - amountPaid, 0)
 
@@ -2118,6 +2217,9 @@ function App() {
               <label>
                 Amount paid
                 <input
+                  type="number"
+                  min="0"
+                  step="0.01"
                   value={invoiceForm.invoiceAmountPaid}
                   onChange={(event) =>
                     updateInvoiceField('invoiceAmountPaid', event.target.value)
@@ -2191,9 +2293,8 @@ function App() {
       )
     }
 
-    const quantity = Number(selectedBooking.quantity) || 1
-    const unitPrice = parseAmount(selectedBooking.unitPrice || selectedBooking.sellingPrice)
-    const totalPrice = unitPrice * quantity
+    const lineItems = getBookingLineItems(selectedBooking)
+    const totalPrice = sumLineItems(lineItems, 'total')
     const amountPaid = parseAmount(selectedBooking.invoiceAmountPaid)
     const balance = Math.max(totalPrice - amountPaid, 0)
     const paymentRecords = getLines(selectedBooking.paymentRecords, [
@@ -2278,12 +2379,14 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>{selectedBooking.itemDescription || selectedBooking.packageName}</td>
-                <td>{quantity}</td>
-                <td>{formatAmount(String(unitPrice))}</td>
-                <td>{formatAmount(String(totalPrice))}</td>
-              </tr>
+              {lineItems.map((item) => (
+                <tr key={item.description}>
+                  <td>{item.description}</td>
+                  <td>{item.quantity}</td>
+                  <td>{formatAmount(String(item.unitPrice))}</td>
+                  <td>{formatAmount(String(item.total))}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
 
@@ -2357,10 +2460,8 @@ function App() {
       )
     }
 
-    const quantity = Number(selectedBooking.quantity) || 1
-    const unitPrice =
-      Number(selectedBooking.nettCost || selectedBooking.unitPrice) || 0
-    const amount = quantity * unitPrice
+    const lineItems = getBookingLineItems(selectedBooking)
+    const amount = sumLineItems(lineItems, 'nettTotal') || sumLineItems(lineItems, 'total')
     const poNumber = selectedBooking.id.replace('BK-', new Date().getFullYear().toString())
 
     return (
@@ -2429,7 +2530,7 @@ function App() {
                 Agent:{' '}
                 {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
               </small>
-              <small>Contact No.: {selectedBooking.contactNumber || 'N/A'}</small>
+              <small>Contact No.: {selectedBooking.supplierContact || 'N/A'}</small>
             </div>
             <div>
               <span>Client Details:</span>
@@ -2484,13 +2585,20 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>{quantity}</td>
-                <td>{selectedBooking.pax || quantity}</td>
-                <td>{selectedBooking.itemDescription || selectedBooking.packageName}</td>
-                <td>{formatAmount(String(unitPrice))}</td>
-                <td>{formatAmount(String(amount))}</td>
-              </tr>
+              {lineItems.map((item) => {
+                const poUnitPrice = item.nettCost || item.unitPrice
+                const poAmount = item.nettTotal || item.total
+
+                return (
+                  <tr key={item.description}>
+                    <td>{item.quantity}</td>
+                    <td>{selectedBooking.pax || item.quantity}</td>
+                    <td>{item.description}</td>
+                    <td>{formatAmount(String(poUnitPrice))}</td>
+                    <td>{formatAmount(String(poAmount))}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
 
@@ -2697,11 +2805,23 @@ function App() {
 
           <section className="voucher-reminders">
             <p>Itinerary may change depending on local weather condition or other unavoidable circumstances.</p>
+            <p>For any flight schedule change or flight delays, please inform us immediately.</p>
+            <p>Please be informed that whole period quarantine is needed and full charge for any cancellation, amendment, no show, or early check-out may apply.</p>
             <p>Any unused portion for land arrangement is non-refundable.</p>
             <p>All rights reserved by Lion and Lamb Travel if any changes occur without prior notice.</p>
             {selectedBooking.specialInstructions && (
               <p>{selectedBooking.specialInstructions}</p>
             )}
+          </section>
+
+          <section className="voucher-disclaimer">
+            <strong>Disclaimer and Confidentiality Notice</strong>
+            <p>
+              Lion and Lamb Travel arranges travel services through independent
+              vendors such as airlines, accommodation, transportation, tours, and
+              related services. Confirmation vouchers are non-refundable,
+              non-transferable, and subject to supplier rules and availability.
+            </p>
           </section>
 
           <footer className="voucher-footer">
@@ -2729,35 +2849,11 @@ function App() {
       )
     }
 
-    const quantity = Number(selectedBooking.quantity) || 1
-    const nettCost = Number(selectedBooking.nettCost) || 0
-    const sellingPrice =
-      Number(selectedBooking.sellingPrice || selectedBooking.unitPrice) || 0
-    const internalTotal = nettCost * quantity
-    const clientTotal = sellingPrice * quantity
-    const estimatedProfit = clientTotal - internalTotal
-    const breakdownRows = [
-      {
-        service: 'PACKAGE / SERVICE',
-        details: selectedBooking.itemDescription || selectedBooking.packageName,
-        amount: internalTotal,
-      },
-      {
-        service: 'SUPPLIER / OPERATOR',
-        details: selectedBooking.supplier || 'To be assigned',
-        amount: 0,
-      },
-      {
-        service: 'SELLING PRICE',
-        details: 'Client-facing amount',
-        amount: clientTotal,
-      },
-      {
-        service: 'EST. PROFIT',
-        details: 'Selling price minus supplier nett',
-        amount: estimatedProfit,
-      },
-    ]
+    const lineItems = getBookingLineItems(selectedBooking)
+    const quantity = parseQuantity(selectedBooking.quantity)
+    const internalTotal = sumLineItems(lineItems, 'nettTotal')
+    const clientTotal = sumLineItems(lineItems, 'total')
+    const estimatedProfit = sumLineItems(lineItems, 'profit')
 
     return (
       <main className="preview-screen">
@@ -2824,16 +2920,20 @@ function App() {
             <thead>
               <tr>
                 <th>Service</th>
-                <th>Details</th>
-                <th>Amount</th>
+                <th>Qty</th>
+                <th>Supplier Nett</th>
+                <th>Client Price</th>
+                <th>Profit</th>
               </tr>
             </thead>
             <tbody>
-              {breakdownRows.map((row) => (
-                <tr key={row.service}>
-                  <td>{row.service}</td>
-                  <td>{row.details}</td>
-                  <td>{formatAmount(String(row.amount))}</td>
+              {lineItems.map((item) => (
+                <tr key={item.description}>
+                  <td>{item.description}</td>
+                  <td>{item.quantity}</td>
+                  <td>{formatAmount(String(item.nettTotal))}</td>
+                  <td>{formatAmount(String(item.total))}</td>
+                  <td>{formatAmount(String(item.profit))}</td>
                 </tr>
               ))}
             </tbody>
@@ -3046,7 +3146,7 @@ function App() {
                   </span>
                   <span>
                     <MapPin size={15} />
-                    {formatAmount(booking.sellingPrice || booking.unitPrice)}
+                    {formatAmount(String(getBookingClientTotal(booking)))}
                   </span>
                 </div>
               </button>
