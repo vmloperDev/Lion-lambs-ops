@@ -45,6 +45,7 @@ type Screen =
   | 'booking-detail'
   | 'quotation-preview'
   | 'invoice-preview'
+  | 'purchase-order-preview'
 type PasswordStrength = {
   label: 'Weak' | 'Fair' | 'Strong'
   score: 1 | 2 | 3
@@ -491,6 +492,11 @@ function App() {
   function openInvoicePreview() {
     updateSelectedBookingStatus('Invoice')
     setScreen('invoice-preview')
+  }
+
+  function openPurchaseOrderPreview() {
+    updateSelectedBookingStatus('Purchase Order')
+    setScreen('purchase-order-preview')
   }
 
   if (screen === 'splash') {
@@ -1168,7 +1174,9 @@ function App() {
                       ? openQuotationPreview()
                       : action.title === 'Invoice'
                         ? openInvoicePreview()
-                      : updateSelectedBookingStatus(action.status)
+                        : action.title === 'Purchase Order'
+                          ? openPurchaseOrderPreview()
+                          : updateSelectedBookingStatus(action.status)
                   }
                 >
                   <FileText size={19} />
@@ -1443,6 +1451,173 @@ function App() {
               values are hidden.
             </p>
           </section>
+        </section>
+      </main>
+    )
+  }
+
+  if (screen === 'purchase-order-preview') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Purchase order not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    const quantity = Number(selectedBooking.quantity) || 1
+    const unitPrice =
+      Number(selectedBooking.nettCost || selectedBooking.unitPrice) || 0
+    const amount = quantity * unitPrice
+    const poNumber = selectedBooking.id.replace('BK-', new Date().getFullYear().toString())
+
+    return (
+      <main className="preview-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Purchase Order Preview</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              type="button"
+              onClick={() => setScreen('booking-detail')}
+              title="Back"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <section className="po-preview">
+          <header className="po-header">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>LION AND LAMB TRAVEL</strong>
+              <span>BLK #7-17 OLONGAPO CITY PUBLIC MARKET</span>
+              <span>Olongapo City, Philippines 2200</span>
+              <span>travel_lionlamb@yahoo.com</span>
+              <span>DOT No: R03 - TTA 013652023</span>
+            </div>
+          </header>
+
+          <h1>Purchase Order</h1>
+
+          <section className="po-meta-grid">
+            <article>
+              <span>Date</span>
+              <strong>{formatProjectDate(new Date().toISOString())}</strong>
+            </article>
+            <article>
+              <span>Invoice</span>
+              <strong>{selectedBooking.quotationNo || selectedBooking.id}</strong>
+            </article>
+            <article>
+              <span>P.O. No.</span>
+              <strong>{poNumber}</strong>
+            </article>
+          </section>
+
+          <section className="po-party-grid">
+            <div>
+              <span>Vendor:</span>
+              <strong>{selectedBooking.supplier || 'To be assigned'}</strong>
+              <small>Agent: {authUser?.displayName ?? 'LLT Staff'}</small>
+              <small>Contact No.: {selectedBooking.contactNumber || 'N/A'}</small>
+            </div>
+            <div>
+              <span>Client Details:</span>
+              <strong>
+                {selectedBooking.clientName}
+                {selectedBooking.pax ? ` x${selectedBooking.pax}` : ''}
+              </strong>
+              <small>No. of pax: {selectedBooking.pax || 'N/A'}</small>
+              <small>Contact No.: {selectedBooking.contactNumber || 'N/A'}</small>
+            </div>
+          </section>
+
+          <table className="po-table">
+            <thead>
+              <tr>
+                <th>Payment Method</th>
+                <th>Type of Service</th>
+                <th>Travel Date</th>
+                <th>Option Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Bank Transfer</td>
+                <td>{selectedBooking.destination || 'Tours and Transfers'}</td>
+                <td>
+                  {selectedBooking.travelStart
+                    ? `${formatProjectDate(selectedBooking.travelStart)}${
+                        selectedBooking.travelEnd
+                          ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
+                          : ''
+                      }`
+                    : 'TBA'}
+                </td>
+                <td>TBA</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table className="po-table particulars">
+            <thead>
+              <tr>
+                <th>Qty</th>
+                <th># of Pax</th>
+                <th>Particular</th>
+                <th>Unit Price</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>{quantity}</td>
+                <td>{selectedBooking.pax || quantity}</td>
+                <td>{selectedBooking.itemDescription || selectedBooking.packageName}</td>
+                <td>{formatAmount(String(unitPrice))}</td>
+                <td>{formatAmount(String(amount))}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <section className="po-total">
+            <span>Total Amount:</span>
+            <strong>{formatAmount(String(amount))}</strong>
+          </section>
+
+          <section className="po-notes-grid">
+            <div>
+              <span>Hotel:</span>
+              <strong>{selectedBooking.packageName || 'N/A'}</strong>
+            </div>
+            <div>
+              <span>Flight Details:</span>
+              <strong>N/A</strong>
+            </div>
+            <div>
+              <span>Special Instructions:</span>
+              <strong>{selectedBooking.notes || 'N/A'}</strong>
+            </div>
+          </section>
+
+          <footer className="po-footer">
+            Prepared By: {authUser?.displayName ?? 'LLT Staff'}
+          </footer>
         </section>
       </main>
     )
