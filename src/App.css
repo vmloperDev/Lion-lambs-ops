@@ -50,7 +50,7 @@
   place-items: center;
   padding: 24px;
   background:
-    radial-gradient(circle at 20% 20%, rgba(15, 143, 140, 0.2), transparent 28%),
+    radial-gradient(circle at 20% 20%, rgba(37, 117, 136, 0.2), transparent 28%),
     radial-gradient(circle at 80% 70%, rgba(230, 167, 42, 0.18), transparent 30%),
     #e7edf4;
 }
@@ -263,7 +263,7 @@ button {
 .password-row-meta button {
   border: 0;
   background: transparent;
-  color: #0f8f8c;
+  color: #257588;
   cursor: pointer;
   font-weight: 850;
 }
@@ -316,17 +316,17 @@ button {
   gap: 10px;
   min-height: 50px;
   border-radius: 13px;
-  background: #0f8f8c;
+  background: #257588;
   color: #ffffff;
   font-weight: 900;
-  box-shadow: 0 14px 30px rgba(15, 143, 140, 0.24);
+  box-shadow: 0 14px 30px rgba(37, 117, 136, 0.24);
 }
 
 .auth-image-panel {
   position: relative;
   min-height: 100%;
   overflow: hidden;
-  background: #0c5f6b;
+  background: #1b5d6d;
 }
 
 .auth-image-panel > img {
@@ -344,7 +344,7 @@ button {
   padding: 28px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 20px;
-  background: rgba(10, 73, 85, 0.74);
+  background: rgba(27, 93, 109, 0.76);
   color: #fff;
   text-align: center;
   backdrop-filter: blur(10px);
@@ -357,7 +357,7 @@ button {
   height: 62px;
   margin-bottom: 14px;
   border-radius: 20px;
-  background: linear-gradient(135deg, #f3ba43, #0f8f8c);
+  background: linear-gradient(135deg, #f3ba43, #257588);
 }
 
 .image-overlay h2 {
@@ -454,7 +454,7 @@ button {
   width: 42px;
   height: 42px;
   border-radius: 12px;
-  background: #e9f7f6;
+  background: #e8f4f6;
   color: #173a6a;
 }
 
@@ -477,7 +477,7 @@ button {
 
 .hero-copy p {
   margin: 0 0 8px;
-  color: #0f8f8c;
+  color: #257588;
   font-weight: 900;
 }
 
@@ -491,7 +491,7 @@ button {
   height: auto;
   overflow: hidden;
   border-radius: 22px;
-  background: #0c5f6b;
+  background: #1b5d6d;
 }
 
 .hero-image img {
@@ -523,7 +523,7 @@ button {
 }
 
 .summary-icon.blue {
-  background: #0f8f8c;
+  background: #257588;
 }
 
 .summary-icon.green {
@@ -571,7 +571,7 @@ button {
   min-height: 40px;
   padding: 0 13px;
   border-radius: 11px;
-  background: #e9f7f6;
+  background: #e8f4f6;
   color: #173a6a;
   font-weight: 900;
 }
@@ -598,9 +598,9 @@ button {
 }
 
 .booking-tabs button.active {
-  border-color: #0f8f8c;
-  background: #e9f7f6;
-  color: #0d6f6d;
+  border-color: #257588;
+  background: #e8f4f6;
+  color: #1f6576;
 }
 
 .booking-tabs span,
@@ -653,7 +653,7 @@ button {
 }
 
 .empty-list svg {
-  color: #0f8f8c;
+  color: #257588;
 }
 
 .empty-list strong {
@@ -681,8 +681,8 @@ button {
   height: 46px;
   flex: 0 0 auto;
   border-radius: 14px;
-  background: #e9f7f6;
-  color: #0f8f8c;
+  background: #e8f4f6;
+  color: #257588;
 }
 
 .project-main strong {
@@ -786,7 +786,7 @@ button {
   padding: 0 16px;
   border: 0;
   border-radius: 12px;
-  background: #0f8f8c;
+  background: #257588;
   color: #fff;
   cursor: pointer;
   font-weight: 900;
@@ -851,8 +851,8 @@ button {
 .field-grid input:focus,
 .field-grid select:focus,
 .textarea-field textarea:focus {
-  border-color: #0f8f8c;
-  box-shadow: 0 0 0 3px rgba(15, 143, 140, 0.14);
+  border-color: #257588;
+  box-shadow: 0 0 0 3px rgba(37, 117, 136, 0.14);
 }
 
 .textarea-field textarea {
@@ -1081,3 +1081,4 @@ button {
     grid-column: auto;
   }
 }
+
