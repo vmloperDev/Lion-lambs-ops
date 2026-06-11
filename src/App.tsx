@@ -218,7 +218,7 @@ function App() {
       setIsAuthLoading(true)
       await sendPasswordResetEmail(auth, email)
       setAuthError('')
-      setAuthMessage('Password reset email sent. Check your inbox.')
+      setAuthMessage('If an account exists, a reset email will be sent.')
     } catch (error) {
       setAuthError(getAuthErrorMessage(error))
       setAuthMessage('')
