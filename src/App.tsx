@@ -12,6 +12,7 @@ import {
 } from 'firebase/auth'
 import {
   collection,
+  deleteDoc,
   doc,
   onSnapshot,
   orderBy,
@@ -697,6 +698,37 @@ function App() {
     } catch {
       setDataError('Invoice saved locally, but cloud update failed.')
       setScreen('invoice-preview')
+    }
+  }
+
+  async function handleDeleteBooking() {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      setScreen('home')
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${selectedBooking.packageName || 'this project'}? This cannot be undone.`,
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    setBookings((currentBookings) =>
+      currentBookings.filter((booking) => booking.id !== selectedBookingId),
+    )
+
+    try {
+      await deleteDoc(doc(db, bookingsCollectionKey, selectedBookingId))
+      setDataError('')
+    } catch {
+      setDataError('Project deleted locally, but cloud delete failed.')
+    } finally {
+      setSelectedBookingId('')
+      setScreen('home')
     }
   }
 
@@ -1531,22 +1563,31 @@ function App() {
                 <h1>{selectedBooking.packageName}</h1>
                 <span>{selectedBooking.clientName}</span>
               </div>
-              <label>
-                Status
-                <select
-                  value={selectedBooking.status}
-                  onChange={(event) =>
-                    updateSelectedBookingStatus(event.target.value as BookingStatus)
-                  }
+              <div className="detail-controls">
+                <label>
+                  Status
+                  <select
+                    value={selectedBooking.status}
+                    onChange={(event) =>
+                      updateSelectedBookingStatus(event.target.value as BookingStatus)
+                    }
+                  >
+                    <option>Inquiry</option>
+                    <option>Breakdown</option>
+                    <option>Quotation</option>
+                    <option>Purchase Order</option>
+                    <option>Invoice</option>
+                    <option>Confirmed</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="delete-project-btn"
+                  onClick={handleDeleteBooking}
                 >
-                  <option>Inquiry</option>
-                  <option>Breakdown</option>
-                  <option>Quotation</option>
-                  <option>Purchase Order</option>
-                  <option>Invoice</option>
-                  <option>Confirmed</option>
-                </select>
-              </label>
+                  Delete project
+                </button>
+              </div>
             </header>
 
             <div className="detail-grid">
