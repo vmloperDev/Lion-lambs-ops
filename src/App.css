@@ -1896,6 +1896,43 @@ button {
   margin: 0;
 }
 
+@page {
+  size: A4;
+  margin: 12mm;
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+
+  .preview-screen {
+    min-height: auto;
+    padding: 0;
+    background: #fff;
+  }
+
+  .preview-screen .app-nav {
+    display: none;
+  }
+
+  .quotation-preview,
+  .invoice-preview,
+  .po-preview,
+  .voucher-preview,
+  .breakdown-preview {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border-color: #d7e3ea;
+    box-shadow: none;
+  }
+
+  .breakdown-preview {
+    border-color: #1f2937;
+  }
+}
+
 @media (max-width: 900px) {
   .auth-card,
   .home-hero {

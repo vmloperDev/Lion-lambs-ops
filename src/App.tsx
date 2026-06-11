@@ -22,6 +22,7 @@ import {
   MapPin,
   Plane,
   Plus,
+  Printer,
   RefreshCw,
   Save,
   Search,
@@ -231,8 +232,8 @@ function getStoredBookings() {
   }
 }
 
-function formatAmount(value: string) {
-  const amount = Number(value.replace(/[^\d.]/g, ''))
+function formatAmount(value?: string) {
+  const amount = Number((value ?? '').replace(/[^\d.]/g, ''))
 
   if (!Number.isFinite(amount) || amount <= 0) {
     return 'PHP 0.00'
@@ -258,8 +259,8 @@ function formatProjectDate(value: string) {
   })
 }
 
-function getLines(value: string, fallback: string[]) {
-  const lines = value
+function getLines(value: string | undefined, fallback: string[]) {
+  const lines = (value ?? '')
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
@@ -555,6 +556,10 @@ function App() {
   function openBreakdownPreview() {
     updateSelectedBookingStatus('Breakdown')
     setScreen('breakdown-preview')
+  }
+
+  function handlePrintPreview() {
+    window.print()
   }
 
   if (screen === 'splash') {
@@ -1458,6 +1463,13 @@ function App() {
           <div className="nav-actions">
             <button
               type="button"
+              onClick={handlePrintPreview}
+              title="Print / Save PDF"
+            >
+              <Printer size={18} />
+            </button>
+            <button
+              type="button"
               onClick={() => setScreen('booking-detail')}
               title="Back"
             >
@@ -1606,6 +1618,13 @@ function App() {
           <div className="nav-actions">
             <button
               type="button"
+              onClick={handlePrintPreview}
+              title="Print / Save PDF"
+            >
+              <Printer size={18} />
+            </button>
+            <button
+              type="button"
               onClick={() => setScreen('booking-detail')}
               title="Back"
             >
@@ -1739,6 +1758,13 @@ function App() {
             </div>
           </div>
           <div className="nav-actions">
+            <button
+              type="button"
+              onClick={handlePrintPreview}
+              title="Print / Save PDF"
+            >
+              <Printer size={18} />
+            </button>
             <button
               type="button"
               onClick={() => setScreen('booking-detail')}
@@ -1944,6 +1970,13 @@ function App() {
           <div className="nav-actions">
             <button
               type="button"
+              onClick={handlePrintPreview}
+              title="Print / Save PDF"
+            >
+              <Printer size={18} />
+            </button>
+            <button
+              type="button"
               onClick={() => setScreen('booking-detail')}
               title="Back"
             >
@@ -2121,6 +2154,13 @@ function App() {
             </div>
           </div>
           <div className="nav-actions">
+            <button
+              type="button"
+              onClick={handlePrintPreview}
+              title="Print / Save PDF"
+            >
+              <Printer size={18} />
+            </button>
             <button
               type="button"
               onClick={() => setScreen('booking-detail')}
