@@ -257,11 +257,11 @@ function getPasswordStrength(passwordValue: string): PasswordStrength {
   return { label: 'Weak', score: 1 }
 }
 
-function getStoredBookings() {
-  const storedBookings = window.localStorage.getItem(bookingStorageKey)
+function getStoredBookings(storageKey = bookingStorageKey, useSamples = true) {
+  const storedBookings = window.localStorage.getItem(storageKey)
 
   if (!storedBookings) {
-    return sampleBookings
+    return useSamples ? sampleBookings : []
   }
 
   try {
@@ -353,6 +353,10 @@ function getBookingClientTotal(booking: BookingFormData) {
   return sumLineItems(getBookingLineItems(booking), 'total')
 }
 
+function getUserBookingsCollectionPath(userId: string) {
+  return `users/${userId}/${bookingsCollectionKey}`
+}
+
 function formatProjectDate(value: string) {
   const date = new Date(value)
 
@@ -407,13 +411,20 @@ function App() {
   useEffect(() => {
     return onAuthStateChanged(auth, (user: FirebaseUser | null) => {
       setAuthUser(user)
+      if (user?.emailVerified) {
+        setBookings(getStoredBookings(`${bookingStorageKey}-${user.uid}`, false))
+      }
       setIsAuthLoading(false)
     })
   }, [])
 
   useEffect(() => {
-    window.localStorage.setItem(bookingStorageKey, JSON.stringify(bookings))
-  }, [bookings])
+    const userStorageKey = authUser?.uid
+      ? `${bookingStorageKey}-${authUser.uid}`
+      : bookingStorageKey
+
+    window.localStorage.setItem(userStorageKey, JSON.stringify(bookings))
+  }, [authUser?.uid, bookings])
 
   useEffect(() => {
     if (!authUser?.emailVerified) {
@@ -421,7 +432,7 @@ function App() {
     }
 
     const bookingsQuery = query(
-      collection(db, bookingsCollectionKey),
+      collection(db, getUserBookingsCollectionPath(authUser.uid)),
       orderBy('createdAt', 'desc'),
     )
 
@@ -692,10 +703,15 @@ function App() {
     )
 
     try {
-      await setDoc(doc(db, bookingsCollectionKey, booking.id), {
+      if (!authUser) {
+        throw new Error('Missing signed-in user')
+      }
+
+      await setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), booking.id), {
         ...booking,
-        createdBy: authUser?.uid || '',
-        createdByEmail: authUser?.email || '',
+        ownerId: authUser.uid,
+        createdBy: authUser.uid,
+        createdByEmail: authUser.email || '',
         updatedAt: new Date().toISOString(),
       }, { merge: true })
       setDataError('')
@@ -727,7 +743,12 @@ function App() {
     )
 
     if (selectedBookingId) {
-      void setDoc(doc(db, bookingsCollectionKey, selectedBookingId), {
+      if (!authUser) {
+        setDataError('Log in again before updating cloud records.')
+        return
+      }
+
+      void setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId), {
         status,
         updatedAt: new Date().toISOString(),
       }, {
@@ -787,7 +808,11 @@ function App() {
     )
 
     try {
-      await setDoc(doc(db, bookingsCollectionKey, selectedBookingId), {
+      if (!authUser) {
+        throw new Error('Missing signed-in user')
+      }
+
+      await setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId), {
         ...invoiceForm,
         status: 'Invoice',
         updatedAt: new Date().toISOString(),
@@ -823,7 +848,11 @@ function App() {
     )
 
     try {
-      await deleteDoc(doc(db, bookingsCollectionKey, selectedBookingId))
+      if (!authUser) {
+        throw new Error('Missing signed-in user')
+      }
+
+      await deleteDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId))
       setDataError('')
     } catch {
       setDataError('Project deleted locally, but cloud delete failed.')
