@@ -140,7 +140,6 @@ button {
 
 .login-btn,
 .create-project-btn,
-.section-heading button,
 .nav-actions button {
   border: 0;
   cursor: pointer;
@@ -564,23 +563,38 @@ button {
   font-size: 1.6rem;
 }
 
-.section-heading button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 40px;
-  padding: 0 13px;
-  border-radius: 11px;
-  background: #e8f4f6;
-  color: #173a6a;
-  font-weight: 900;
-}
-
 .booking-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 14px;
+}
+
+.booking-search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  margin-bottom: 14px;
+  padding: 0 12px;
+  border: 1px solid #dbe4ee;
+  border-radius: 12px;
+  background: #fff;
+  color: #257588;
+}
+
+.booking-search input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #102a43;
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.booking-search input::placeholder {
+  color: #8b9caf;
 }
 
 .data-alert {
@@ -902,6 +916,14 @@ button {
   line-height: 1.45;
 }
 
+.field-help {
+  margin: -2px 0 0;
+  color: #63758c;
+  font-size: 0.84rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
 .invoice-edit-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1088,28 +1110,12 @@ button {
   padding: 20px;
 }
 
-.folder-open-btn {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-height: 48px;
-  padding: 0 13px;
-  border: 0;
-  border-radius: 13px;
-  background: #257588;
-  color: #fff;
-  cursor: pointer;
-  font-weight: 900;
-  text-align: left;
-}
-
-.document-actions {
+.workspace-actions {
   display: grid;
   gap: 10px;
 }
 
-.document-actions button {
+.workspace-actions button {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -1123,21 +1129,36 @@ button {
   text-align: left;
 }
 
-.document-actions button:hover {
+.workspace-actions button:hover {
   border-color: #257588;
   background: #e8f4f6;
 }
 
-.document-actions button > svg:first-child {
+.workspace-actions button > svg:first-child {
   color: #257588;
 }
 
-.document-actions span {
+.workspace-actions .primary-workspace-action {
+  border-color: #257588;
+  background: #257588;
+  color: #fff;
+}
+
+.workspace-actions .primary-workspace-action svg,
+.workspace-actions .primary-workspace-action small {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.workspace-actions .primary-workspace-action:hover {
+  background: #1f6576;
+}
+
+.workspace-actions span {
   display: grid;
   gap: 3px;
 }
 
-.document-actions small {
+.workspace-actions small {
   color: #6c7f96;
   line-height: 1.35;
 }
@@ -2394,7 +2415,6 @@ button {
   }
 
   .create-project-btn,
-  .section-heading button,
   .save-booking-btn {
     width: 100%;
   }
@@ -2423,7 +2443,7 @@ button {
   }
 
   .folder-badge,
-  .folder-open-btn {
+  .workspace-actions button {
     width: 100%;
   }
 

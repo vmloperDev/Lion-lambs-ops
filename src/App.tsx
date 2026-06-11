@@ -330,6 +330,8 @@ function App() {
   const [activeBookingFilter, setActiveBookingFilter] =
     useState<BookingListFilter>('All')
   const [selectedBookingId, setSelectedBookingId] = useState('')
+  const [editingBookingId, setEditingBookingId] = useState('')
+  const [searchTerm, setSearchTerm] = useState('')
   const passwordStrength = getPasswordStrength(password)
 
   useEffect(() => {
@@ -568,10 +570,24 @@ function App() {
   }
 
   function handleNewBooking() {
+    setEditingBookingId('')
     setBookingForm({
       ...emptyBookingForm,
       quotationNo: `QT-${new Date().getFullYear()}-${String(bookings.length + 1).padStart(4, '0')}`,
     })
+    setScreen('data-form')
+  }
+
+  function handleEditBooking() {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      setScreen('home')
+      return
+    }
+
+    setEditingBookingId(selectedBooking.id)
+    setBookingForm(normalizeBooking(selectedBooking))
     setScreen('data-form')
   }
 
@@ -587,14 +603,23 @@ function App() {
 
   async function handleSaveBooking(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const isEditing = Boolean(editingBookingId)
 
     const booking: BookingRecord = {
       ...bookingForm,
-      id: `BK-${Date.now()}`,
-      createdAt: new Date().toISOString(),
+      id: editingBookingId || `BK-${Date.now()}`,
+      createdAt:
+        bookings.find((currentBooking) => currentBooking.id === editingBookingId)
+          ?.createdAt || new Date().toISOString(),
     }
 
-    setBookings((currentBookings) => [booking, ...currentBookings])
+    setBookings((currentBookings) =>
+      isEditing
+        ? currentBookings.map((currentBooking) =>
+            currentBooking.id === booking.id ? booking : currentBooking,
+          )
+        : [booking, ...currentBookings],
+    )
 
     try {
       await setDoc(doc(db, bookingsCollectionKey, booking.id), {
@@ -602,12 +627,20 @@ function App() {
         createdBy: authUser?.uid || '',
         createdByEmail: authUser?.email || '',
         updatedAt: new Date().toISOString(),
-      })
+      }, { merge: true })
       setDataError('')
-      setScreen('home')
+      setSelectedBookingId(booking.id)
+      setEditingBookingId('')
+      setScreen(isEditing ? 'booking-detail' : 'home')
     } catch {
-      setDataError('Booking saved locally, but cloud save failed.')
-      setScreen('home')
+      setDataError(
+        isEditing
+          ? 'Booking updated locally, but cloud update failed.'
+          : 'Booking saved locally, but cloud save failed.',
+      )
+      setSelectedBookingId(booking.id)
+      setEditingBookingId('')
+      setScreen(isEditing ? 'booking-detail' : 'home')
     }
   }
 
@@ -1037,6 +1070,8 @@ function App() {
   }
 
   if (screen === 'data-form') {
+    const isEditingBooking = Boolean(editingBookingId)
+
     return (
       <main className="data-screen">
         <nav className="app-nav">
@@ -1044,11 +1079,18 @@ function App() {
             <img src={logo} alt="Lion and Lamb Travel logo" />
             <div>
               <strong>Lion and Lamb Travel</strong>
-              <span>Data Gathering</span>
+              <span>{isEditingBooking ? 'Edit Booking' : 'Data Gathering'}</span>
             </div>
           </div>
           <div className="nav-actions">
-            <button type="button" onClick={() => setScreen('home')} title="Close">
+            <button
+              type="button"
+              onClick={() => {
+                setEditingBookingId('')
+                setScreen(isEditingBooking ? 'booking-detail' : 'home')
+              }}
+              title="Close"
+            >
               <X size={18} />
             </button>
           </div>
@@ -1057,16 +1099,17 @@ function App() {
         <form className="data-form" onSubmit={handleSaveBooking}>
           <header className="data-form-header">
             <div>
-              <p>New booking inquiry</p>
-              <h1>Data Gathering Form</h1>
+              <p>{isEditingBooking ? 'Update master record' : 'New inquiry'}</p>
+              <h1>{isEditingBooking ? 'Edit Booking Info' : 'Data Gathering Form'}</h1>
               <span>
-                Capture the master details once. Later documents will use only
-                the fields meant for each output.
+                {isEditingBooking
+                  ? 'Fix client, travel, pricing, supplier, and voucher details from one master record.'
+                  : 'Start with the client inquiry. Later documents will only use the fields meant for each output.'}
               </span>
             </div>
             <button type="submit" className="save-booking-btn">
               <Save size={18} />
-              Save Inquiry
+              {isEditingBooking ? 'Save Changes' : 'Save Inquiry'}
             </button>
           </header>
 
@@ -1183,6 +1226,10 @@ function App() {
                 </select>
               </label>
             </div>
+            <p className="field-help">
+              Status decides which dashboard list this booking appears in.
+              Start with Inquiry, then move it forward as documents are prepared.
+            </p>
           </section>
 
           <section className="form-section">
@@ -1510,34 +1557,6 @@ function App() {
       )
     }
 
-    const documentActions = [
-      {
-        title: 'Breakdown',
-        description: 'Internal supplier nett and costing sheet.',
-        status: 'Breakdown' as BookingStatus,
-      },
-      {
-        title: 'Quotation',
-        description: 'Client-facing price offer and inclusions.',
-        status: 'Quotation' as BookingStatus,
-      },
-      {
-        title: 'Invoice',
-        description: 'Editable payment and billing document.',
-        status: 'Invoice' as BookingStatus,
-      },
-      {
-        title: 'Purchase Order',
-        description: 'Supplier/vendor reservation instruction.',
-        status: 'Purchase Order' as BookingStatus,
-      },
-      {
-        title: 'Service Voucher',
-        description: 'Final confirmed client travel details.',
-        status: 'Confirmed' as BookingStatus,
-      },
-    ]
-
     return (
       <main className="detail-screen">
         <nav className="app-nav">
@@ -1565,7 +1584,7 @@ function App() {
               </div>
               <div className="detail-controls">
                 <label>
-                  Status
+                  Current stage
                   <select
                     value={selectedBooking.status}
                     onChange={(event) =>
@@ -1651,42 +1670,46 @@ function App() {
 
           <aside className="document-panel">
             <div className="document-panel-heading">
-              <p>Document flow</p>
-              <h2>Generate from this record</h2>
+              <p>Next actions</p>
+              <h2>What do you need?</h2>
             </div>
 
-            <button
-              type="button"
-              className="folder-open-btn"
-              onClick={openDocumentFolder}
-            >
-              <FolderKanban size={20} />
-              Open document folder
-              <ArrowRight size={17} />
-            </button>
-
-            <div className="document-actions">
-              {documentActions.map((action) => (
-                <button
-                  key={action.title}
-                  type="button"
-                  onClick={() => openDocumentByTitle(action.title)}
-                >
-                  <FileText size={19} />
-                  <span>
-                    <strong>{action.title}</strong>
-                    <small>{action.description}</small>
-                  </span>
-                  <ArrowRight size={17} />
-                </button>
-              ))}
+            <div className="workspace-actions">
+              <button
+                type="button"
+                className="primary-workspace-action"
+                onClick={openDocumentFolder}
+              >
+                <FolderKanban size={20} />
+                <span>
+                  <strong>Open document folder</strong>
+                  <small>Breakdown, quotation, invoice, P.O., and voucher.</small>
+                </span>
+                <ArrowRight size={17} />
+              </button>
+              <button type="button" onClick={handleEditBooking}>
+                <FileText size={19} />
+                <span>
+                  <strong>Edit booking info</strong>
+                  <small>Fix client, travel, price, supplier, or voucher fields.</small>
+                </span>
+                <ArrowRight size={17} />
+              </button>
+              <button type="button" onClick={openInvoiceEditor}>
+                <FileText size={19} />
+                <span>
+                  <strong>Update invoice payment</strong>
+                  <small>Edit paid amount, balance, date, method, and reference.</small>
+                </span>
+                <ArrowRight size={17} />
+              </button>
             </div>
 
             <div className="workflow-note">
               <ListChecks size={20} />
               <p>
-                Use the folder view to check every filtered document for this
-                booking before printing or saving PDFs.
+                Use the document folder for final previews. It keeps client
+                documents separate from internal breakdown details.
               </p>
             </div>
           </aside>
@@ -1819,7 +1842,7 @@ function App() {
                 <p>{item.description}</p>
                 <small>{item.requirement}</small>
                 <button type="button" onClick={() => openDocumentByTitle(item.title)}>
-                  Open document
+                  {item.title === 'Invoice' ? 'Edit invoice' : 'Open preview'}
                   <ArrowRight size={17} />
                 </button>
               </article>
@@ -2849,9 +2872,27 @@ function App() {
     (booking) => booking.status === 'Quotation' || booking.status === 'Inquiry',
   ).length
   const filteredBookings =
-    activeBookingFilter === 'All'
+    (activeBookingFilter === 'All'
       ? bookings
       : bookings.filter((booking) => booking.status === activeBookingFilter)
+    ).filter((booking) => {
+      const queryText = searchTerm.trim().toLowerCase()
+
+      if (!queryText) {
+        return true
+      }
+
+      return [
+        booking.clientName,
+        booking.packageName,
+        booking.destination,
+        booking.quotationNo,
+        booking.status,
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(queryText)
+    })
   const statusCounts = bookingListFilters.reduce(
     (counts, filter) => ({
       ...counts,
@@ -2874,9 +2915,6 @@ function App() {
           </div>
         </div>
         <div className="nav-actions">
-          <button type="button">
-            <Search size={18} />
-          </button>
           <button type="button" onClick={handleLogout} title="Log out">
             <LogOut size={18} />
           </button>
@@ -2892,10 +2930,10 @@ function App() {
                 {authUser?.displayName ??
                   (authUser?.email ? getDisplayName(authUser.email) : 'Team Member')}
               </p>
-              <h1>Manage travel projects with confidence.</h1>
+              <h1>Track inquiries and booking documents.</h1>
               <span>
-                Create quotations, invoices, customer records, and travel
-                documents from one clean dashboard.
+                Start with data gathering, then prepare filtered documents from
+                the same booking record.
               </span>
               <button
                 type="button"
@@ -2903,7 +2941,7 @@ function App() {
                 onClick={handleNewBooking}
               >
                 <Plus size={20} />
-                Create New Project
+                New Inquiry
               </button>
             </div>
             <div className="hero-image">
@@ -2942,13 +2980,18 @@ function App() {
               <p>Filtered summaries</p>
               <h2>{activeBookingFilter === 'All' ? 'All records' : activeBookingFilter}</h2>
             </div>
-            <button type="button">
-              View All
-              <ArrowRight size={17} />
-            </button>
           </div>
 
           {dataError && <p className="data-alert error">{dataError}</p>}
+
+          <label className="booking-search">
+            <Search size={17} />
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Search client, package, destination, or quotation no."
+            />
+          </label>
 
           <div className="booking-tabs" role="tablist" aria-label="Booking lists">
             {bookingListFilters.map((filter) => (
@@ -2970,10 +3013,11 @@ function App() {
             {filteredBookings.length === 0 && (
               <div className="empty-list">
                 <FileText size={26} />
-                <strong>No records yet</strong>
+                <strong>{searchTerm.trim() ? 'No matching records' : 'No records yet'}</strong>
                 <span>
-                  Saved bookings with this status will appear here after data
-                  gathering.
+                  {searchTerm.trim()
+                    ? 'Try another client, package, destination, or quotation number.'
+                    : 'Saved inquiries with this status will appear here after data gathering.'}
                 </span>
               </div>
             )}
