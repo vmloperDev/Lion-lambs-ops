@@ -1090,6 +1090,143 @@ button {
   font-weight: 900;
 }
 
+.preview-screen {
+  min-height: 100vh;
+  padding: 24px;
+  background: #eef3f6;
+  color: #102a43;
+}
+
+.quotation-preview {
+  width: min(920px, 100%);
+  margin: 18px auto 0;
+  padding: clamp(22px, 4vw, 42px);
+  border: 1px solid #d7e3ea;
+  background: #fff;
+  box-shadow: 0 22px 70px rgba(34, 63, 95, 0.12);
+}
+
+.quote-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 22px;
+  border-top: 10px solid #257588;
+  padding-top: 24px;
+}
+
+.quote-company {
+  display: grid;
+  gap: 5px;
+}
+
+.quote-company strong {
+  color: #061c30;
+  font-size: 1.1rem;
+}
+
+.quote-company span {
+  color: #52667f;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.quote-header img {
+  width: 130px;
+  height: 100px;
+  object-fit: contain;
+}
+
+.quotation-preview > h1 {
+  margin: 12px 0 26px;
+  color: #257588;
+  font-size: clamp(2.2rem, 5vw, 3.2rem);
+  text-align: center;
+}
+
+.quote-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 24px;
+}
+
+.quote-meta-grid article {
+  display: grid;
+  gap: 7px;
+}
+
+.quote-meta-grid span {
+  color: #173a6a;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.quote-meta-grid strong {
+  color: #3c4d61;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.quote-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: 0.92rem;
+}
+
+.quote-table th {
+  border-bottom: 2px solid #257588;
+  color: #257588;
+  text-align: left;
+}
+
+.quote-table th,
+.quote-table td {
+  padding: 10px 8px;
+}
+
+.quote-table tbody tr {
+  background: #f5f7f8;
+}
+
+.quote-table th:not(:first-child),
+.quote-table td:not(:first-child) {
+  text-align: right;
+}
+
+.quote-notes {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  color: #52667f;
+  font-size: 0.88rem;
+}
+
+.quote-notes p {
+  margin: 0;
+}
+
+.quote-notes strong {
+  color: #173a6a;
+}
+
+.quote-filter-warning {
+  display: flex;
+  gap: 10px;
+  margin-top: 24px;
+  padding: 12px;
+  border-radius: 12px;
+  background: #e8f4f6;
+  color: #1f6576;
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.quote-filter-warning p {
+  margin: 0;
+}
+
 @media (max-width: 900px) {
   .auth-card,
   .home-hero {
@@ -1106,6 +1243,10 @@ button {
   }
 
   .detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .quote-meta-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1190,7 +1331,8 @@ button {
   .auth-screen,
   .home-screen,
   .data-screen,
-  .detail-screen {
+  .detail-screen,
+  .preview-screen {
     padding: 14px;
   }
 
@@ -1314,6 +1456,29 @@ button {
 
   .detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .quote-header {
+    align-items: center;
+  }
+
+  .quote-header img {
+    width: 92px;
+    height: 72px;
+  }
+
+  .quote-meta-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .quote-table {
+    font-size: 0.78rem;
+  }
+
+  .quote-table th,
+  .quote-table td {
+    padding: 8px 5px;
   }
 
   .field-grid.three,

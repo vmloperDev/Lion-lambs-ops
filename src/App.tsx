@@ -43,6 +43,7 @@ type Screen =
   | 'home'
   | 'data-form'
   | 'booking-detail'
+  | 'quotation-preview'
 type PasswordStrength = {
   label: 'Weak' | 'Fair' | 'Strong'
   score: 1 | 2 | 3
@@ -479,6 +480,11 @@ function App() {
         booking.id === selectedBookingId ? { ...booking, status } : booking,
       ),
     )
+  }
+
+  function openQuotationPreview() {
+    updateSelectedBookingStatus('Quotation')
+    setScreen('quotation-preview')
   }
 
   if (screen === 'splash') {
@@ -1151,7 +1157,11 @@ function App() {
                 <button
                   key={action.title}
                   type="button"
-                  onClick={() => updateSelectedBookingStatus(action.status)}
+                  onClick={() =>
+                    action.title === 'Quotation'
+                      ? openQuotationPreview()
+                      : updateSelectedBookingStatus(action.status)
+                  }
                 >
                   <FileText size={19} />
                   <span>
@@ -1172,6 +1182,132 @@ function App() {
             </div>
           </aside>
         </div>
+      </main>
+    )
+  }
+
+  if (screen === 'quotation-preview') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Quotation not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    const quantity = Number(selectedBooking.quantity) || 1
+    const unitPrice = Number(selectedBooking.unitPrice || selectedBooking.sellingPrice) || 0
+    const totalPrice = unitPrice * quantity
+
+    return (
+      <main className="preview-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Quotation Preview</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              type="button"
+              onClick={() => setScreen('booking-detail')}
+              title="Back"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <section className="quotation-preview">
+          <header className="quote-header">
+            <div className="quote-company">
+              <strong>LION AND LAMB TRAVEL</strong>
+              <span>BLK C 7-17 Olongapo City Public Market</span>
+              <span>East Bajac Bajac Olongapo City</span>
+              <span>travel_lionlamb@yahoo.com</span>
+            </div>
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+          </header>
+
+          <h1>Quotation</h1>
+
+          <section className="quote-meta-grid">
+            <article>
+              <span>Date</span>
+              <strong>{formatProjectDate(new Date().toISOString())}</strong>
+            </article>
+            <article>
+              <span>Quotation For</span>
+              <strong>{selectedBooking.clientName}</strong>
+            </article>
+            <article>
+              <span>Package Name</span>
+              <strong>{selectedBooking.packageName}</strong>
+            </article>
+            <article>
+              <span>Quotation No.</span>
+              <strong>{selectedBooking.quotationNo || selectedBooking.id}</strong>
+            </article>
+            <article>
+              <span>Date of Travel</span>
+              <strong>
+                {selectedBooking.travelStart
+                  ? `${formatProjectDate(selectedBooking.travelStart)}${
+                      selectedBooking.travelEnd
+                        ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
+                        : ''
+                    }`
+                  : 'To be advised'}
+              </strong>
+            </article>
+            <article>
+              <span>Condition</span>
+              <strong>Rate subject to change and availability</strong>
+            </article>
+          </section>
+
+          <table className="quote-table">
+            <thead>
+              <tr>
+                <th>Description</th>
+                <th>Qty</th>
+                <th>Unit price</th>
+                <th>Total price</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>{selectedBooking.itemDescription || selectedBooking.packageName}</td>
+                <td>{quantity}</td>
+                <td>{formatAmount(String(unitPrice))}</td>
+                <td>{formatAmount(String(totalPrice))}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <section className="quote-notes">
+            <p>Notes: No booking has been made yet.</p>
+            <strong>RATE SUBJECT TO CHANGE AND AVAILABILITY</strong>
+          </section>
+
+          <section className="quote-filter-warning">
+            <ListChecks size={19} />
+            <p>
+              Client quotation preview only. Internal supplier nett, markup, and
+              breakdown values are intentionally hidden.
+            </p>
+          </section>
+        </section>
       </main>
     )
   }
