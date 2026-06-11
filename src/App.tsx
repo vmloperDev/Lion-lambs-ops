@@ -15,6 +15,7 @@ import {
   CalendarDays,
   FileText,
   FolderKanban,
+  ListChecks,
   LockKeyhole,
   LogOut,
   Mail,
@@ -34,7 +35,14 @@ import travelHero from './assets/brand/travel-hero.jpg'
 import travelBanner from './assets/brand/travel-banner.png'
 import './App.css'
 
-type Screen = 'splash' | 'login' | 'signup' | 'verify-email' | 'home' | 'data-form'
+type Screen =
+  | 'splash'
+  | 'login'
+  | 'signup'
+  | 'verify-email'
+  | 'home'
+  | 'data-form'
+  | 'booking-detail'
 type PasswordStrength = {
   label: 'Weak' | 'Fair' | 'Strong'
   score: 1 | 2 | 3
@@ -222,6 +230,7 @@ function App() {
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
   const [activeBookingFilter, setActiveBookingFilter] =
     useState<BookingListFilter>('All')
+  const [selectedBookingId, setSelectedBookingId] = useState('')
   const passwordStrength = getPasswordStrength(password)
 
   useEffect(() => {
@@ -457,6 +466,19 @@ function App() {
 
     setBookings((currentBookings) => [booking, ...currentBookings])
     setScreen('home')
+  }
+
+  function openBookingDetail(bookingId: string) {
+    setSelectedBookingId(bookingId)
+    setScreen('booking-detail')
+  }
+
+  function updateSelectedBookingStatus(status: BookingStatus) {
+    setBookings((currentBookings) =>
+      currentBookings.map((booking) =>
+        booking.id === selectedBookingId ? { ...booking, status } : booking,
+      ),
+    )
   }
 
   if (screen === 'splash') {
@@ -979,6 +1001,181 @@ function App() {
     )
   }
 
+  if (screen === 'booking-detail') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Booking not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    const documentActions = [
+      {
+        title: 'Breakdown',
+        description: 'Internal supplier nett and costing sheet.',
+        status: 'Breakdown' as BookingStatus,
+      },
+      {
+        title: 'Quotation',
+        description: 'Client-facing price offer and inclusions.',
+        status: 'Quotation' as BookingStatus,
+      },
+      {
+        title: 'Invoice',
+        description: 'Editable payment and billing document.',
+        status: 'Invoice' as BookingStatus,
+      },
+      {
+        title: 'Purchase Order',
+        description: 'Supplier/vendor reservation instruction.',
+        status: 'Purchase Order' as BookingStatus,
+      },
+      {
+        title: 'Service Voucher',
+        description: 'Final confirmed client travel details.',
+        status: 'Confirmed' as BookingStatus,
+      },
+    ]
+
+    return (
+      <main className="detail-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Booking Workspace</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button type="button" onClick={() => setScreen('home')} title="Back">
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <div className="detail-layout">
+          <section className="detail-main">
+            <header className="detail-header">
+              <div>
+                <p>{selectedBooking.status}</p>
+                <h1>{selectedBooking.packageName}</h1>
+                <span>{selectedBooking.clientName}</span>
+              </div>
+              <label>
+                Status
+                <select
+                  value={selectedBooking.status}
+                  onChange={(event) =>
+                    updateSelectedBookingStatus(event.target.value as BookingStatus)
+                  }
+                >
+                  <option>Inquiry</option>
+                  <option>Breakdown</option>
+                  <option>Quotation</option>
+                  <option>Purchase Order</option>
+                  <option>Invoice</option>
+                  <option>Confirmed</option>
+                </select>
+              </label>
+            </header>
+
+            <div className="detail-grid">
+              <article>
+                <span>Contact</span>
+                <strong>{selectedBooking.contactNumber || 'Not provided'}</strong>
+              </article>
+              <article>
+                <span>Email</span>
+                <strong>{selectedBooking.clientEmail || 'Not provided'}</strong>
+              </article>
+              <article>
+                <span>Destination</span>
+                <strong>{selectedBooking.destination || 'Not provided'}</strong>
+              </article>
+              <article>
+                <span>No. of pax</span>
+                <strong>{selectedBooking.pax || 'Not provided'}</strong>
+              </article>
+              <article>
+                <span>Travel dates</span>
+                <strong>
+                  {selectedBooking.travelStart || 'No start'} to{' '}
+                  {selectedBooking.travelEnd || 'No end'}
+                </strong>
+              </article>
+              <article>
+                <span>Quotation no.</span>
+                <strong>{selectedBooking.quotationNo || 'Not assigned'}</strong>
+              </article>
+              <article>
+                <span>Client price</span>
+                <strong>
+                  {formatAmount(
+                    selectedBooking.sellingPrice || selectedBooking.unitPrice,
+                  )}
+                </strong>
+              </article>
+              <article className="internal-summary">
+                <span>Internal nett</span>
+                <strong>{formatAmount(selectedBooking.nettCost)}</strong>
+              </article>
+            </div>
+
+            <section className="detail-notes">
+              <div>
+                <p>Master data</p>
+                <h2>Collected notes</h2>
+              </div>
+              <p>{selectedBooking.notes || 'No notes yet.'}</p>
+            </section>
+          </section>
+
+          <aside className="document-panel">
+            <div className="document-panel-heading">
+              <p>Document flow</p>
+              <h2>Generate from this record</h2>
+            </div>
+
+            <div className="document-actions">
+              {documentActions.map((action) => (
+                <button
+                  key={action.title}
+                  type="button"
+                  onClick={() => updateSelectedBookingStatus(action.status)}
+                >
+                  <FileText size={19} />
+                  <span>
+                    <strong>{action.title}</strong>
+                    <small>{action.description}</small>
+                  </span>
+                  <ArrowRight size={17} />
+                </button>
+              ))}
+            </div>
+
+            <div className="workflow-note">
+              <ListChecks size={20} />
+              <p>
+                These buttons prepare the workspace for each filtered document.
+                PDF previews will be connected in the next phase.
+              </p>
+            </div>
+          </aside>
+        </div>
+      </main>
+    )
+  }
+
   const activeProjects = bookings.length
   const invoiceCount = bookings.filter((booking) => booking.status === 'Invoice').length
   const quotationCount = bookings.filter(
@@ -1113,7 +1310,12 @@ function App() {
             )}
 
             {filteredBookings.map((booking) => (
-              <article className="project-card" key={booking.id}>
+              <button
+                className="project-card"
+                key={booking.id}
+                type="button"
+                onClick={() => openBookingDetail(booking.id)}
+              >
                 <div className="project-main">
                   <div className="project-icon">
                     <FileText size={20} />
@@ -1134,7 +1336,7 @@ function App() {
                     {formatAmount(booking.sellingPrice || booking.unitPrice)}
                   </span>
                 </div>
-              </article>
+              </button>
             ))}
           </div>
         </section>
