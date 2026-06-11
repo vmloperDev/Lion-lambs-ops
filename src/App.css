@@ -578,7 +578,7 @@ button {
 
 .booking-tabs {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 14px;
 }
@@ -595,6 +595,7 @@ button {
   cursor: pointer;
   font: inherit;
   font-weight: 900;
+  text-align: center;
 }
 
 .booking-tabs button.active {
@@ -603,19 +604,17 @@ button {
   color: #1f6576;
 }
 
-.booking-tabs span,
-.booking-tabs strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .booking-tabs span {
+  display: block;
   font-size: 0.68rem;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 
 .booking-tabs strong {
+  display: block;
   font-size: 1rem;
+  line-height: 1;
 }
 
 .project-list {
