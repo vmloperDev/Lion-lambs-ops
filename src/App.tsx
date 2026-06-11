@@ -40,6 +40,7 @@ type PasswordStrength = {
   score: 1 | 2 | 3
 }
 type BookingStatus = 'Inquiry' | 'Breakdown' | 'Quotation' | 'Purchase Order' | 'Invoice' | 'Confirmed'
+type BookingListFilter = BookingStatus | 'All'
 type BookingFormData = {
   clientName: string
   contactNumber: string
@@ -65,6 +66,15 @@ type BookingRecord = BookingFormData & {
 }
 
 const bookingStorageKey = 'lion-lamb-bookings'
+const bookingListFilters: Array<{ label: string; value: BookingListFilter }> = [
+  { label: 'All', value: 'All' },
+  { label: 'Inquiries', value: 'Inquiry' },
+  { label: 'Breakdown', value: 'Breakdown' },
+  { label: 'Quotations', value: 'Quotation' },
+  { label: 'P.O.', value: 'Purchase Order' },
+  { label: 'Invoices', value: 'Invoice' },
+  { label: 'Confirmed', value: 'Confirmed' },
+]
 const emptyBookingForm: BookingFormData = {
   clientName: '',
   contactNumber: '',
@@ -210,6 +220,8 @@ function App() {
   const [isAuthLoading, setIsAuthLoading] = useState(true)
   const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
+  const [activeBookingFilter, setActiveBookingFilter] =
+    useState<BookingListFilter>('All')
   const passwordStrength = getPasswordStrength(password)
 
   useEffect(() => {
@@ -972,6 +984,20 @@ function App() {
   const quotationCount = bookings.filter(
     (booking) => booking.status === 'Quotation' || booking.status === 'Inquiry',
   ).length
+  const filteredBookings =
+    activeBookingFilter === 'All'
+      ? bookings
+      : bookings.filter((booking) => booking.status === activeBookingFilter)
+  const statusCounts = bookingListFilters.reduce(
+    (counts, filter) => ({
+      ...counts,
+      [filter.value]:
+        filter.value === 'All'
+          ? bookings.length
+          : bookings.filter((booking) => booking.status === filter.value).length,
+    }),
+    {} as Record<BookingListFilter, number>,
+  )
 
   return (
     <main className="home-screen">
@@ -1049,8 +1075,8 @@ function App() {
         <section className="projects-panel">
           <div className="section-heading">
             <div>
-              <p>Data Gathering</p>
-              <h2>Recent inquiries</h2>
+              <p>Filtered summaries</p>
+              <h2>{activeBookingFilter === 'All' ? 'All records' : activeBookingFilter}</h2>
             </div>
             <button type="button">
               View All
@@ -1058,8 +1084,35 @@ function App() {
             </button>
           </div>
 
+          <div className="booking-tabs" role="tablist" aria-label="Booking lists">
+            {bookingListFilters.map((filter) => (
+              <button
+                key={filter.value}
+                type="button"
+                role="tab"
+                aria-selected={activeBookingFilter === filter.value}
+                className={activeBookingFilter === filter.value ? 'active' : ''}
+                onClick={() => setActiveBookingFilter(filter.value)}
+              >
+                <span>{filter.label}</span>
+                <strong>{statusCounts[filter.value]}</strong>
+              </button>
+            ))}
+          </div>
+
           <div className="project-list">
-            {bookings.map((booking) => (
+            {filteredBookings.length === 0 && (
+              <div className="empty-list">
+                <FileText size={26} />
+                <strong>No records yet</strong>
+                <span>
+                  Saved bookings with this status will appear here after data
+                  gathering.
+                </span>
+              </div>
+            )}
+
+            {filteredBookings.map((booking) => (
               <article className="project-card" key={booking.id}>
                 <div className="project-main">
                   <div className="project-icon">

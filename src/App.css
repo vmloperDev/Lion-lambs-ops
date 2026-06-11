@@ -576,6 +576,48 @@ button {
   font-weight: 900;
 }
 
+.booking-tabs {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.booking-tabs button {
+  display: grid;
+  gap: 4px;
+  min-height: 56px;
+  padding: 9px;
+  border: 1px solid #dbe4ee;
+  border-radius: 10px;
+  background: #fff;
+  color: #536881;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+}
+
+.booking-tabs button.active {
+  border-color: #0f8f8c;
+  background: #e9f7f6;
+  color: #0d6f6d;
+}
+
+.booking-tabs span,
+.booking-tabs strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.booking-tabs span {
+  font-size: 0.68rem;
+}
+
+.booking-tabs strong {
+  font-size: 1rem;
+}
+
 .project-list {
   display: grid;
   flex: 1;
@@ -595,6 +637,34 @@ button {
   border: 1px solid #e4ebf3;
   border-radius: 16px;
   background: #fbfdff;
+}
+
+.empty-list {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  min-height: 180px;
+  padding: 22px;
+  border: 1px dashed #c9d8e6;
+  border-radius: 16px;
+  background: #fbfdff;
+  color: #6c7f96;
+  text-align: center;
+}
+
+.empty-list svg {
+  color: #0f8f8c;
+}
+
+.empty-list strong {
+  margin-top: 8px;
+  color: #173a6a;
+}
+
+.empty-list span {
+  max-width: 280px;
+  margin-top: 5px;
+  line-height: 1.45;
 }
 
 .project-main {
@@ -852,6 +922,16 @@ button {
   .dashboard-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
+  }
+
+  .booking-tabs {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .booking-tabs button {
+    min-width: 92px;
   }
 
   .summary-card {
