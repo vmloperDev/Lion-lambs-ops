@@ -1726,6 +1726,144 @@ button {
   font-weight: 800;
 }
 
+.breakdown-preview {
+  width: min(940px, 100%);
+  margin: 18px auto 0;
+  padding: clamp(18px, 4vw, 30px);
+  border: 2px solid #1f2937;
+  background: #fff;
+  box-shadow: 0 22px 70px rgba(34, 63, 95, 0.12);
+}
+
+.breakdown-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border: 1px solid #1f2937;
+}
+
+.breakdown-header h1,
+.breakdown-header strong {
+  margin: 0;
+  padding: 8px 10px;
+  color: #061c30;
+  font-size: 1rem;
+  text-align: center;
+}
+
+.breakdown-header strong {
+  border-left: 1px solid #1f2937;
+  color: #b42318;
+}
+
+.breakdown-info {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-right: 1px solid #1f2937;
+  border-left: 1px solid #1f2937;
+}
+
+.breakdown-info div {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  min-height: 34px;
+  border-bottom: 1px solid #1f2937;
+}
+
+.breakdown-info span,
+.breakdown-info strong {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  color: #102a43;
+  font-size: 0.86rem;
+}
+
+.breakdown-info span {
+  border-right: 1px solid #1f2937;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.breakdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.breakdown-table th,
+.breakdown-table td {
+  border: 1px solid #1f2937;
+  padding: 8px;
+}
+
+.breakdown-table th {
+  background: #f3f6fa;
+  color: #061c30;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.breakdown-table td:first-child {
+  width: 180px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.breakdown-table td:last-child {
+  width: 160px;
+  color: #d94235;
+  font-weight: 900;
+  text-align: right;
+}
+
+.breakdown-total-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 14px;
+  border: 1px solid #1f2937;
+}
+
+.breakdown-total-grid div {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  text-align: center;
+}
+
+.breakdown-total-grid div + div {
+  border-left: 1px solid #1f2937;
+}
+
+.breakdown-total-grid span {
+  color: #52667f;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.breakdown-total-grid strong {
+  color: #d94235;
+  font-size: 1.15rem;
+}
+
+.internal-warning {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 12px;
+  background: #fff5f5;
+  color: #b42318;
+  font-size: 0.86rem;
+  font-weight: 900;
+  line-height: 1.45;
+}
+
+.internal-warning p {
+  margin: 0;
+}
+
 @media (max-width: 900px) {
   .auth-card,
   .home-hero {
@@ -1757,8 +1895,15 @@ button {
   .po-party-grid,
   .voucher-meta,
   .voucher-party-grid,
-  .voucher-lists {
+  .voucher-lists,
+  .breakdown-info,
+  .breakdown-total-grid {
     grid-template-columns: 1fr;
+  }
+
+  .breakdown-total-grid div + div {
+    border-top: 1px solid #1f2937;
+    border-left: 0;
   }
 
   .po-party-grid > div + div,
@@ -2043,8 +2188,28 @@ button {
   .po-table th,
   .po-table td,
   .voucher-table th,
-  .voucher-table td {
+  .voucher-table td,
+  .breakdown-table th,
+  .breakdown-table td {
     padding: 6px 4px;
+  }
+
+  .breakdown-header {
+    grid-template-columns: 1fr;
+  }
+
+  .breakdown-header strong {
+    border-top: 1px solid #1f2937;
+    border-left: 0;
+  }
+
+  .breakdown-info div {
+    grid-template-columns: 1fr;
+  }
+
+  .breakdown-info span {
+    border-right: 0;
+    border-bottom: 1px solid #1f2937;
   }
 
   .po-notes-grid div {

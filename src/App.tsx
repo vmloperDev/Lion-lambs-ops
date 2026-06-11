@@ -48,6 +48,7 @@ type Screen =
   | 'invoice-preview'
   | 'purchase-order-preview'
   | 'voucher-preview'
+  | 'breakdown-preview'
 type PasswordStrength = {
   label: 'Weak' | 'Fair' | 'Strong'
   score: 1 | 2 | 3
@@ -504,6 +505,11 @@ function App() {
   function openVoucherPreview() {
     updateSelectedBookingStatus('Confirmed')
     setScreen('voucher-preview')
+  }
+
+  function openBreakdownPreview() {
+    updateSelectedBookingStatus('Breakdown')
+    setScreen('breakdown-preview')
   }
 
   if (screen === 'splash') {
@@ -1179,6 +1185,8 @@ function App() {
                   onClick={() =>
                     action.title === 'Quotation'
                       ? openQuotationPreview()
+                      : action.title === 'Breakdown'
+                        ? openBreakdownPreview()
                       : action.title === 'Invoice'
                         ? openInvoicePreview()
                         : action.title === 'Purchase Order'
@@ -1789,6 +1797,153 @@ function App() {
           <footer className="voucher-footer">
             Prepared By: {authUser?.displayName ?? 'LLT Staff'}
           </footer>
+        </section>
+      </main>
+    )
+  }
+
+  if (screen === 'breakdown-preview') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Breakdown not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    const quantity = Number(selectedBooking.quantity) || 1
+    const nettCost = Number(selectedBooking.nettCost) || 0
+    const sellingPrice =
+      Number(selectedBooking.sellingPrice || selectedBooking.unitPrice) || 0
+    const internalTotal = nettCost * quantity
+    const clientTotal = sellingPrice * quantity
+    const estimatedProfit = clientTotal - internalTotal
+    const breakdownRows = [
+      {
+        service: 'PACKAGE / SERVICE',
+        details: selectedBooking.itemDescription || selectedBooking.packageName,
+        amount: internalTotal,
+      },
+      {
+        service: 'SUPPLIER / OPERATOR',
+        details: selectedBooking.supplier || 'To be assigned',
+        amount: 0,
+      },
+      {
+        service: 'SELLING PRICE',
+        details: 'Client-facing amount',
+        amount: clientTotal,
+      },
+      {
+        service: 'EST. PROFIT',
+        details: 'Selling price minus supplier nett',
+        amount: estimatedProfit,
+      },
+    ]
+
+    return (
+      <main className="preview-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Internal Breakdown Preview</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              type="button"
+              onClick={() => setScreen('booking-detail')}
+              title="Back"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <section className="breakdown-preview">
+          <header className="breakdown-header">
+            <h1>QUOTATION: {selectedBooking.quotationNo || selectedBooking.id}</h1>
+            <strong>INTERNAL BREAKDOWN</strong>
+          </header>
+
+          <section className="breakdown-info">
+            <div>
+              <span>Name</span>
+              <strong>{selectedBooking.packageName}</strong>
+            </div>
+            <div>
+              <span>Date of Travel</span>
+              <strong>
+                {selectedBooking.travelStart
+                  ? `${formatProjectDate(selectedBooking.travelStart)}${
+                      selectedBooking.travelEnd
+                        ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
+                        : ''
+                    }`
+                  : 'TBA'}
+              </strong>
+            </div>
+            <div>
+              <span>No. of Pax</span>
+              <strong>{selectedBooking.pax || quantity}</strong>
+            </div>
+            <div>
+              <span>Operator</span>
+              <strong>{selectedBooking.supplier || 'To be assigned'}</strong>
+            </div>
+          </section>
+
+          <table className="breakdown-table">
+            <thead>
+              <tr>
+                <th>Service</th>
+                <th>Details</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {breakdownRows.map((row) => (
+                <tr key={row.service}>
+                  <td>{row.service}</td>
+                  <td>{row.details}</td>
+                  <td>{formatAmount(String(row.amount))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <section className="breakdown-total-grid">
+            <div>
+              <span>Supplier Nett Total</span>
+              <strong>{formatAmount(String(internalTotal))}</strong>
+            </div>
+            <div>
+              <span>Client Total</span>
+              <strong>{formatAmount(String(clientTotal))}</strong>
+            </div>
+            <div>
+              <span>Estimated Profit</span>
+              <strong>{formatAmount(String(estimatedProfit))}</strong>
+            </div>
+          </section>
+
+          <section className="internal-warning">
+            <ListChecks size={20} />
+            <p>
+              Internal document only. Supplier nett, profit, and costing details
+              must not appear on quotation, invoice, or service voucher PDFs.
+            </p>
+          </section>
         </section>
       </main>
     )
