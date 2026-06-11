@@ -1558,6 +1558,174 @@ button {
   font-weight: 800;
 }
 
+.voucher-preview {
+  width: min(940px, 100%);
+  margin: 18px auto 0;
+  padding: clamp(20px, 4vw, 34px);
+  border: 1px solid #d7e3ea;
+  background: #fff;
+  box-shadow: 0 22px 70px rgba(34, 63, 95, 0.12);
+}
+
+.voucher-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 22px;
+  align-items: start;
+  border-top: 8px solid #25328a;
+  padding-top: 18px;
+}
+
+.voucher-header img {
+  width: 110px;
+  height: 90px;
+  object-fit: contain;
+}
+
+.voucher-header div {
+  display: grid;
+  gap: 4px;
+}
+
+.voucher-header strong {
+  color: #061c30;
+}
+
+.voucher-header span {
+  color: #26384f;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.voucher-preview > h1 {
+  margin: 14px 0 24px;
+  color: #25328a;
+  font-size: clamp(2rem, 5vw, 3rem);
+  text-align: center;
+}
+
+.voucher-meta {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.voucher-meta div,
+.voucher-party-grid > div {
+  display: grid;
+  gap: 4px;
+}
+
+.voucher-meta span,
+.voucher-party-grid span {
+  color: #314158;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.voucher-meta strong,
+.voucher-party-grid strong {
+  color: #102a43;
+  overflow-wrap: anywhere;
+}
+
+.voucher-party-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  border: 1px solid #8ba5b8;
+}
+
+.voucher-party-grid > div {
+  padding: 9px;
+  background: #d9e8f2;
+}
+
+.voucher-party-grid > div + div {
+  border-left: 1px solid #8ba5b8;
+}
+
+.voucher-party-grid small {
+  color: #52667f;
+  font-weight: 800;
+}
+
+.voucher-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 16px;
+  font-size: 0.86rem;
+}
+
+.voucher-table th,
+.voucher-table td {
+  border: 1px solid #8ba5b8;
+  padding: 10px;
+  vertical-align: top;
+}
+
+.voucher-table th {
+  background: #d9e8f2;
+  color: #102a43;
+  font-weight: 900;
+  text-align: center;
+}
+
+.voucher-table td:first-child {
+  width: 120px;
+  text-align: center;
+  font-weight: 900;
+}
+
+.voucher-lists {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.voucher-lists > div {
+  padding: 12px;
+  background: #f5f7f8;
+}
+
+.voucher-lists h2 {
+  margin: 0 0 8px;
+  color: #102a43;
+  font-size: 0.95rem;
+  text-transform: uppercase;
+}
+
+.voucher-lists ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 20px;
+  color: #52667f;
+  font-size: 0.86rem;
+}
+
+.voucher-reminders {
+  display: grid;
+  gap: 8px;
+  margin-top: 22px;
+  color: #4a5568;
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.voucher-reminders p {
+  margin: 0;
+}
+
+.voucher-footer {
+  margin-top: 28px;
+  color: #52667f;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
 @media (max-width: 900px) {
   .auth-card,
   .home-hero {
@@ -1586,11 +1754,15 @@ button {
   }
 
   .po-meta-grid,
-  .po-party-grid {
+  .po-party-grid,
+  .voucher-meta,
+  .voucher-party-grid,
+  .voucher-lists {
     grid-template-columns: 1fr;
   }
 
-  .po-party-grid > div + div {
+  .po-party-grid > div + div,
+  .voucher-party-grid > div + div {
     border-top: 1px solid #8ba5b8;
     border-left: 0;
   }
@@ -1831,7 +2003,8 @@ button {
   }
 
   .invoice-header img,
-  .po-header img {
+  .po-header img,
+  .voucher-header img {
     width: 88px;
     height: 70px;
   }
@@ -1857,16 +2030,20 @@ button {
     grid-template-columns: 1fr 1fr;
   }
 
-  .po-header {
+  .po-header,
+  .voucher-header {
     grid-template-columns: 1fr;
   }
 
-  .po-table {
+  .po-table,
+  .voucher-table {
     font-size: 0.74rem;
   }
 
   .po-table th,
-  .po-table td {
+  .po-table td,
+  .voucher-table th,
+  .voucher-table td {
     padding: 6px 4px;
   }
 

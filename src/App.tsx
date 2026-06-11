@@ -47,6 +47,7 @@ type Screen =
   | 'quotation-preview'
   | 'invoice-preview'
   | 'purchase-order-preview'
+  | 'voucher-preview'
 type PasswordStrength = {
   label: 'Weak' | 'Fair' | 'Strong'
   score: 1 | 2 | 3
@@ -498,6 +499,11 @@ function App() {
   function openPurchaseOrderPreview() {
     updateSelectedBookingStatus('Purchase Order')
     setScreen('purchase-order-preview')
+  }
+
+  function openVoucherPreview() {
+    updateSelectedBookingStatus('Confirmed')
+    setScreen('voucher-preview')
   }
 
   if (screen === 'splash') {
@@ -1177,6 +1183,8 @@ function App() {
                         ? openInvoicePreview()
                         : action.title === 'Purchase Order'
                           ? openPurchaseOrderPreview()
+                          : action.title === 'Service Voucher'
+                            ? openVoucherPreview()
                           : updateSelectedBookingStatus(action.status)
                   }
                 >
@@ -1619,6 +1627,166 @@ function App() {
           </section>
 
           <footer className="po-footer">
+            Prepared By: {authUser?.displayName ?? 'LLT Staff'}
+          </footer>
+        </section>
+      </main>
+    )
+  }
+
+  if (screen === 'voucher-preview') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Service voucher not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    const itineraryRows = [
+      {
+        date: selectedBooking.travelStart
+          ? formatProjectDate(selectedBooking.travelStart)
+          : 'Day 1',
+        itinerary:
+          selectedBooking.itemDescription ||
+          `Arrival and start of ${selectedBooking.packageName}`,
+        hotel: selectedBooking.packageName || 'Accommodation to be advised',
+      },
+      {
+        date: selectedBooking.travelEnd
+          ? formatProjectDate(selectedBooking.travelEnd)
+          : 'Final Day',
+        itinerary: 'Free own leisure. Final reminders and departure arrangements.',
+        hotel: selectedBooking.destination || 'Home sweet home',
+      },
+    ]
+
+    return (
+      <main className="preview-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Service Voucher Preview</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              type="button"
+              onClick={() => setScreen('booking-detail')}
+              title="Back"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <section className="voucher-preview">
+          <header className="voucher-header">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>LION AND LAMB TRAVEL</strong>
+              <span>BLK C #7-17 OLONGAPO CITY PUBLIC MARKET</span>
+              <span>Olongapo City, Philippines 2200</span>
+              <span>travel_lionlamb@yahoo.com</span>
+              <span>DOT No: R03 - TTA 013652023</span>
+            </div>
+            <img src={agencySeal} alt="DOT accreditation seal" />
+          </header>
+
+          <h1>Service Voucher</h1>
+
+          <section className="voucher-meta">
+            <div>
+              <span>Date</span>
+              <strong>{formatProjectDate(new Date().toISOString())}</strong>
+            </div>
+            <div>
+              <span>Invoice</span>
+              <strong>{selectedBooking.quotationNo || selectedBooking.id}</strong>
+            </div>
+          </section>
+
+          <section className="voucher-party-grid">
+            <div>
+              <span>Package:</span>
+              <strong>{selectedBooking.packageName}</strong>
+              <small>
+                Tour Date:{' '}
+                {selectedBooking.travelStart
+                  ? `${formatProjectDate(selectedBooking.travelStart)}${
+                      selectedBooking.travelEnd
+                        ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
+                        : ''
+                    }`
+                  : 'TBA'}
+              </small>
+              <small>Flight Details: TBA</small>
+              <small>Emergency Contact #: {selectedBooking.contactNumber || 'TBA'}</small>
+            </div>
+            <div>
+              <span>Client Details:</span>
+              <strong>Name: {selectedBooking.clientName}</strong>
+              <small>Guest Contact Number: {selectedBooking.contactNumber || 'TBA'}</small>
+              <small>Accommodation: {selectedBooking.packageName || 'TBA'}</small>
+            </div>
+          </section>
+
+          <table className="voucher-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Itinerary</th>
+                <th>Hotel</th>
+              </tr>
+            </thead>
+            <tbody>
+              {itineraryRows.map((row) => (
+                <tr key={row.date}>
+                  <td>{row.date}</td>
+                  <td>{row.itinerary}</td>
+                  <td>{row.hotel}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <section className="voucher-lists">
+            <div>
+              <h2>Package Inclusions</h2>
+              <ul>
+                <li>Travel arrangement based on confirmed package</li>
+                <li>Accommodation / service details as stated above</li>
+                <li>Assistance from Lion and Lamb Travel</li>
+              </ul>
+            </div>
+            <div>
+              <h2>Package Exclusions</h2>
+              <ul>
+                <li>Meals not stated</li>
+                <li>Optional tours or personal expenses</li>
+                <li>Other incidental charges not stated</li>
+              </ul>
+            </div>
+          </section>
+
+          <section className="voucher-reminders">
+            <p>Itinerary may change depending on local weather condition or other unavoidable circumstances.</p>
+            <p>Any unused portion for land arrangement is non-refundable.</p>
+            <p>All rights reserved by Lion and Lamb Travel if any changes occur without prior notice.</p>
+          </section>
+
+          <footer className="voucher-footer">
             Prepared By: {authUser?.displayName ?? 'LLT Staff'}
           </footer>
         </section>
