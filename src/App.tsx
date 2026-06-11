@@ -11,6 +11,14 @@ import {
   type User as FirebaseUser,
 } from 'firebase/auth'
 import {
+  collection,
+  doc,
+  onSnapshot,
+  orderBy,
+  query,
+  setDoc,
+} from 'firebase/firestore'
+import {
   ArrowRight,
   CalendarDays,
   FileText,
@@ -30,7 +38,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { auth } from './firebase'
+import { auth, db } from './firebase'
 import agencySeal from './assets/brand/agency-seal.png'
 import logo from './assets/brand/logo.png'
 import travelHero from './assets/brand/travel-hero.jpg'
@@ -99,6 +107,7 @@ type BookingRecord = BookingFormData & {
 }
 
 const bookingStorageKey = 'lion-lamb-bookings'
+const bookingsCollectionKey = 'bookings'
 const bookingListFilters: Array<{ label: string; value: BookingListFilter }> = [
   { label: 'All', value: 'All' },
   { label: 'Inquiries', value: 'Inquiry' },
@@ -240,9 +249,19 @@ function getStoredBookings() {
   }
 
   try {
-    return JSON.parse(storedBookings) as BookingRecord[]
+    return (JSON.parse(storedBookings) as BookingRecord[]).map(normalizeBooking)
   } catch {
     return sampleBookings
+  }
+}
+
+function normalizeBooking(booking: BookingRecord): BookingRecord {
+  return {
+    ...emptyBookingForm,
+    ...booking,
+    status: booking.status || 'Inquiry',
+    id: booking.id,
+    createdAt: booking.createdAt || new Date().toISOString(),
   }
 }
 
@@ -296,6 +315,7 @@ function App() {
   const [authError, setAuthError] = useState('')
   const [authMessage, setAuthMessage] = useState('')
   const [isAuthLoading, setIsAuthLoading] = useState(true)
+  const [dataError, setDataError] = useState('')
   const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
   const [invoiceForm, setInvoiceForm] = useState({
@@ -321,6 +341,37 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(bookingStorageKey, JSON.stringify(bookings))
   }, [bookings])
+
+  useEffect(() => {
+    if (!authUser?.emailVerified) {
+      return undefined
+    }
+
+    const bookingsQuery = query(
+      collection(db, bookingsCollectionKey),
+      orderBy('createdAt', 'desc'),
+    )
+
+    return onSnapshot(
+      bookingsQuery,
+      (snapshot) => {
+        const firestoreBookings = snapshot.docs.map((bookingDoc) =>
+          normalizeBooking({
+            ...(bookingDoc.data() as BookingRecord),
+            id: bookingDoc.id,
+          }),
+        )
+
+        setBookings(firestoreBookings)
+        setDataError('')
+      },
+      () => {
+        setDataError(
+          'Could not load cloud bookings. Check Firestore setup and rules.',
+        )
+      },
+    )
+  }, [authUser])
 
   useEffect(() => {
     if (isAuthLoading) {
@@ -533,7 +584,7 @@ function App() {
     }))
   }
 
-  function handleSaveBooking(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSaveBooking(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
     const booking: BookingRecord = {
@@ -543,7 +594,20 @@ function App() {
     }
 
     setBookings((currentBookings) => [booking, ...currentBookings])
-    setScreen('home')
+
+    try {
+      await setDoc(doc(db, bookingsCollectionKey, booking.id), {
+        ...booking,
+        createdBy: authUser?.uid || '',
+        createdByEmail: authUser?.email || '',
+        updatedAt: new Date().toISOString(),
+      })
+      setDataError('')
+      setScreen('home')
+    } catch {
+      setDataError('Booking saved locally, but cloud save failed.')
+      setScreen('home')
+    }
   }
 
   function openBookingDetail(bookingId: string) {
@@ -557,6 +621,17 @@ function App() {
         booking.id === selectedBookingId ? { ...booking, status } : booking,
       ),
     )
+
+    if (selectedBookingId) {
+      void setDoc(doc(db, bookingsCollectionKey, selectedBookingId), {
+        status,
+        updatedAt: new Date().toISOString(),
+      }, {
+        merge: true,
+      }).catch(() => {
+        setDataError('Status updated locally, but cloud update failed.')
+      })
+    }
   }
 
   function openQuotationPreview() {
@@ -594,7 +669,7 @@ function App() {
     }))
   }
 
-  function handleSaveInvoiceUpdate(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSaveInvoiceUpdate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
     setBookings((currentBookings) =>
@@ -608,7 +683,21 @@ function App() {
           : booking,
       ),
     )
-    setScreen('invoice-preview')
+
+    try {
+      await setDoc(doc(db, bookingsCollectionKey, selectedBookingId), {
+        ...invoiceForm,
+        status: 'Invoice',
+        updatedAt: new Date().toISOString(),
+      }, {
+        merge: true,
+      })
+      setDataError('')
+      setScreen('invoice-preview')
+    } catch {
+      setDataError('Invoice saved locally, but cloud update failed.')
+      setScreen('invoice-preview')
+    }
   }
 
   function openPurchaseOrderPreview() {
@@ -2817,6 +2906,8 @@ function App() {
               <ArrowRight size={17} />
             </button>
           </div>
+
+          {dataError && <p className="data-alert error">{dataError}</p>}
 
           <div className="booking-tabs" role="tablist" aria-label="Booking lists">
             {bookingListFilters.map((filter) => (
