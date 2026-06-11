@@ -44,6 +44,7 @@ type Screen =
   | 'data-form'
   | 'booking-detail'
   | 'quotation-preview'
+  | 'invoice-preview'
 type PasswordStrength = {
   label: 'Weak' | 'Fair' | 'Strong'
   score: 1 | 2 | 3
@@ -485,6 +486,11 @@ function App() {
   function openQuotationPreview() {
     updateSelectedBookingStatus('Quotation')
     setScreen('quotation-preview')
+  }
+
+  function openInvoicePreview() {
+    updateSelectedBookingStatus('Invoice')
+    setScreen('invoice-preview')
   }
 
   if (screen === 'splash') {
@@ -1160,6 +1166,8 @@ function App() {
                   onClick={() =>
                     action.title === 'Quotation'
                       ? openQuotationPreview()
+                      : action.title === 'Invoice'
+                        ? openInvoicePreview()
                       : updateSelectedBookingStatus(action.status)
                   }
                 >
@@ -1305,6 +1313,134 @@ function App() {
             <p>
               Client quotation preview only. Internal supplier nett, markup, and
               breakdown values are intentionally hidden.
+            </p>
+          </section>
+        </section>
+      </main>
+    )
+  }
+
+  if (screen === 'invoice-preview') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Invoice not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    const quantity = Number(selectedBooking.quantity) || 1
+    const unitPrice = Number(selectedBooking.unitPrice || selectedBooking.sellingPrice) || 0
+    const totalPrice = unitPrice * quantity
+
+    return (
+      <main className="preview-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Invoice Preview</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              type="button"
+              onClick={() => setScreen('booking-detail')}
+              title="Back"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <section className="invoice-preview">
+          <header className="invoice-header">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <h1>INVOICE</h1>
+              <strong>LION AND LAMB TRAVEL</strong>
+              <span>BLK C 7-17, Olongapo City Public Market</span>
+              <span>Rizal Ave. Olongapo City, Zambales 2200</span>
+              <span>travel_lionlamb@yahoo.com</span>
+            </div>
+          </header>
+
+          <section className="invoice-strip">
+            <div>
+              <span>Invoice #</span>
+              <strong>{selectedBooking.id.replace('BK-', 'LLTP')}</strong>
+            </div>
+            <div>
+              <span>Invoice Date</span>
+              <strong>{formatProjectDate(new Date().toISOString())}</strong>
+            </div>
+            <div className="amount-due-box">
+              <span>Amount Due</span>
+              <strong>{formatAmount(String(totalPrice))}</strong>
+            </div>
+          </section>
+
+          <section className="bill-to-row">
+            <strong>Bill To:</strong>
+            <span>{selectedBooking.clientName}</span>
+          </section>
+
+          <table className="invoice-table">
+            <thead>
+              <tr>
+                <th>Description</th>
+                <th>Qty</th>
+                <th>Unit Price</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>{selectedBooking.itemDescription || selectedBooking.packageName}</td>
+                <td>{quantity}</td>
+                <td>{formatAmount(String(unitPrice))}</td>
+                <td>{formatAmount(String(totalPrice))}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <section className="invoice-total-panel">
+            <div>
+              <span>Subtotal</span>
+              <strong>{formatAmount(String(totalPrice))}</strong>
+            </div>
+            <div>
+              <span>Total</span>
+              <strong>{formatAmount(String(totalPrice))}</strong>
+            </div>
+            <div className="payment-placeholder">
+              <span>Payment Updates</span>
+              <p>Editable payment records will be added here before final PDF.</p>
+            </div>
+          </section>
+
+          <section className="invoice-notes">
+            <h2>Note to Customer</h2>
+            <p>
+              Payment records, inclusions, exclusions, flight details, and booking
+              policy will be editable in the next invoice phase.
+            </p>
+          </section>
+
+          <section className="quote-filter-warning">
+            <ListChecks size={19} />
+            <p>
+              Client invoice preview only. Supplier nett and internal breakdown
+              values are hidden.
             </p>
           </section>
         </section>
