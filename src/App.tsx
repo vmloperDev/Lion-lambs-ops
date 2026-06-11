@@ -45,6 +45,7 @@ type Screen =
   | 'home'
   | 'data-form'
   | 'booking-detail'
+  | 'document-folder'
   | 'invoice-editor'
   | 'quotation-preview'
   | 'invoice-preview'
@@ -623,6 +624,36 @@ function App() {
   function openBreakdownPreview() {
     updateSelectedBookingStatus('Breakdown')
     setScreen('breakdown-preview')
+  }
+
+  function openDocumentFolder() {
+    setScreen('document-folder')
+  }
+
+  function openDocumentByTitle(title: string) {
+    if (title === 'Breakdown') {
+      openBreakdownPreview()
+      return
+    }
+
+    if (title === 'Quotation') {
+      openQuotationPreview()
+      return
+    }
+
+    if (title === 'Invoice') {
+      openInvoiceEditor()
+      return
+    }
+
+    if (title === 'Purchase Order') {
+      openPurchaseOrderPreview()
+      return
+    }
+
+    if (title === 'Service Voucher') {
+      openVoucherPreview()
+    }
   }
 
   function handlePrintPreview() {
@@ -1494,24 +1525,22 @@ function App() {
               <h2>Generate from this record</h2>
             </div>
 
+            <button
+              type="button"
+              className="folder-open-btn"
+              onClick={openDocumentFolder}
+            >
+              <FolderKanban size={20} />
+              Open document folder
+              <ArrowRight size={17} />
+            </button>
+
             <div className="document-actions">
               {documentActions.map((action) => (
                 <button
                   key={action.title}
                   type="button"
-                  onClick={() =>
-                    action.title === 'Quotation'
-                      ? openQuotationPreview()
-                      : action.title === 'Breakdown'
-                      ? openBreakdownPreview()
-                      : action.title === 'Invoice'
-                        ? openInvoiceEditor()
-                        : action.title === 'Purchase Order'
-                          ? openPurchaseOrderPreview()
-                          : action.title === 'Service Voucher'
-                            ? openVoucherPreview()
-                          : updateSelectedBookingStatus(action.status)
-                  }
+                  onClick={() => openDocumentByTitle(action.title)}
                 >
                   <FileText size={19} />
                   <span>
@@ -1526,12 +1555,156 @@ function App() {
             <div className="workflow-note">
               <ListChecks size={20} />
               <p>
-                These buttons prepare the workspace for each filtered document.
-                PDF previews will be connected in the next phase.
+                Use the folder view to check every filtered document for this
+                booking before printing or saving PDFs.
               </p>
             </div>
           </aside>
         </div>
+      </main>
+    )
+  }
+
+  if (screen === 'document-folder') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Document folder not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    const hasClientAmount = Boolean(
+      selectedBooking.sellingPrice || selectedBooking.unitPrice,
+    )
+    const documentFolderItems = [
+      {
+        title: 'Breakdown',
+        label: 'Internal sheet',
+        description: 'Supplier nett, client price, and estimated profit.',
+        requirement: 'Needs supplier nett and client selling price.',
+        ready: Boolean(selectedBooking.nettCost && hasClientAmount),
+      },
+      {
+        title: 'Quotation',
+        label: 'Client PDF',
+        description: 'Client-facing offer with inclusions and exclusions.',
+        requirement: 'Needs client, package, travel date, and selling price.',
+        ready: Boolean(
+          selectedBooking.clientName &&
+            selectedBooking.packageName &&
+            selectedBooking.travelStart &&
+            hasClientAmount,
+        ),
+      },
+      {
+        title: 'Invoice',
+        label: 'Editable before PDF',
+        description: 'Billing document with payment status and balance.',
+        requirement: 'Needs client, package, selling price, and payment update.',
+        ready: Boolean(selectedBooking.clientName && selectedBooking.packageName && hasClientAmount),
+      },
+      {
+        title: 'Purchase Order',
+        label: 'Supplier PDF',
+        description: 'Reservation instruction for supplier or operator.',
+        requirement: 'Needs supplier/operator, package, pax, and travel date.',
+        ready: Boolean(
+          selectedBooking.supplier &&
+            selectedBooking.packageName &&
+            selectedBooking.pax &&
+            selectedBooking.travelStart,
+        ),
+      },
+      {
+        title: 'Service Voucher',
+        label: 'Confirmation PDF',
+        description: 'Final confirmed travel details for the client.',
+        requirement: 'Needs itinerary, accommodation, contacts, and inclusions.',
+        ready: Boolean(
+          selectedBooking.itinerary &&
+            selectedBooking.accommodation &&
+            selectedBooking.contactNumber,
+        ),
+      },
+    ]
+
+    return (
+      <main className="detail-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Document Folder</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              type="button"
+              onClick={() => setScreen('booking-detail')}
+              title="Back"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <section className="folder-layout">
+          <header className="folder-header">
+            <div>
+              <p>Booking folder</p>
+              <h1>{selectedBooking.packageName}</h1>
+              <span>
+                {selectedBooking.clientName || 'No client yet'} /{' '}
+                {selectedBooking.quotationNo || selectedBooking.id}
+              </span>
+            </div>
+            <div className="folder-badge">
+              <FolderKanban size={22} />
+              {documentFolderItems.filter((item) => item.ready).length}/
+              {documentFolderItems.length} ready
+            </div>
+          </header>
+
+          <div className="folder-grid">
+            {documentFolderItems.map((item) => (
+              <article className="folder-card" key={item.title}>
+                <div className="folder-card-top">
+                  <FileText size={22} />
+                  <span className={item.ready ? 'ready' : 'needs-data'}>
+                    {item.ready ? 'Ready' : 'Needs data'}
+                  </span>
+                </div>
+                <h2>{item.title}</h2>
+                <strong>{item.label}</strong>
+                <p>{item.description}</p>
+                <small>{item.requirement}</small>
+                <button type="button" onClick={() => openDocumentByTitle(item.title)}>
+                  Open document
+                  <ArrowRight size={17} />
+                </button>
+              </article>
+            ))}
+          </div>
+
+          <section className="workflow-note folder-note">
+            <ListChecks size={20} />
+            <p>
+              This is the booking document folder. Client-facing previews only
+              show their filtered data, while the breakdown keeps internal nett
+              and profit details separate.
+            </p>
+          </section>
+        </section>
       </main>
     )
   }
