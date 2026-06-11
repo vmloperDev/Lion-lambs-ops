@@ -1517,7 +1517,7 @@ button {
 
 .document-checklists li {
   position: relative;
-  padding-left: 20px;
+  padding-left: 42px;
   line-height: 1.35;
 }
 
@@ -1525,7 +1525,10 @@ button {
   position: absolute;
   left: 0;
   top: 0;
+  width: 34px;
   font-weight: 900;
+  text-align: left;
+  white-space: nowrap;
 }
 
 .included-list li::before {
@@ -1764,8 +1767,12 @@ button {
 .invoice-note-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 18px;
   margin-bottom: 12px;
+}
+
+.invoice-note-grid > div {
+  min-width: 0;
 }
 
 .invoice-note-grid strong {
@@ -2348,6 +2355,7 @@ button {
   .voucher-party-grid,
   .voucher-lists,
   .preview-list-grid,
+  .invoice-note-grid,
   .breakdown-info,
   .breakdown-total-grid {
     grid-template-columns: 1fr;
