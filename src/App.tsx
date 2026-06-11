@@ -2116,6 +2116,10 @@ function App() {
               breakdown values are intentionally hidden.
             </p>
           </section>
+
+          <footer className="quote-footer-line">
+            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
+          </footer>
         </section>
       </main>
     )
@@ -2454,6 +2458,29 @@ function App() {
               Reference: {selectedBooking.invoiceReference || 'N/A'}.
               Flight details: {selectedBooking.flightDetails || 'To be advised'}.
             </p>
+            <section className="invoice-policy">
+              <h3>Flight Details</h3>
+              <p>{selectedBooking.flightDetails || 'To be advised'}</p>
+              <h3>Terms and Conditions</h3>
+              <p>Booking Policy: Payments are non-refundable once made.</p>
+              <p>
+                Hotel and tours are re-bookable under certain conditions and
+                subject to fees and penalties.
+              </p>
+              <p>
+                Any alteration made without approval from the issuing office
+                will be deemed null and void.
+              </p>
+              <p>
+                Any incidental expenses will be on the guest account. The
+                issuing office is not liable for problems caused by airline,
+                hotel, or local tour operators.
+              </p>
+              <p>
+                Passengers are responsible for checking travel documents and
+                immigration requirements before booking.
+              </p>
+            </section>
             <div className="transaction-box">
               <strong>For faster transactions</strong>
               <span>Send deposit or payment proof with your booking reference.</span>

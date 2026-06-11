@@ -1477,6 +1477,16 @@ button {
   margin: 0;
 }
 
+.quote-footer-line {
+  max-width: 420px;
+  margin-top: 26px;
+  padding-top: 8px;
+  border-top: 1px solid #1f2937;
+  color: #52667f;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
 .preview-list-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1526,6 +1536,14 @@ button {
 .excluded-list li::before {
   content: "✕";
   color: #ff4261;
+}
+
+.included-list li::before {
+  content: "[ok]";
+}
+
+.excluded-list li::before {
+  content: "[x]";
 }
 
 .invoice-preview {
@@ -1721,6 +1739,26 @@ button {
   margin: 12px 0 0;
   color: #52667f;
   line-height: 1.5;
+}
+
+.invoice-policy {
+  display: grid;
+  gap: 4px;
+  margin-top: 14px;
+  color: #102a43;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.invoice-policy h3 {
+  margin: 6px 0 0;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+}
+
+.invoice-policy p {
+  margin: 0;
+  color: #102a43;
 }
 
 .invoice-note-grid {
@@ -2161,7 +2199,7 @@ button {
 }
 
 .breakdown-table th {
-  background: #f3f6fa;
+  background: #ffffff;
   color: #061c30;
   text-align: center;
   text-transform: uppercase;
@@ -2175,6 +2213,13 @@ button {
 .breakdown-table td:not(:first-child),
 .breakdown-table th:not(:first-child) {
   text-align: right;
+}
+
+.breakdown-table td:nth-child(3),
+.breakdown-table td:nth-child(4),
+.breakdown-table td:nth-child(5) {
+  color: #d94235;
+  font-weight: 900;
 }
 
 .breakdown-table td:last-child {
