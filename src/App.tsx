@@ -117,6 +117,12 @@ type BookingLineItem = {
   nettTotal: number
   profit: number
 }
+type EditableLineItem = {
+  description: string
+  quantity: string
+  unitPrice: string
+  nettCost: string
+}
 
 const bookingStorageKey = 'lion-lamb-bookings'
 const bookingsCollectionKey = 'bookings'
@@ -304,8 +310,58 @@ function parseQuantity(value?: string) {
   return Number.isFinite(quantity) && quantity > 0 ? quantity : 1
 }
 
+function serializeLineItems(items: EditableLineItem[]) {
+  return items
+    .filter((item) =>
+      [item.description, item.quantity, item.unitPrice, item.nettCost].some((value) =>
+        value.trim(),
+      ),
+    )
+    .map((item) =>
+      [
+        item.description.trim(),
+        item.quantity.trim() || '1',
+        item.unitPrice.trim() || '0',
+        item.nettCost.trim() || '0',
+      ].join(' | '),
+    )
+    .join('\n')
+}
+
+function getEditableLineItems(booking: BookingFormData): EditableLineItem[] {
+  const rows = getLines(booking.lineItems, [])
+    .filter((line) => line.includes('|'))
+    .map((line) => {
+      const [description, quantity, unitPrice, nettCost] = line
+        .split('|')
+        .map((part) => part.trim())
+
+      return {
+        description,
+        quantity: quantity || '1',
+        unitPrice: unitPrice || '',
+        nettCost: nettCost || '',
+      }
+    })
+
+  if (rows.length > 0) {
+    return rows
+  }
+
+  return [
+    {
+      description: booking.itemDescription || booking.packageName,
+      quantity: booking.quantity || '1',
+      unitPrice: booking.unitPrice || booking.sellingPrice,
+      nettCost: booking.nettCost,
+    },
+  ]
+}
+
 function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
-  const parsedItems = getLines(booking.lineItems, []).map((line) => {
+  const parsedItems = getLines(booking.lineItems, [])
+    .filter((line) => line.includes('|'))
+    .map((line) => {
     const [description, quantity, unitPrice, nettCost] = line
       .split('|')
       .map((part) => part.trim())
@@ -391,6 +447,8 @@ function App() {
   const [authMessage, setAuthMessage] = useState('')
   const [isAuthLoading, setIsAuthLoading] = useState(true)
   const [dataError, setDataError] = useState('')
+  const [dataMessage, setDataMessage] = useState('')
+  const [isPdfExporting, setIsPdfExporting] = useState(false)
   const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
   const [invoiceForm, setInvoiceForm] = useState({
@@ -676,15 +734,85 @@ function App() {
     field: Field,
     value: BookingFormData[Field],
   ) {
+    setDataError('')
+    setDataMessage('')
     setBookingForm((currentForm) => ({
       ...currentForm,
       [field]: value,
     }))
   }
 
+  function updateLineItem(index: number, field: keyof EditableLineItem, value: string) {
+    setDataError('')
+    setDataMessage('')
+    const currentRows = getEditableLineItems(bookingForm)
+    const nextRows = currentRows.map((item, itemIndex) =>
+      itemIndex === index ? { ...item, [field]: value } : item,
+    )
+
+    setBookingForm((currentForm) => ({
+      ...currentForm,
+      lineItems: serializeLineItems(nextRows),
+    }))
+  }
+
+  function addLineItem() {
+    const nextRows = [
+      ...getEditableLineItems(bookingForm),
+      { description: '', quantity: '1', unitPrice: '', nettCost: '' },
+    ]
+
+    setBookingForm((currentForm) => ({
+      ...currentForm,
+      lineItems: serializeLineItems(nextRows),
+    }))
+  }
+
+  function removeLineItem(index: number) {
+    const nextRows = getEditableLineItems(bookingForm).filter(
+      (_item, itemIndex) => itemIndex !== index,
+    )
+
+    setBookingForm((currentForm) => ({
+      ...currentForm,
+      lineItems: serializeLineItems(nextRows.length > 0 ? nextRows : [
+        { description: '', quantity: '1', unitPrice: '', nettCost: '' },
+      ]),
+    }))
+  }
+
+  function validateBookingForm() {
+    if (!bookingForm.clientName.trim()) {
+      return 'Enter the client name before saving.'
+    }
+
+    if (!bookingForm.packageName.trim()) {
+      return 'Enter the package or project name before saving.'
+    }
+
+    if (!bookingForm.itemDescription.trim()) {
+      return 'Enter the main item description before saving.'
+    }
+
+    const hasPrice = getBookingClientTotal(bookingForm) > 0 || parseAmount(bookingForm.sellingPrice) > 0
+
+    if (!hasPrice) {
+      return 'Enter a selling/client price or at least one priced line item.'
+    }
+
+    return ''
+  }
+
   async function handleSaveBooking(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const isEditing = Boolean(editingBookingId)
+    const validationError = validateBookingForm()
+
+    if (validationError) {
+      setDataError(validationError)
+      setDataMessage('')
+      return
+    }
 
     const booking: BookingRecord = {
       ...bookingForm,
@@ -715,6 +843,7 @@ function App() {
         updatedAt: new Date().toISOString(),
       }, { merge: true })
       setDataError('')
+      setDataMessage(isEditing ? 'Booking changes saved successfully.' : 'Inquiry saved successfully.')
       setSelectedBookingId(booking.id)
       setEditingBookingId('')
       setScreen(isEditing ? 'booking-detail' : 'home')
@@ -724,6 +853,7 @@ function App() {
           ? 'Booking updated locally, but cloud update failed.'
           : 'Booking saved locally, but cloud save failed.',
       )
+      setDataMessage('')
       setSelectedBookingId(booking.id)
       setEditingBookingId('')
       setScreen(isEditing ? 'booking-detail' : 'home')
@@ -820,9 +950,11 @@ function App() {
         merge: true,
       })
       setDataError('')
+      setDataMessage('Invoice payment details saved successfully.')
       setScreen('invoice-preview')
     } catch {
       setDataError('Invoice saved locally, but cloud update failed.')
+      setDataMessage('')
       setScreen('invoice-preview')
     }
   }
@@ -854,8 +986,10 @@ function App() {
 
       await deleteDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId))
       setDataError('')
+      setDataMessage('Project deleted successfully.')
     } catch {
       setDataError('Project deleted locally, but cloud delete failed.')
+      setDataMessage('')
     } finally {
       setSelectedBookingId('')
       setScreen('home')
@@ -904,8 +1038,53 @@ function App() {
     }
   }
 
-  function handlePrintPreview() {
-    window.print()
+  async function handlePrintPreview() {
+    const printableArea = document.querySelector<HTMLElement>('.print-document')
+
+    if (!printableArea) {
+      window.print()
+      return
+    }
+
+    try {
+      setIsPdfExporting(true)
+      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf'),
+      ])
+      const canvas = await html2canvas(printableArea, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        useCORS: true,
+      })
+      const pdf = new jsPDF('p', 'mm', 'a4')
+      const pageWidth = pdf.internal.pageSize.getWidth()
+      const pageHeight = pdf.internal.pageSize.getHeight()
+      const imgWidth = pageWidth
+      const imgHeight = (canvas.height * imgWidth) / canvas.width
+      const imageData = canvas.toDataURL('image/png')
+      let remainingHeight = imgHeight
+      let yPosition = 0
+
+      pdf.addImage(imageData, 'PNG', 0, yPosition, imgWidth, imgHeight)
+      remainingHeight -= pageHeight
+
+      while (remainingHeight > 0) {
+        yPosition -= pageHeight
+        pdf.addPage()
+        pdf.addImage(imageData, 'PNG', 0, yPosition, imgWidth, imgHeight)
+        remainingHeight -= pageHeight
+      }
+
+      const currentBooking = bookings.find((booking) => booking.id === selectedBookingId)
+      const fileName = `${currentBooking?.quotationNo || currentBooking?.id || 'lion-lamb-document'}.pdf`
+      pdf.save(fileName.replace(/[^\w.-]+/g, '_'))
+    } catch {
+      setDataError('PDF download failed. Use Ctrl+P and turn off browser headers and footers.')
+      window.print()
+    } finally {
+      setIsPdfExporting(false)
+    }
   }
 
   if (screen === 'splash') {
@@ -1165,6 +1344,11 @@ function App() {
 
   if (screen === 'data-form') {
     const isEditingBooking = Boolean(editingBookingId)
+    const editableLineItems = getEditableLineItems(bookingForm)
+    const lineItemTotals = getBookingLineItems(bookingForm)
+    const lineItemClientTotal = sumLineItems(lineItemTotals, 'total')
+    const lineItemNettTotal = sumLineItems(lineItemTotals, 'nettTotal')
+    const lineItemProfit = sumLineItems(lineItemTotals, 'profit')
 
     return (
       <main className="data-screen">
@@ -1206,6 +1390,9 @@ function App() {
               {isEditingBooking ? 'Save Changes' : 'Save Inquiry'}
             </button>
           </header>
+
+          {dataError && <p className="data-alert error">{dataError}</p>}
+          {dataMessage && <p className="data-alert info">{dataMessage}</p>}
 
           <section className="form-section">
             <div className="form-section-heading">
@@ -1380,19 +1567,109 @@ function App() {
                 />
               </label>
             </div>
-            <label className="textarea-field">
-              Line items
-              <textarea
-                value={bookingForm.lineItems}
-                onChange={(event) =>
-                  updateBookingField('lineItems', event.target.value)
-                }
-                placeholder="One item per line: Description | Qty | Client price | Supplier nett"
-              />
-            </label>
+            <div className="line-items-panel">
+              <div className="line-items-heading">
+                <div>
+                  <p>Charges / price breakdown</p>
+                  <h3>Line items</h3>
+                  <span>
+                    Use one row per service. Client price is what the customer
+                    pays. Supplier nett is the agency cost.
+                  </span>
+                </div>
+                <button type="button" onClick={addLineItem}>
+                  <Plus size={16} />
+                  Add item
+                </button>
+              </div>
+
+              <div className="line-items-table" role="table" aria-label="Line items">
+                <div className="line-items-row header" role="row">
+                  <span>Service / item</span>
+                  <span>Qty</span>
+                  <span>Client price</span>
+                  <span>Supplier nett</span>
+                  <span>Profit</span>
+                  <span>Action</span>
+                </div>
+                {editableLineItems.map((item, index) => {
+                  const quantity = parseQuantity(item.quantity)
+                  const clientPrice = parseAmount(item.unitPrice)
+                  const supplierNett = parseAmount(item.nettCost)
+                  const profit = quantity * (clientPrice - supplierNett)
+
+                  return (
+                    <div className="line-items-row" role="row" key={index}>
+                      <input
+                        value={item.description}
+                        onChange={(event) =>
+                          updateLineItem(index, 'description', event.target.value)
+                        }
+                        placeholder="Rebooking fee, tour package, hotel add-on"
+                      />
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={item.quantity}
+                        onChange={(event) =>
+                          updateLineItem(index, 'quantity', event.target.value)
+                        }
+                        placeholder="1"
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={item.unitPrice}
+                        onChange={(event) =>
+                          updateLineItem(index, 'unitPrice', event.target.value)
+                        }
+                        placeholder="7440"
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={item.nettCost}
+                        onChange={(event) =>
+                          updateLineItem(index, 'nettCost', event.target.value)
+                        }
+                        placeholder="5221"
+                      />
+                      <strong>{formatAmount(String(profit))}</strong>
+                      <button
+                        type="button"
+                        className="remove-line-btn"
+                        onClick={() => removeLineItem(index)}
+                        disabled={editableLineItems.length === 1}
+                        title="Remove item"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div className="line-items-summary">
+                <article>
+                  <span>Client total</span>
+                  <strong>{formatAmount(String(lineItemClientTotal))}</strong>
+                </article>
+                <article>
+                  <span>Supplier nett total</span>
+                  <strong>{formatAmount(String(lineItemNettTotal))}</strong>
+                </article>
+                <article>
+                  <span>Estimated profit</span>
+                  <strong>{formatAmount(String(lineItemProfit))}</strong>
+                </article>
+              </div>
+            </div>
             <p className="field-help">
-              Use line items when quotation, invoice, P.O., or breakdown needs
-              more than one row. Example: Adult package | 4 | 17650 | 15000
+              Put long airline/rebooking notes under Flight details or Special
+              instructions. Keep line items for prices only.
             </p>
           </section>
 
@@ -2031,7 +2308,8 @@ function App() {
             <button
               type="button"
               onClick={handlePrintPreview}
-              title="Print / Save PDF"
+              title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
+              disabled={isPdfExporting}
             >
               <Printer size={18} />
             </button>
@@ -2045,7 +2323,7 @@ function App() {
           </div>
         </nav>
 
-        <section className="quotation-preview">
+        <section className="quotation-preview print-document">
           <header className="quote-header">
             <div className="quote-company">
               <strong>LION AND LAMB TRAVEL</strong>
@@ -2355,7 +2633,8 @@ function App() {
             <button
               type="button"
               onClick={handlePrintPreview}
-              title="Print / Save PDF"
+              title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
+              disabled={isPdfExporting}
             >
               <Printer size={18} />
             </button>
@@ -2376,7 +2655,7 @@ function App() {
           </div>
         </nav>
 
-        <section className="invoice-preview">
+        <section className="invoice-preview print-document">
           <header className="invoice-header">
             <img src={logo} alt="Lion and Lamb Travel logo" />
             <div>
@@ -2564,7 +2843,8 @@ function App() {
             <button
               type="button"
               onClick={handlePrintPreview}
-              title="Print / Save PDF"
+              title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
+              disabled={isPdfExporting}
             >
               <Printer size={18} />
             </button>
@@ -2578,7 +2858,7 @@ function App() {
           </div>
         </nav>
 
-        <section className="po-preview">
+        <section className="po-preview print-document">
           <header className="po-header">
             <img src={logo} alt="Lion and Lamb Travel logo" />
             <div>
@@ -2781,7 +3061,8 @@ function App() {
             <button
               type="button"
               onClick={handlePrintPreview}
-              title="Print / Save PDF"
+              title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
+              disabled={isPdfExporting}
             >
               <Printer size={18} />
             </button>
@@ -2795,7 +3076,7 @@ function App() {
           </div>
         </nav>
 
-        <section className="voucher-preview">
+        <section className="voucher-preview print-document">
           <header className="voucher-header">
             <img src={logo} alt="Lion and Lamb Travel logo" />
             <div>
@@ -2955,7 +3236,8 @@ function App() {
             <button
               type="button"
               onClick={handlePrintPreview}
-              title="Print / Save PDF"
+              title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
+              disabled={isPdfExporting}
             >
               <Printer size={18} />
             </button>
@@ -2969,7 +3251,7 @@ function App() {
           </div>
         </nav>
 
-        <section className="breakdown-preview">
+        <section className="breakdown-preview print-document">
           <header className="breakdown-header">
             <h1>QUOTATION: {selectedBooking.quotationNo || selectedBooking.id}</h1>
             <strong>INTERNAL BREAKDOWN</strong>
@@ -3169,6 +3451,7 @@ function App() {
           </div>
 
           {dataError && <p className="data-alert error">{dataError}</p>}
+          {dataMessage && <p className="data-alert info">{dataMessage}</p>}
 
           <label className="booking-search">
             <Search size={17} />
@@ -3177,6 +3460,16 @@ function App() {
               onChange={(event) => setSearchTerm(event.target.value)}
               placeholder="Search client, package, destination, or quotation no."
             />
+            {searchTerm.trim() && (
+              <button
+                type="button"
+                className="clear-search-btn"
+                onClick={() => setSearchTerm('')}
+                title="Clear search"
+              >
+                <X size={15} />
+              </button>
+            )}
           </label>
 
           <div className="booking-tabs" role="tablist" aria-label="Booking lists">
