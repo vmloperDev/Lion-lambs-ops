@@ -1396,7 +1396,7 @@ function App() {
 
           <section className="form-section">
             <div className="form-section-heading">
-              <p>Client</p>
+              <p>01 · Client</p>
               <h2>Client info</h2>
             </div>
             <div className="field-grid three">
@@ -1437,7 +1437,7 @@ function App() {
 
           <section className="form-section">
             <div className="form-section-heading">
-              <p>Travel</p>
+              <p>02 · Travel</p>
               <h2>Package details</h2>
             </div>
             <div className="field-grid three">
@@ -1515,7 +1515,7 @@ function App() {
 
           <section className="form-section">
             <div className="form-section-heading">
-              <p>Quotation</p>
+              <p>03 · Quotation</p>
               <h2>Client-facing quote basics</h2>
             </div>
             <div className="field-grid four">
@@ -1675,7 +1675,7 @@ function App() {
 
           <section className="form-section internal-section">
             <div className="form-section-heading">
-              <p>Internal</p>
+              <p>04 · Internal</p>
               <h2>Supplier and costing</h2>
             </div>
             <div className="field-grid three">
@@ -1734,7 +1734,7 @@ function App() {
 
           <section className="form-section">
             <div className="form-section-heading">
-              <p>Invoice</p>
+              <p>05 · Invoice</p>
               <h2>Payment details</h2>
             </div>
             <div className="field-grid three">
@@ -1833,7 +1833,7 @@ function App() {
 
           <section className="form-section">
             <div className="form-section-heading">
-              <p>Voucher</p>
+              <p>06 · Voucher</p>
               <h2>Travel confirmation details</h2>
             </div>
             <section className="mini-guide">
@@ -1907,7 +1907,7 @@ function App() {
 
           <section className="form-section">
             <div className="form-section-heading">
-              <p>Package</p>
+              <p>07 · Package</p>
               <h2>Inclusions and exclusions</h2>
             </div>
             <div className="field-grid two">
@@ -1941,7 +1941,7 @@ function App() {
 
           <section className="form-section">
             <div className="form-section-heading">
-              <p>Notes</p>
+              <p>08 · Notes</p>
               <h2>Remarks</h2>
             </div>
             <label className="textarea-field">
