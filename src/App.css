@@ -457,6 +457,22 @@ button {
   color: #173a6a;
 }
 
+.nav-actions .nav-text-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: auto;
+  min-width: 42px;
+  padding: 0 13px;
+  white-space: nowrap;
+}
+
+.nav-text-action span {
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
 .home-hero {
   display: grid;
   grid-template-rows: auto minmax(180px, 1fr);
@@ -942,6 +958,24 @@ button {
   line-height: 1.45;
 }
 
+.mini-guide {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #cfe5ea;
+  border-radius: 12px;
+  background: #e8f4f6;
+  color: #1f6576;
+  font-size: 0.84rem;
+  font-weight: 850;
+  line-height: 1.45;
+}
+
+.mini-guide p {
+  margin: 0;
+}
+
 .line-items-panel {
   display: grid;
   gap: 14px;
@@ -1406,7 +1440,7 @@ button {
 
 .folder-card {
   display: grid;
-  align-content: start;
+  grid-template-rows: auto auto auto minmax(58px, 1fr) minmax(54px, auto) auto;
   gap: 10px;
   min-height: 280px;
   padding: 16px;
@@ -1465,11 +1499,13 @@ button {
   font-weight: 800;
 }
 
-.folder-card button {
+.folder-card button,
+.folder-card-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
+  width: 100%;
   min-height: 40px;
   margin-top: auto;
   border: 0;
@@ -2586,6 +2622,19 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .line-items-heading {
+    flex-direction: column;
+  }
+
+  .line-items-heading button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .line-items-summary {
+    grid-template-columns: 1fr;
+  }
+
   .booking-tabs {
     display: flex;
     overflow-x: auto;
@@ -2736,6 +2785,39 @@ button {
   .document-panel {
     padding: 14px;
     border-radius: 14px;
+  }
+
+  .line-items-panel {
+    padding: 12px;
+  }
+
+  .line-items-table {
+    overflow-x: visible;
+  }
+
+  .line-items-row.header {
+    display: none;
+  }
+
+  .line-items-row {
+    grid-template-columns: 1fr;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid #e2eaf3;
+    border-radius: 12px;
+    background: #fff;
+  }
+
+  .line-items-row input,
+  .line-items-row strong,
+  .remove-line-btn {
+    width: 100%;
+  }
+
+  .line-items-row strong {
+    padding: 10px;
+    border-radius: 10px;
+    background: #e8f4f6;
   }
 
   .detail-header {

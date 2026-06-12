@@ -1836,15 +1836,22 @@ function App() {
               <p>Voucher</p>
               <h2>Travel confirmation details</h2>
             </div>
+            <section className="mini-guide">
+              <ListChecks size={18} />
+              <p>
+                For ticket rebooking, paste the old and new flight schedule in
+                Flight / Rebooking details below. Keep price rows in Line items.
+              </p>
+            </section>
             <div className="field-grid three">
               <label>
-                Flight details
+                Flight / Rebooking details
                 <input
                   value={bookingForm.flightDetails}
                   onChange={(event) =>
                     updateBookingField('flightDetails', event.target.value)
                   }
-                  placeholder="CRK-HKG 07:00AM"
+                  placeholder="Original flight and new flight summary"
                 />
               </label>
               <label>
@@ -1886,6 +1893,16 @@ function App() {
                 placeholder="One itinerary note per line"
               />
             </label>
+            <label className="textarea-field">
+              Detailed airline / rebooking notes
+              <textarea
+                value={bookingForm.specialInstructions}
+                onChange={(event) =>
+                  updateBookingField('specialInstructions', event.target.value)
+                }
+                placeholder="Paste long airline text here, e.g. original schedule, new schedule, fare rule, non-user fee, reissue notes..."
+              />
+            </label>
           </section>
 
           <section className="form-section">
@@ -1915,16 +1932,11 @@ function App() {
                 />
               </label>
             </div>
-            <label className="textarea-field">
-              Special instructions
-              <textarea
-                value={bookingForm.specialInstructions}
-                onChange={(event) =>
-                  updateBookingField('specialInstructions', event.target.value)
-                }
-                placeholder="Supplier instructions, voucher reminders, booking notes..."
-              />
-            </label>
+            <p className="field-help">
+              Supplier instructions and rebooking notes are handled in the
+              Travel confirmation section above so they appear in the correct
+              documents.
+            </p>
           </section>
 
           <section className="form-section">
@@ -2208,11 +2220,13 @@ function App() {
           </div>
           <div className="nav-actions">
             <button
+              className="nav-text-action"
               type="button"
               onClick={() => setScreen('booking-detail')}
-              title="Back"
+              title="Back to booking workspace"
             >
               <X size={18} />
+              <span>Booking workspace</span>
             </button>
           </div>
         </nav>
@@ -2247,7 +2261,11 @@ function App() {
                 <strong>{item.label}</strong>
                 <p>{item.description}</p>
                 <small>{item.requirement}</small>
-                <button type="button" onClick={() => openDocumentByTitle(item.title)}>
+                <button
+                  type="button"
+                  className="folder-card-action"
+                  onClick={() => openDocumentByTitle(item.title)}
+                >
                   {item.title === 'Invoice' ? 'Edit invoice' : 'Open preview'}
                   <ArrowRight size={17} />
                 </button>
@@ -2306,12 +2324,14 @@ function App() {
           </div>
           <div className="nav-actions">
             <button
+              className="nav-text-action"
               type="button"
               onClick={handlePrintPreview}
               title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
               disabled={isPdfExporting}
             >
               <Printer size={18} />
+              <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
             </button>
             <button
               type="button"
@@ -2631,12 +2651,14 @@ function App() {
           </div>
           <div className="nav-actions">
             <button
+              className="nav-text-action"
               type="button"
               onClick={handlePrintPreview}
               title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
               disabled={isPdfExporting}
             >
               <Printer size={18} />
+              <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
             </button>
             <button
               type="button"
@@ -2841,12 +2863,14 @@ function App() {
           </div>
           <div className="nav-actions">
             <button
+              className="nav-text-action"
               type="button"
               onClick={handlePrintPreview}
               title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
               disabled={isPdfExporting}
             >
               <Printer size={18} />
+              <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
             </button>
             <button
               type="button"
@@ -3059,12 +3083,14 @@ function App() {
           </div>
           <div className="nav-actions">
             <button
+              className="nav-text-action"
               type="button"
               onClick={handlePrintPreview}
               title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
               disabled={isPdfExporting}
             >
               <Printer size={18} />
+              <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
             </button>
             <button
               type="button"
@@ -3234,12 +3260,14 @@ function App() {
           </div>
           <div className="nav-actions">
             <button
+              className="nav-text-action"
               type="button"
               onClick={handlePrintPreview}
               title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
               disabled={isPdfExporting}
             >
               <Printer size={18} />
+              <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
             </button>
             <button
               type="button"
