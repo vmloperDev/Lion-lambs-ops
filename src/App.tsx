@@ -1544,12 +1544,16 @@ function App() {
                 Quantity
                 <input
                   type="number"
+                  inputMode="numeric"
                   min="1"
                   step="1"
                   value={bookingForm.quantity}
                   onChange={(event) =>
                     updateBookingField('quantity', event.target.value)
                   }
+                  onKeyDown={(e) => {
+                    if (['e','E','+','-','.'].includes(e.key)) e.preventDefault()
+                  }}
                   placeholder="2"
                 />
               </label>
@@ -1557,12 +1561,16 @@ function App() {
                 Unit price
                 <input
                   type="number"
+                  inputMode="decimal"
                   min="0"
                   step="0.01"
                   value={bookingForm.unitPrice}
                   onChange={(event) =>
                     updateBookingField('unitPrice', event.target.value)
                   }
+                  onKeyDown={(e) => {
+                    if (['e','E','+','-'].includes(e.key)) e.preventDefault()
+                  }}
                   placeholder="18888"
                 />
               </label>
@@ -1597,6 +1605,7 @@ function App() {
                   const clientPrice = parseAmount(item.unitPrice)
                   const supplierNett = parseAmount(item.nettCost)
                   const profit = quantity * (clientPrice - supplierNett)
+                  const profitClass = profit > 0 ? 'positive' : profit < 0 ? 'negative' : 'zero'
 
                   return (
                     <div className="line-items-row" role="row" key={index}>
@@ -1609,35 +1618,49 @@ function App() {
                       />
                       <input
                         type="number"
+                        inputMode="numeric"
                         min="1"
                         step="1"
                         value={item.quantity}
                         onChange={(event) =>
                           updateLineItem(index, 'quantity', event.target.value)
                         }
+                        onKeyDown={(e) => {
+                          if (['e','E','+','-','.'].includes(e.key)) e.preventDefault()
+                        }}
                         placeholder="1"
                       />
                       <input
                         type="number"
+                        inputMode="decimal"
                         min="0"
                         step="0.01"
                         value={item.unitPrice}
                         onChange={(event) =>
                           updateLineItem(index, 'unitPrice', event.target.value)
                         }
-                        placeholder="7440"
+                        onKeyDown={(e) => {
+                          if (['e','E','+','-'].includes(e.key)) e.preventDefault()
+                        }}
+                        placeholder="0.00"
                       />
                       <input
                         type="number"
+                        inputMode="decimal"
                         min="0"
                         step="0.01"
                         value={item.nettCost}
                         onChange={(event) =>
                           updateLineItem(index, 'nettCost', event.target.value)
                         }
-                        placeholder="5221"
+                        onKeyDown={(e) => {
+                          if (['e','E','+','-'].includes(e.key)) e.preventDefault()
+                        }}
+                        placeholder="0.00"
                       />
-                      <strong>{formatAmount(String(profit))}</strong>
+                      <div className={`line-item-profit ${profitClass}`}>
+                        {formatAmount(String(profit))}
+                      </div>
                       <button
                         type="button"
                         className="remove-line-btn"
@@ -1663,7 +1686,7 @@ function App() {
                 </article>
                 <article>
                   <span>Estimated profit</span>
-                  <strong>{formatAmount(String(lineItemProfit))}</strong>
+                  <strong className={lineItemProfit > 0 ? 'profit-total' : lineItemProfit < 0 ? 'profit-negative' : ''}>{formatAmount(String(lineItemProfit))}</strong>
                 </article>
               </div>
             </div>
@@ -1703,12 +1726,16 @@ function App() {
                 Nett cost
                 <input
                   type="number"
+                  inputMode="decimal"
                   min="0"
                   step="0.01"
                   value={bookingForm.nettCost}
                   onChange={(event) =>
                     updateBookingField('nettCost', event.target.value)
                   }
+                  onKeyDown={(e) => {
+                    if (['e','E','+','-'].includes(e.key)) e.preventDefault()
+                  }}
                   placeholder="Internal only"
                 />
               </label>
@@ -1716,12 +1743,16 @@ function App() {
                 Selling price
                 <input
                   type="number"
+                  inputMode="decimal"
                   min="0"
                   step="0.01"
                   value={bookingForm.sellingPrice}
                   onChange={(event) =>
                     updateBookingField('sellingPrice', event.target.value)
                   }
+                  onKeyDown={(e) => {
+                    if (['e','E','+','-'].includes(e.key)) e.preventDefault()
+                  }}
                   placeholder="Client price"
                 />
               </label>
@@ -1752,13 +1783,17 @@ function App() {
                 Amount paid
                 <input
                   type="number"
+                  inputMode="decimal"
                   min="0"
                   step="0.01"
                   value={bookingForm.invoiceAmountPaid}
                   onChange={(event) =>
                     updateBookingField('invoiceAmountPaid', event.target.value)
                   }
-                  placeholder="PHP 0.00"
+                  onKeyDown={(e) => {
+                    if (['e','E','+','-'].includes(e.key)) e.preventDefault()
+                  }}
+                  placeholder="0.00"
                 />
               </label>
               <label>
