@@ -120,16 +120,26 @@ type BookingLineItem = {
   total: number
   nettTotal: number
   profit: number
+  currency: string
 }
 type EditableLineItem = {
   description: string
   quantity: string
   unitPrice: string
   nettCost: string
+  currency: string
 }
 
 const bookingStorageKey = 'lion-lamb-bookings'
 const bookingsCollectionKey = 'bookings'
+const lineItemDescriptionOptions = [
+  'Philippine Travel Tour',
+  'Add-on Luggage - One Way',
+  'Add-on Luggage - Road Trip',
+  'Tipping',
+  'Visa',
+]
+const currencyOptions = ['PHP', 'USD']
 const bookingListFilters: Array<{ label: string; value: BookingListFilter }> = [
   { label: 'All', value: 'All' },
   { label: 'Inquiries', value: 'Inquiry' },
@@ -291,14 +301,15 @@ function normalizeBooking(booking: BookingRecord): BookingRecord {
   }
 }
 
-function formatAmount(value?: string) {
+function formatAmount(value?: string, currency?: string) {
   const amount = parseAmount(value)
+  const code = currency || 'PHP'
 
   if (!Number.isFinite(amount) || amount <= 0) {
-    return 'PHP 0.00'
+    return `${code} 0.00`
   }
 
-  return `PHP ${amount.toLocaleString('en-PH', {
+  return `${code} ${amount.toLocaleString(code === 'USD' ? 'en-US' : 'en-PH', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`
@@ -327,6 +338,7 @@ function serializeLineItems(items: EditableLineItem[]) {
         item.quantity.trim() || '1',
         item.unitPrice.trim() || '0',
         item.nettCost.trim() || '0',
+        item.currency.trim() || 'PHP',
       ].join(' | '),
     )
     .join('\n')
@@ -336,7 +348,7 @@ function getEditableLineItems(booking: BookingFormData): EditableLineItem[] {
   const rows = getLines(booking.lineItems, [])
     .filter((line) => line.includes('|'))
     .map((line) => {
-      const [description, quantity, unitPrice, nettCost] = line
+      const [description, quantity, unitPrice, nettCost, currency] = line
         .split('|')
         .map((part) => part.trim())
 
@@ -345,6 +357,7 @@ function getEditableLineItems(booking: BookingFormData): EditableLineItem[] {
         quantity: quantity || '1',
         unitPrice: unitPrice || '',
         nettCost: nettCost || '',
+        currency: currency || 'PHP',
       }
     })
 
@@ -358,6 +371,7 @@ function getEditableLineItems(booking: BookingFormData): EditableLineItem[] {
       quantity: booking.quantity || '1',
       unitPrice: booking.unitPrice || booking.sellingPrice,
       nettCost: booking.nettCost,
+      currency: 'PHP',
     },
   ]
 }
@@ -366,7 +380,7 @@ function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
   const parsedItems = getLines(booking.lineItems, [])
     .filter((line) => line.includes('|'))
     .map((line) => {
-    const [description, quantity, unitPrice, nettCost] = line
+    const [description, quantity, unitPrice, nettCost, currency] = line
       .split('|')
       .map((part) => part.trim())
     const parsedQuantity = parseQuantity(quantity)
@@ -381,6 +395,7 @@ function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
       total: parsedQuantity * parsedUnitPrice,
       nettTotal: parsedQuantity * parsedNettCost,
       profit: parsedQuantity * (parsedUnitPrice - parsedNettCost),
+      currency: currency || 'PHP',
     }
   })
 
@@ -401,12 +416,23 @@ function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
       total: quantity * unitPrice,
       nettTotal: quantity * nettCost,
       profit: quantity * (unitPrice - nettCost),
+      currency: 'PHP',
     },
   ]
 }
 
 function sumLineItems(items: BookingLineItem[], field: 'total' | 'nettTotal' | 'profit') {
   return items.reduce((sum, item) => sum + item[field], 0)
+}
+
+function getLineItemCurrencies(items: BookingLineItem[]) {
+  const currencies = Array.from(new Set(items.map((item) => item.currency || 'PHP')))
+
+  return currencies.length > 0 ? currencies : ['PHP']
+}
+
+function getPrimaryLineItemCurrency(items: BookingLineItem[]) {
+  return items[0]?.currency || 'PHP'
 }
 
 function getBookingClientTotal(booking: BookingFormData) {
@@ -763,7 +789,7 @@ function App() {
   function addLineItem() {
     const nextRows = [
       ...getEditableLineItems(bookingForm),
-      { description: '', quantity: '1', unitPrice: '', nettCost: '' },
+      { description: '', quantity: '1', unitPrice: '', nettCost: '', currency: 'PHP' },
     ]
 
     setBookingForm((currentForm) => ({
@@ -780,7 +806,7 @@ function App() {
     setBookingForm((currentForm) => ({
       ...currentForm,
       lineItems: serializeLineItems(nextRows.length > 0 ? nextRows : [
-        { description: '', quantity: '1', unitPrice: '', nettCost: '' },
+        { description: '', quantity: '1', unitPrice: '', nettCost: '', currency: 'PHP' },
       ]),
     }))
   }
@@ -1350,9 +1376,8 @@ function App() {
     const isEditingBooking = Boolean(editingBookingId)
     const editableLineItems = getEditableLineItems(bookingForm)
     const lineItemTotals = getBookingLineItems(bookingForm)
-    const lineItemClientTotal = sumLineItems(lineItemTotals, 'total')
-    const lineItemNettTotal = sumLineItems(lineItemTotals, 'nettTotal')
-    const lineItemProfit = sumLineItems(lineItemTotals, 'profit')
+    const lineItemCurrencies = getLineItemCurrencies(lineItemTotals)
+    const showCurrencyPerGroup = lineItemCurrencies.length > 1
 
     return (
       <main className="data-screen">
@@ -1599,6 +1624,7 @@ function App() {
                 <div className="line-items-row header" role="row">
                   <span>Service / item</span>
                   <span>Qty</span>
+                  <span>Currency</span>
                   <span>Client price</span>
                   <span>Supplier nett</span>
                   <span>Profit</span>
@@ -1610,16 +1636,27 @@ function App() {
                   const supplierNett = parseAmount(item.nettCost)
                   const profit = quantity * (clientPrice - supplierNett)
                   const profitClass = profit > 0 ? 'positive' : profit < 0 ? 'negative' : 'zero'
+                  const itemCurrency = item.currency || 'PHP'
 
                   return (
                     <div className="line-items-row" role="row" key={index}>
-                      <input
+                      <select
                         value={item.description}
                         onChange={(event) =>
                           updateLineItem(index, 'description', event.target.value)
                         }
-                        placeholder="Rebooking fee, tour package, hotel add-on"
-                      />
+                      >
+                        <option value="">Select item</option>
+                        {item.description &&
+                          !lineItemDescriptionOptions.includes(item.description) && (
+                            <option value={item.description}>{item.description}</option>
+                          )}
+                        {lineItemDescriptionOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
                       <input
                         type="number"
                         inputMode="numeric"
@@ -1634,6 +1671,18 @@ function App() {
                         }}
                         placeholder="1"
                       />
+                      <select
+                        value={itemCurrency}
+                        onChange={(event) =>
+                          updateLineItem(index, 'currency', event.target.value)
+                        }
+                      >
+                        {currencyOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
                       <input
                         type="number"
                         inputMode="decimal"
@@ -1663,7 +1712,7 @@ function App() {
                         placeholder="0.00"
                       />
                       <div className={`line-item-profit ${profitClass}`}>
-                        {formatAmount(String(profit))}
+                        {formatAmount(String(profit), itemCurrency)}
                       </div>
                       <button
                         type="button"
@@ -1679,20 +1728,31 @@ function App() {
                 })}
               </div>
 
-              <div className="line-items-summary">
-                <article>
-                  <span>Client total</span>
-                  <strong>{formatAmount(String(lineItemClientTotal))}</strong>
-                </article>
-                <article>
-                  <span>Supplier nett total</span>
-                  <strong>{formatAmount(String(lineItemNettTotal))}</strong>
-                </article>
-                <article>
-                  <span>Estimated profit</span>
-                  <strong className={lineItemProfit > 0 ? 'profit-total' : lineItemProfit < 0 ? 'profit-negative' : ''}>{formatAmount(String(lineItemProfit))}</strong>
-                </article>
-              </div>
+              {lineItemCurrencies.map((currency) => {
+                const currencyItems = lineItemTotals.filter(
+                  (item) => (item.currency || 'PHP') === currency,
+                )
+                const clientTotal = sumLineItems(currencyItems, 'total')
+                const nettTotal = sumLineItems(currencyItems, 'nettTotal')
+                const profitTotal = sumLineItems(currencyItems, 'profit')
+
+                return (
+                  <div className="line-items-summary" key={currency}>
+                    <article>
+                      <span>Client total{showCurrencyPerGroup ? ` (${currency})` : ''}</span>
+                      <strong>{formatAmount(String(clientTotal), currency)}</strong>
+                    </article>
+                    <article>
+                      <span>Supplier nett total{showCurrencyPerGroup ? ` (${currency})` : ''}</span>
+                      <strong>{formatAmount(String(nettTotal), currency)}</strong>
+                    </article>
+                    <article>
+                      <span>Estimated profit{showCurrencyPerGroup ? ` (${currency})` : ''}</span>
+                      <strong className={profitTotal > 0 ? 'profit-total' : profitTotal < 0 ? 'profit-negative' : ''}>{formatAmount(String(profitTotal), currency)}</strong>
+                    </article>
+                  </div>
+                )
+              })}
             </div>
             <p className="field-help">
               Put long airline/rebooking notes under Flight details or Special
@@ -2107,6 +2167,7 @@ function App() {
                 <strong>
                   {formatAmount(
                     String(getBookingClientTotal(selectedBooking)),
+                    getPrimaryLineItemCurrency(getBookingLineItems(selectedBooking)),
                   )}
                 </strong>
               </article>
@@ -2440,12 +2501,12 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {lineItems.map((item) => (
-                <tr key={item.description}>
+              {lineItems.map((item, index) => (
+                <tr key={`${item.description}-${index}`}>
                   <td>{item.description}</td>
                   <td>{item.quantity}</td>
-                  <td>{formatAmount(String(item.unitPrice))}</td>
-                  <td>{formatAmount(String(item.total))}</td>
+                  <td>{formatAmount(String(item.unitPrice), item.currency)}</td>
+                  <td>{formatAmount(String(item.total), item.currency)}</td>
                 </tr>
               ))}
             </tbody>
@@ -2510,6 +2571,7 @@ function App() {
 
     const lineItems = getBookingLineItems(selectedBooking)
     const totalPrice = sumLineItems(lineItems, 'total')
+    const lineItemsCurrency = getPrimaryLineItemCurrency(lineItems)
     const amountPaid = parseAmount(invoiceForm.invoiceAmountPaid)
     const balance = Math.max(totalPrice - amountPaid, 0)
 
@@ -2553,15 +2615,15 @@ function App() {
           <section className="invoice-edit-summary">
             <article>
               <span>Total invoice</span>
-              <strong>{formatAmount(String(totalPrice))}</strong>
+              <strong>{formatAmount(String(totalPrice), lineItemsCurrency)}</strong>
             </article>
             <article>
               <span>Amount paid</span>
-              <strong>{formatAmount(invoiceForm.invoiceAmountPaid)}</strong>
+              <strong>{formatAmount(invoiceForm.invoiceAmountPaid, lineItemsCurrency)}</strong>
             </article>
             <article>
               <span>Balance</span>
-              <strong>{formatAmount(String(balance))}</strong>
+              <strong>{formatAmount(String(balance), lineItemsCurrency)}</strong>
             </article>
           </section>
 
@@ -2665,6 +2727,7 @@ function App() {
 
     const lineItems = getBookingLineItems(selectedBooking)
     const totalPrice = sumLineItems(lineItems, 'total')
+    const lineItemsCurrency = getPrimaryLineItemCurrency(lineItems)
     const amountPaid = parseAmount(selectedBooking.invoiceAmountPaid)
     const balance = Math.max(totalPrice - amountPaid, 0)
     const paymentRecords = getLines(selectedBooking.paymentRecords, [
@@ -2740,7 +2803,7 @@ function App() {
             </div>
             <div className="amount-due-box">
               <span>Amount Due</span>
-              <strong>{formatAmount(String(balance))}</strong>
+              <strong>{formatAmount(String(balance), lineItemsCurrency)}</strong>
             </div>
           </section>
 
@@ -2759,12 +2822,12 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {lineItems.map((item) => (
-                <tr key={item.description}>
+              {lineItems.map((item, index) => (
+                <tr key={`${item.description}-${index}`}>
                   <td>{item.description}</td>
                   <td>{item.quantity}</td>
-                  <td>{formatAmount(String(item.unitPrice))}</td>
-                  <td>{formatAmount(String(item.total))}</td>
+                  <td>{formatAmount(String(item.unitPrice), item.currency)}</td>
+                  <td>{formatAmount(String(item.total), item.currency)}</td>
                 </tr>
               ))}
             </tbody>
@@ -2773,19 +2836,19 @@ function App() {
           <section className="invoice-total-panel">
             <div>
               <span>Subtotal</span>
-              <strong>{formatAmount(String(totalPrice))}</strong>
+              <strong>{formatAmount(String(totalPrice), lineItemsCurrency)}</strong>
             </div>
             <div>
               <span>Total</span>
-              <strong>{formatAmount(String(totalPrice))}</strong>
+              <strong>{formatAmount(String(totalPrice), lineItemsCurrency)}</strong>
             </div>
             <div>
               <span>Paid</span>
-              <strong>{formatAmount(selectedBooking.invoiceAmountPaid)}</strong>
+              <strong>{formatAmount(selectedBooking.invoiceAmountPaid, lineItemsCurrency)}</strong>
             </div>
             <div>
               <span>Balance</span>
-              <strong>{formatAmount(String(balance))}</strong>
+              <strong>{formatAmount(String(balance), lineItemsCurrency)}</strong>
             </div>
             <div className="payment-placeholder">
               <span>Payment Updates</span>
@@ -2888,6 +2951,7 @@ function App() {
 
     const lineItems = getBookingLineItems(selectedBooking)
     const amount = sumLineItems(lineItems, 'nettTotal') || sumLineItems(lineItems, 'total')
+    const lineItemsCurrency = getPrimaryLineItemCurrency(lineItems)
     const poNumber = selectedBooking.id.replace('BK-', new Date().getFullYear().toString())
 
     return (
@@ -3014,17 +3078,17 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {lineItems.map((item) => {
+              {lineItems.map((item, index) => {
                 const poUnitPrice = item.nettCost || item.unitPrice
                 const poAmount = item.nettTotal || item.total
 
                 return (
-                  <tr key={item.description}>
+                  <tr key={`${item.description}-${index}`}>
                     <td>{item.quantity}</td>
                     <td>{selectedBooking.pax || item.quantity}</td>
                     <td>{item.description}</td>
-                    <td>{formatAmount(String(poUnitPrice))}</td>
-                    <td>{formatAmount(String(poAmount))}</td>
+                    <td>{formatAmount(String(poUnitPrice), item.currency)}</td>
+                    <td>{formatAmount(String(poAmount), item.currency)}</td>
                   </tr>
                 )
               })}
@@ -3033,7 +3097,7 @@ function App() {
 
           <section className="po-total">
             <span>Total Amount:</span>
-            <strong>{formatAmount(String(amount))}</strong>
+            <strong>{formatAmount(String(amount), lineItemsCurrency)}</strong>
           </section>
 
           <section className="po-notes-grid">
@@ -3286,6 +3350,7 @@ function App() {
     const internalTotal = sumLineItems(lineItems, 'nettTotal')
     const clientTotal = sumLineItems(lineItems, 'total')
     const estimatedProfit = sumLineItems(lineItems, 'profit')
+    const lineItemsCurrency = getPrimaryLineItemCurrency(lineItems)
 
     return (
       <main className="preview-screen">
@@ -3362,13 +3427,13 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {lineItems.map((item) => (
-                <tr key={item.description}>
+              {lineItems.map((item, index) => (
+                <tr key={`${item.description}-${index}`}>
                   <td>{item.description}</td>
                   <td>{item.quantity}</td>
-                  <td>{formatAmount(String(item.nettTotal))}</td>
-                  <td>{formatAmount(String(item.total))}</td>
-                  <td>{formatAmount(String(item.profit))}</td>
+                  <td>{formatAmount(String(item.nettTotal), item.currency)}</td>
+                  <td>{formatAmount(String(item.total), item.currency)}</td>
+                  <td>{formatAmount(String(item.profit), item.currency)}</td>
                 </tr>
               ))}
             </tbody>
@@ -3377,15 +3442,15 @@ function App() {
           <section className="breakdown-total-grid">
             <div>
               <span>Supplier Nett Total</span>
-              <strong>{formatAmount(String(internalTotal))}</strong>
+              <strong>{formatAmount(String(internalTotal), lineItemsCurrency)}</strong>
             </div>
             <div>
               <span>Client Total</span>
-              <strong>{formatAmount(String(clientTotal))}</strong>
+              <strong>{formatAmount(String(clientTotal), lineItemsCurrency)}</strong>
             </div>
             <div>
               <span>Estimated Profit</span>
-              <strong>{formatAmount(String(estimatedProfit))}</strong>
+              <strong>{formatAmount(String(estimatedProfit), lineItemsCurrency)}</strong>
             </div>
           </section>
 
