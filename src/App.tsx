@@ -136,8 +136,12 @@ const lineItemDescriptionOptions = [
   'Philippine Travel Tour',
   'Add-on Luggage - One Way',
   'Add-on Luggage - Road Trip',
+  'Fuel Surcharge',
+  'Travel Insurance',
+  'Airport Transport Service',
   'Tipping',
   'Visa',
+  'Other',
 ]
 const currencyOptions = ['PHP', 'USD']
 const bookingListFilters: Array<{ label: string; value: BookingListFilter }> = [
