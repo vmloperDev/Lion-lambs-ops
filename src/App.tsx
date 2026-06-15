@@ -3107,10 +3107,8 @@ function App() {
         ? bookings.length
         : bookings.filter((b) => b.status === f.value).length,
     }),
-    {} as Record<BookingListFilter, number>,
+    {},
   )
-
-  const displayName = authUser?.displayName ?? (authUser?.email ? getDisplayName(authUser.email) : 'Team Member')
 
   return (
     <main className="home-screen">
@@ -3132,37 +3130,95 @@ function App() {
       <div className="home-body">
         {/* LEFT — hero + stats */}
         <section className="home-main">
-          <div className="home-hero">
-            <div className="hero-copy">
-              <p>Operations dashboard</p>
-              <h1>Good day, {displayName}</h1>
-              <span>{activeProjects} active booking record{activeProjects !== 1 ? 's' : ''} across all stages.</span>
-              <button type="button" className="create-project-btn login-btn" onClick={handleNewBooking}>
-                <Plus size={18} /> New Inquiry
+          <section className="dashboard-banner">
+            <img src={travelBanner} alt="" />
+            <div className="dashboard-banner-overlay"></div>
+            <div className="dashboard-banner-content">
+              <div>
+                <p>Operations dashboard</p>
+                <h1>
+                  Good day,{' '}
+                  {authUser?.displayName ??
+                    (authUser?.email ? getDisplayName(authUser.email) : 'Team Member')}
+                </h1>
+                <span>{activeProjects} active booking records</span>
+              </div>
+              <button
+                type="button"
+                className="create-project-btn"
+                onClick={handleNewBooking}
+              >
+                <Plus size={20} />
+                New Inquiry
               </button>
             </div>
-            <div className="hero-image">
-              <img src={travelHero} alt="Travel destination" />
-            </div>
-          </div>
+          </section>
 
-          <div className="dashboard-grid">
-            <article className="summary-card" onClick={() => setActiveBookingFilter('Inquiry')} style={{ cursor: 'pointer' }}>
-              <div className="summary-icon blue"><ClipboardList size={20} /></div>
-              <span>Inquiries</span>
+          <section className="dashboard-grid">
+            <article className="summary-card teal" onClick={() => setActiveBookingFilter('Inquiry')} style={{ cursor: 'pointer' }}>
+              <div className="summary-card-top">
+                <div className="summary-icon blue">
+                  <ClipboardList size={20} />
+                </div>
+                <span>Inquiries</span>
+              </div>
               <strong>{inquiryCount}</strong>
+              <small>Awaiting preparation</small>
             </article>
-            <article className="summary-card" onClick={() => setActiveBookingFilter('Quotation')} style={{ cursor: 'pointer' }}>
-              <div className="summary-icon gold"><Clock3 size={20} /></div>
-              <span>Open Quotes</span>
+            <article className="summary-card gold" onClick={() => setActiveBookingFilter('Quotation')} style={{ cursor: 'pointer' }}>
+              <div className="summary-card-top">
+                <div className="summary-icon gold">
+                  <Clock3 size={20} />
+                </div>
+                <span>Open Quotes</span>
+              </div>
               <strong>{quotationCount}</strong>
+              <small>Inquiry and quotation</small>
             </article>
-            <article className="summary-card" onClick={() => setActiveBookingFilter('Confirmed')} style={{ cursor: 'pointer' }}>
-              <div className="summary-icon green"><CheckCircle2 size={20} /></div>
-              <span>Confirmed</span>
+            <article className="summary-card green" onClick={() => setActiveBookingFilter('Confirmed')} style={{ cursor: 'pointer' }}>
+              <div className="summary-card-top">
+                <div className="summary-icon green">
+                  <CheckCircle2 size={20} />
+                </div>
+                <span>Confirmed</span>
+              </div>
               <strong>{confirmedCount}</strong>
+              <small>Ready for travel</small>
             </article>
-          </div>
+          </section>
+
+          <section className="pipeline-panel">
+            <div className="pipeline-heading">
+              <div>
+                <p>Workflow</p>
+                <h2>Booking pipeline</h2>
+              </div>
+              <span>{activeProjects} total</span>
+            </div>
+            <div className="pipeline-list">
+              {bookingListFilters.slice(1).map((filter, index) => {
+                const count = statusCounts[filter.value]
+                const progress = activeProjects > 0 ? (count / activeProjects) * 100 : 0
+
+                return (
+                  <button
+                    type="button"
+                    key={filter.value}
+                    className={`pipeline-row pipeline-${index + 1}`}
+                    onClick={() => setActiveBookingFilter(filter.value)}
+                  >
+                    <span className="pipeline-dot"></span>
+                    <span className="pipeline-name">{filter.label}</span>
+                    <span className="pipeline-track">
+                      <span style={{ width: `${progress}%` }}></span>
+                    </span>
+                    <strong>{count}</strong>
+                    <ChevronRight size={16} />
+                  </button>
+                )
+              })}
+            </div>
+          </section>
         </section>
 
         {/* RIGHT — bookings list */}
