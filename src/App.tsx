@@ -82,6 +82,7 @@ type BookingFormData = {
   pax: string
   quotationNo: string
   lineItems: string
+  basicPackageItems: string
   itemDescription: string
   quantity: string
   unitPrice: string
@@ -143,6 +144,14 @@ const lineItemDescriptionOptions = [
   'Visa',
   'Other',
 ]
+const basicPackageDescriptionOptions = [
+  'Full package (Customize)',
+  'Group Tour(joining)',
+  'Ticket Only',
+  'Land arrangement only',
+  'Visa Processing',
+  'passporting',
+]
 const currencyOptions = ['PHP', 'USD']
 const bookingListFilters: Array<{ label: string; value: BookingListFilter }> = [
   { label: 'All', value: 'All' },
@@ -164,6 +173,7 @@ const emptyBookingForm: BookingFormData = {
   pax: '',
   quotationNo: '',
   lineItems: '',
+  basicPackageItems: '',
   itemDescription: '',
   quantity: '1',
   unitPrice: '',
@@ -231,6 +241,7 @@ const sampleBookings: BookingRecord[] = previousProjects.map((project) => ({
   pax: '',
   quotationNo: project.id,
   lineItems: '',
+  basicPackageItems: '',
   itemDescription: project.title,
   quantity: '1',
   unitPrice: '',
@@ -380,6 +391,32 @@ function getEditableLineItems(booking: BookingFormData): EditableLineItem[] {
   ]
 }
 
+function getEditableBasicPackageItems(booking: BookingFormData): EditableLineItem[] {
+  const rows = getLines(booking.basicPackageItems, [])
+    .filter((line) => line.includes('|'))
+    .map((line) => {
+      const [description, quantity, unitPrice, nettCost, currency] = line
+        .split('|')
+        .map((part) => part.trim())
+
+      return {
+        description,
+        quantity: quantity || '1',
+        unitPrice: unitPrice || '',
+        nettCost: nettCost || '',
+        currency: currency || 'PHP',
+      }
+    })
+
+  if (rows.length > 0) {
+    return rows
+  }
+
+  return [
+    { description: '', quantity: '1', unitPrice: '', nettCost: '', currency: 'PHP' },
+  ]
+}
+
 function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
   const parsedItems = getLines(booking.lineItems, [])
     .filter((line) => line.includes('|'))
@@ -423,6 +460,30 @@ function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
       currency: 'PHP',
     },
   ]
+}
+
+function getBookingBasicPackageItems(booking: BookingFormData): BookingLineItem[] {
+  return getLines(booking.basicPackageItems, [])
+    .filter((line) => line.includes('|'))
+    .map((line) => {
+      const [description, quantity, unitPrice, nettCost, currency] = line
+        .split('|')
+        .map((part) => part.trim())
+      const parsedQuantity = parseQuantity(quantity)
+      const parsedUnitPrice = parseAmount(unitPrice)
+      const parsedNettCost = parseAmount(nettCost)
+
+      return {
+        description,
+        quantity: parsedQuantity,
+        unitPrice: parsedUnitPrice,
+        nettCost: parsedNettCost,
+        total: parsedQuantity * parsedUnitPrice,
+        nettTotal: parsedQuantity * parsedNettCost,
+        profit: parsedQuantity * (parsedUnitPrice - parsedNettCost),
+        currency: currency || 'PHP',
+      }
+    })
 }
 
 function sumLineItems(items: BookingLineItem[], field: 'total' | 'nettTotal' | 'profit') {
@@ -810,6 +871,45 @@ function App() {
     setBookingForm((currentForm) => ({
       ...currentForm,
       lineItems: serializeLineItems(nextRows.length > 0 ? nextRows : [
+        { description: '', quantity: '1', unitPrice: '', nettCost: '', currency: 'PHP' },
+      ]),
+    }))
+  }
+
+  function updateBasicPackageItem(index: number, field: keyof EditableLineItem, value: string) {
+    setDataError('')
+    setDataMessage('')
+    const currentRows = getEditableBasicPackageItems(bookingForm)
+    const nextRows = currentRows.map((item, itemIndex) =>
+      itemIndex === index ? { ...item, [field]: value } : item,
+    )
+
+    setBookingForm((currentForm) => ({
+      ...currentForm,
+      basicPackageItems: serializeLineItems(nextRows),
+    }))
+  }
+
+  function addBasicPackageItem() {
+    const nextRows = [
+      ...getEditableBasicPackageItems(bookingForm),
+      { description: '', quantity: '1', unitPrice: '', nettCost: '', currency: 'PHP' },
+    ]
+
+    setBookingForm((currentForm) => ({
+      ...currentForm,
+      basicPackageItems: serializeLineItems(nextRows),
+    }))
+  }
+
+  function removeBasicPackageItem(index: number) {
+    const nextRows = getEditableBasicPackageItems(bookingForm).filter(
+      (_item, itemIndex) => itemIndex !== index,
+    )
+
+    setBookingForm((currentForm) => ({
+      ...currentForm,
+      basicPackageItems: serializeLineItems(nextRows.length > 0 ? nextRows : [
         { description: '', quantity: '1', unitPrice: '', nettCost: '', currency: 'PHP' },
       ]),
     }))
@@ -1382,6 +1482,10 @@ function App() {
     const lineItemTotals = getBookingLineItems(bookingForm)
     const lineItemCurrencies = getLineItemCurrencies(lineItemTotals)
     const showCurrencyPerGroup = lineItemCurrencies.length > 1
+    const editableBasicPackageItems = getEditableBasicPackageItems(bookingForm)
+    const basicPackageTotals = getBookingBasicPackageItems(bookingForm)
+    const basicPackageCurrencies = getLineItemCurrencies(basicPackageTotals)
+    const showBasicPackageCurrencyPerGroup = basicPackageCurrencies.length > 1
 
     return (
       <main className="data-screen">
@@ -1612,7 +1716,7 @@ function App() {
               <div className="line-items-heading">
                 <div>
                   <p>Charges / price breakdown</p>
-                  <h3>Line items</h3>
+                  <h3>Optional</h3>
                   <span>
                     Use one row per service. Client price is what the customer
                     pays. Supplier nett is the agency cost.
@@ -1752,6 +1856,157 @@ function App() {
                     </article>
                     <article>
                       <span>Estimated profit{showCurrencyPerGroup ? ` (${currency})` : ''}</span>
+                      <strong className={profitTotal > 0 ? 'profit-total' : profitTotal < 0 ? 'profit-negative' : ''}>{formatAmount(String(profitTotal), currency)}</strong>
+                    </article>
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="line-items-panel">
+              <div className="line-items-heading">
+                <div>
+                  <p>Charges / price breakdown</p>
+                  <h3>Basic package</h3>
+                  <span>
+                    Use one row per service. Client price is what the customer
+                    pays. Supplier nett is the agency cost.
+                  </span>
+                </div>
+                <button type="button" onClick={addBasicPackageItem}>
+                  <Plus size={16} />
+                  Add item
+                </button>
+              </div>
+
+              <div className="line-items-table" role="table" aria-label="Basic package">
+                <div className="line-items-row header" role="row">
+                  <span>Service / item</span>
+                  <span>Qty</span>
+                  <span>Currency</span>
+                  <span>Client price</span>
+                  <span>Supplier nett</span>
+                  <span>Profit</span>
+                  <span>Action</span>
+                </div>
+                {editableBasicPackageItems.map((item, index) => {
+                  const quantity = parseQuantity(item.quantity)
+                  const clientPrice = parseAmount(item.unitPrice)
+                  const supplierNett = parseAmount(item.nettCost)
+                  const profit = quantity * (clientPrice - supplierNett)
+                  const profitClass = profit > 0 ? 'positive' : profit < 0 ? 'negative' : 'zero'
+                  const itemCurrency = item.currency || 'PHP'
+
+                  return (
+                    <div className="line-items-row" role="row" key={index}>
+                      <select
+                        value={item.description}
+                        onChange={(event) =>
+                          updateBasicPackageItem(index, 'description', event.target.value)
+                        }
+                      >
+                        <option value="">Select item</option>
+                        {item.description &&
+                          !basicPackageDescriptionOptions.includes(item.description) && (
+                            <option value={item.description}>{item.description}</option>
+                          )}
+                        {basicPackageDescriptionOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min="1"
+                        step="1"
+                        value={item.quantity}
+                        onChange={(event) =>
+                          updateBasicPackageItem(index, 'quantity', event.target.value)
+                        }
+                        onKeyDown={(e) => {
+                          if (['e','E','+','-','.'].includes(e.key)) e.preventDefault()
+                        }}
+                        placeholder="1"
+                      />
+                      <select
+                        value={itemCurrency}
+                        onChange={(event) =>
+                          updateBasicPackageItem(index, 'currency', event.target.value)
+                        }
+                      >
+                        {currencyOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        step="0.01"
+                        value={item.unitPrice}
+                        onChange={(event) =>
+                          updateBasicPackageItem(index, 'unitPrice', event.target.value)
+                        }
+                        onKeyDown={(e) => {
+                          if (['e','E','+','-'].includes(e.key)) e.preventDefault()
+                        }}
+                        placeholder="0.00"
+                      />
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        step="0.01"
+                        value={item.nettCost}
+                        onChange={(event) =>
+                          updateBasicPackageItem(index, 'nettCost', event.target.value)
+                        }
+                        onKeyDown={(e) => {
+                          if (['e','E','+','-'].includes(e.key)) e.preventDefault()
+                        }}
+                        placeholder="0.00"
+                      />
+                      <div className={`line-item-profit ${profitClass}`}>
+                        {formatAmount(String(profit), itemCurrency)}
+                      </div>
+                      <button
+                        type="button"
+                        className="remove-line-btn"
+                        onClick={() => removeBasicPackageItem(index)}
+                        disabled={editableBasicPackageItems.length === 1}
+                        title="Remove item"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {basicPackageCurrencies.map((currency) => {
+                const currencyItems = basicPackageTotals.filter(
+                  (item) => (item.currency || 'PHP') === currency,
+                )
+                const clientTotal = sumLineItems(currencyItems, 'total')
+                const nettTotal = sumLineItems(currencyItems, 'nettTotal')
+                const profitTotal = sumLineItems(currencyItems, 'profit')
+
+                return (
+                  <div className="line-items-summary" key={currency}>
+                    <article>
+                      <span>Client total{showBasicPackageCurrencyPerGroup ? ` (${currency})` : ''}</span>
+                      <strong>{formatAmount(String(clientTotal), currency)}</strong>
+                    </article>
+                    <article>
+                      <span>Supplier nett total{showBasicPackageCurrencyPerGroup ? ` (${currency})` : ''}</span>
+                      <strong>{formatAmount(String(nettTotal), currency)}</strong>
+                    </article>
+                    <article>
+                      <span>Estimated profit{showBasicPackageCurrencyPerGroup ? ` (${currency})` : ''}</span>
                       <strong className={profitTotal > 0 ? 'profit-total' : profitTotal < 0 ? 'profit-negative' : ''}>{formatAmount(String(profitTotal), currency)}</strong>
                     </article>
                   </div>
