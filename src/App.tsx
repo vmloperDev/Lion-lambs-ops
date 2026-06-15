@@ -3107,7 +3107,7 @@ function App() {
         ? bookings.length
         : bookings.filter((b) => b.status === f.value).length,
     }),
-    {},
+    {} as Record<BookingListFilter, number>,
   )
 
   return (
