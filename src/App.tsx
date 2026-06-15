@@ -564,4 +564,3178 @@ function App() {
 
   function getAuthErrorMessage(error: unknown) {
     const code =
-      typeof error === 'object' && error && '
+      typeof error === 'object' && error && 'code' in error
+        ? (error as AuthError).code
+        : ''
+
+    if (code) {
+      switch (code) {
+        case 'auth/invalid-credential':
+        case 'auth/wrong-password':
+          return 'Email or password is incorrect.'
+        case 'auth/user-not-found':
+          return 'User does not exist.'
+        case 'auth/email-already-in-use':
+          return 'That email already has an account.'
+        case 'auth/too-many-requests':
+          return 'Too many attempts. Please wait a moment before trying again.'
+        case 'auth/invalid-email':
+          return 'Enter a valid email address.'
+        case 'auth/missing-email':
+          return 'Enter your email address first.'
+        case 'auth/operation-not-allowed':
+          return 'This sign-in method is not enabled in Firebase Authentication.'
+        case 'auth/invalid-api-key':
+        case 'auth/api-key-not-valid.-please-pass-a-valid-api-key.':
+          return 'Firebase API key is invalid. Check the values in your .env file.'
+        case 'auth/weak-password':
+          return 'Use a password with at least 6 characters.'
+        default:
+          return `Sign-in failed: ${code}`
+      }
+    }
+
+    return 'Sign-in failed. Please try again.'
+  }
+
+  async function handleEmailAuth(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const isSignUp = screen === 'signup'
+
+    if (!email.trim()) {
+      setAuthError('Enter your email address to continue.')
+      return
+    }
+
+    if (!password.trim()) {
+      setAuthError('Enter your password to continue.')
+      return
+    }
+
+    if (isSignUp && !name.trim()) {
+      setAuthError('Enter your full name to create an account.')
+      return
+    }
+
+    if (isSignUp && password !== confirmPassword) {
+      setAuthError('Password and confirm password do not match.')
+      return
+    }
+
+    if (isSignUp && passwordStrength.score === 1) {
+      setAuthError('Use a stronger password before creating the account.')
+      return
+    }
+
+    try {
+      setIsAuthLoading(true)
+
+      if (isSignUp) {
+        const credential = await createUserWithEmailAndPassword(
+          auth,
+          email,
+          password,
+        )
+        await updateProfile(credential.user, {
+          displayName: name.trim() || getDisplayName(email),
+        })
+        await sendEmailVerification(credential.user)
+        setAuthUser(credential.user)
+        setAuthMessage('Verification email sent. Check your inbox.')
+        setScreen('verify-email')
+      } else {
+        const credential = await signInWithEmailAndPassword(auth, email, password)
+
+        if (!credential.user.emailVerified) {
+          setAuthUser(credential.user)
+          setAuthError('Verify your email before opening the dashboard.')
+          setAuthMessage('')
+          setScreen('verify-email')
+          return
+        }
+
+        setAuthError('')
+        setAuthMessage('')
+        setScreen('home')
+      }
+    } catch (error) {
+      setAuthError(getAuthErrorMessage(error))
+    } finally {
+      setIsAuthLoading(false)
+    }
+  }
+
+  async function handlePasswordReset() {
+    if (!email.trim()) {
+      setAuthError('Enter your email address first.')
+      setAuthMessage('')
+      return
+    }
+
+    try {
+      setIsAuthLoading(true)
+      await sendPasswordResetEmail(auth, email)
+      setAuthError('')
+      setAuthMessage('If an account exists, a reset email will be sent.')
+    } catch (error) {
+      setAuthError(getAuthErrorMessage(error))
+      setAuthMessage('')
+    } finally {
+      setIsAuthLoading(false)
+    }
+  }
+
+  async function handleResendVerification() {
+    if (!auth.currentUser) {
+      setAuthError('Log in again before requesting a new verification email.')
+      setAuthMessage('')
+      setScreen('login')
+      return
+    }
+
+    try {
+      setIsAuthLoading(true)
+      await sendEmailVerification(auth.currentUser)
+      setAuthError('')
+      setAuthMessage('Verification email sent again. Check your inbox.')
+    } catch (error) {
+      setAuthError(getAuthErrorMessage(error))
+      setAuthMessage('')
+    } finally {
+      setIsAuthLoading(false)
+    }
+  }
+
+  async function handleVerificationRefresh() {
+    if (!auth.currentUser) {
+      setScreen('login')
+      return
+    }
+
+    try {
+      setIsAuthLoading(true)
+      await auth.currentUser.reload()
+      const refreshedUser = auth.currentUser
+      setAuthUser(refreshedUser)
+
+      if (refreshedUser?.emailVerified) {
+        setAuthError('')
+        setAuthMessage('')
+        setScreen('home')
+      } else {
+        setAuthError('Email is not verified yet.')
+        setAuthMessage('')
+      }
+    } finally {
+      setIsAuthLoading(false)
+    }
+  }
+
+  async function handleLogout() {
+    await signOut(auth)
+    setPassword('')
+    setConfirmPassword('')
+    setScreen('login')
+  }
+
+  function handleNewBooking() {
+    setEditingBookingId('')
+    setBookingForm({
+      ...emptyBookingForm,
+      quotationNo: `QT-${new Date().getFullYear()}-${String(bookings.length + 1).padStart(4, '0')}`,
+    })
+    setScreen('data-form')
+  }
+
+  function handleEditBooking() {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      setScreen('home')
+      return
+    }
+
+    setEditingBookingId(selectedBooking.id)
+    setBookingForm(normalizeBooking(selectedBooking))
+    setScreen('data-form')
+  }
+
+  function updateBookingField<Field extends keyof BookingFormData>(
+    field: Field,
+    value: BookingFormData[Field],
+  ) {
+    setDataError('')
+    setDataMessage('')
+    setBookingForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }))
+  }
+
+  function updateLineItem(index: number, field: keyof EditableLineItem, value: string) {
+    setDataError('')
+    setDataMessage('')
+    const currentRows = getEditableLineItems(bookingForm)
+    const nextRows = currentRows.map((item, itemIndex) =>
+      itemIndex === index ? { ...item, [field]: value } : item,
+    )
+
+    setBookingForm((currentForm) => ({
+      ...currentForm,
+      lineItems: serializeLineItems(nextRows),
+    }))
+  }
+
+  function addLineItem() {
+    const nextRows = [
+      ...getEditableLineItems(bookingForm),
+      { description: '', quantity: '1', unitPrice: '', nettCost: '', currency: 'PHP' },
+    ]
+
+    setBookingForm((currentForm) => ({
+      ...currentForm,
+      lineItems: serializeLineItems(nextRows),
+    }))
+  }
+
+  function removeLineItem(index: number) {
+    const nextRows = getEditableLineItems(bookingForm).filter(
+      (_item, itemIndex) => itemIndex !== index,
+    )
+
+    setBookingForm((currentForm) => ({
+      ...currentForm,
+      lineItems: serializeLineItems(nextRows.length > 0 ? nextRows : [
+        { description: '', quantity: '1', unitPrice: '', nettCost: '', currency: 'PHP' },
+      ]),
+    }))
+  }
+
+  function validateBookingForm() {
+    if (!bookingForm.clientName.trim()) {
+      return 'Enter the client name before saving.'
+    }
+
+    if (!bookingForm.packageName.trim()) {
+      return 'Enter the package or project name before saving.'
+    }
+
+    if (!bookingForm.itemDescription.trim()) {
+      return 'Enter the main item description before saving.'
+    }
+
+    const hasPrice = getBookingClientTotal(bookingForm) > 0 || parseAmount(bookingForm.sellingPrice) > 0
+
+    if (!hasPrice) {
+      return 'Enter a selling/client price or at least one priced line item.'
+    }
+
+    return ''
+  }
+
+  async function handleSaveBooking(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const isEditing = Boolean(editingBookingId)
+    const validationError = validateBookingForm()
+
+    if (validationError) {
+      setDataError(validationError)
+      setDataMessage('')
+      return
+    }
+
+    const booking: BookingRecord = {
+      ...bookingForm,
+      id: editingBookingId || `BK-${Date.now()}`,
+      createdAt:
+        bookings.find((currentBooking) => currentBooking.id === editingBookingId)
+          ?.createdAt || new Date().toISOString(),
+    }
+
+    setBookings((currentBookings) =>
+      isEditing
+        ? currentBookings.map((currentBooking) =>
+            currentBooking.id === booking.id ? booking : currentBooking,
+          )
+        : [booking, ...currentBookings],
+    )
+
+    try {
+      if (!authUser) {
+        throw new Error('Missing signed-in user')
+      }
+
+      await setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), booking.id), {
+        ...booking,
+        ownerId: authUser.uid,
+        createdBy: authUser.uid,
+        createdByEmail: authUser.email || '',
+        updatedAt: new Date().toISOString(),
+      }, { merge: true })
+      setDataError('')
+      setDataMessage(isEditing ? 'Booking changes saved successfully.' : 'Inquiry saved successfully.')
+      setSelectedBookingId(booking.id)
+      setEditingBookingId('')
+      setScreen(isEditing ? 'booking-detail' : 'home')
+    } catch {
+      setDataError(
+        isEditing
+          ? 'Booking updated locally, but cloud update failed.'
+          : 'Booking saved locally, but cloud save failed.',
+      )
+      setDataMessage('')
+      setSelectedBookingId(booking.id)
+      setEditingBookingId('')
+      setScreen(isEditing ? 'booking-detail' : 'home')
+    }
+  }
+
+  function openBookingDetail(bookingId: string) {
+    setSelectedBookingId(bookingId)
+    setScreen('booking-detail')
+  }
+
+  function updateSelectedBookingStatus(status: BookingStatus) {
+    setBookings((currentBookings) =>
+      currentBookings.map((booking) =>
+        booking.id === selectedBookingId ? { ...booking, status } : booking,
+      ),
+    )
+
+    if (selectedBookingId) {
+      if (!authUser) {
+        setDataError('Log in again before updating cloud records.')
+        return
+      }
+
+      void setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId), {
+        status,
+        updatedAt: new Date().toISOString(),
+      }, {
+        merge: true,
+      }).catch(() => {
+        setDataError('Status updated locally, but cloud update failed.')
+      })
+    }
+  }
+
+  function openQuotationPreview() {
+    setScreen('quotation-preview')
+  }
+
+  function openInvoiceEditor() {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      setScreen('home')
+      return
+    }
+
+    setInvoiceForm({
+      paymentMethod: selectedBooking.paymentMethod || '',
+      paymentRecords: selectedBooking.paymentRecords || '',
+      invoiceAmountPaid: selectedBooking.invoiceAmountPaid || '',
+      invoicePaymentDate: selectedBooking.invoicePaymentDate || '',
+      invoicePaymentStatus: selectedBooking.invoicePaymentStatus || 'Unpaid',
+      invoiceReference: selectedBooking.invoiceReference || '',
+    })
+    setScreen('invoice-editor')
+  }
+
+  function updateInvoiceField<Field extends keyof typeof invoiceForm>(
+    field: Field,
+    value: (typeof invoiceForm)[Field],
+  ) {
+    setInvoiceForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }))
+  }
+
+  async function handleSaveInvoiceUpdate(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    setBookings((currentBookings) =>
+      currentBookings.map((booking) =>
+        booking.id === selectedBookingId
+          ? {
+              ...booking,
+              ...invoiceForm,
+              status: 'Invoice',
+            }
+          : booking,
+      ),
+    )
+
+    try {
+      if (!authUser) {
+        throw new Error('Missing signed-in user')
+      }
+
+      await setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId), {
+        ...invoiceForm,
+        status: 'Invoice',
+        updatedAt: new Date().toISOString(),
+      }, {
+        merge: true,
+      })
+      setDataError('')
+      setDataMessage('Invoice payment details saved successfully.')
+      setScreen('invoice-preview')
+    } catch {
+      setDataError('Invoice saved locally, but cloud update failed.')
+      setDataMessage('')
+      setScreen('invoice-preview')
+    }
+  }
+
+  async function handleDeleteBooking() {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      setScreen('home')
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${selectedBooking.packageName || 'this project'}? This cannot be undone.`,
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    setBookings((currentBookings) =>
+      currentBookings.filter((booking) => booking.id !== selectedBookingId),
+    )
+
+    try {
+      if (!authUser) {
+        throw new Error('Missing signed-in user')
+      }
+
+      await deleteDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId))
+      setDataError('')
+      setDataMessage('Project deleted successfully.')
+    } catch {
+      setDataError('Project deleted locally, but cloud delete failed.')
+      setDataMessage('')
+    } finally {
+      setSelectedBookingId('')
+      setScreen('home')
+    }
+  }
+
+  function openPurchaseOrderPreview() {
+    setScreen('purchase-order-preview')
+  }
+
+  function openVoucherPreview() {
+    setScreen('voucher-preview')
+  }
+
+  function openBreakdownPreview() {
+    setScreen('breakdown-preview')
+  }
+
+  function openDocumentFolder() {
+    setScreen('document-folder')
+  }
+
+  function openDocumentByTitle(title: string) {
+    if (title === 'Breakdown') {
+      openBreakdownPreview()
+      return
+    }
+
+    if (title === 'Quotation') {
+      openQuotationPreview()
+      return
+    }
+
+    if (title === 'Invoice') {
+      openInvoiceEditor()
+      return
+    }
+
+    if (title === 'Purchase Order') {
+      openPurchaseOrderPreview()
+      return
+    }
+
+    if (title === 'Service Voucher') {
+      openVoucherPreview()
+    }
+  }
+
+  async function handlePrintPreview() {
+    const printableArea = document.querySelector<HTMLElement>('.print-document')
+
+    if (!printableArea) {
+      window.print()
+      return
+    }
+
+    try {
+      setIsPdfExporting(true)
+      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf'),
+      ])
+      const canvas = await html2canvas(printableArea, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        useCORS: true,
+      })
+      const pdf = new jsPDF('p', 'mm', 'a4')
+      const pageWidth = pdf.internal.pageSize.getWidth()
+      const pageHeight = pdf.internal.pageSize.getHeight()
+      const imgWidth = pageWidth
+      const imgHeight = (canvas.height * imgWidth) / canvas.width
+      const imageData = canvas.toDataURL('image/png')
+      let remainingHeight = imgHeight
+      let yPosition = 0
+
+      pdf.addImage(imageData, 'PNG', 0, yPosition, imgWidth, imgHeight)
+      remainingHeight -= pageHeight
+
+      while (remainingHeight > 0) {
+        yPosition -= pageHeight
+        pdf.addPage()
+        pdf.addImage(imageData, 'PNG', 0, yPosition, imgWidth, imgHeight)
+        remainingHeight -= pageHeight
+      }
+
+      const currentBooking = bookings.find((booking) => booking.id === selectedBookingId)
+      const fileName = `${currentBooking?.quotationNo || currentBooking?.id || 'lion-lamb-document'}.pdf`
+      pdf.save(fileName.replace(/[^\w.-]+/g, '_'))
+    } catch {
+      setDataError('PDF download failed. Use Ctrl+P and turn off browser headers and footers.')
+      window.print()
+    } finally {
+      setIsPdfExporting(false)
+    }
+  }
+
+  if (screen === 'splash') {
+    return (
+      <main className="splash-screen">
+        <div className="splash-center">
+          <img src={logo} alt="Lion and Lamb Travel logo" />
+        </div>
+        <h1>Lion and Lamb Travel</h1>
+      </main>
+    )
+  }
+
+  if (screen === 'login' || screen === 'signup') {
+    const isSignUp = screen === 'signup'
+
+    return (
+      <main className="auth-screen">
+        <section className="auth-card">
+          <div className="auth-form-panel">
+            <div className="auth-brand">
+              <img src={logo} alt="Lion and Lamb Travel logo" />
+              <div>
+                <strong>Lion and Lamb Travel</strong>
+                <span>Operations Desk</span>
+              </div>
+            </div>
+
+            <div className="auth-heading">
+              <p>{isSignUp ? 'Create access' : 'Welcome back'}</p>
+              <h1>{isSignUp ? 'Sign up for an account' : 'Log in to your account'}</h1>
+              <span>
+                {isSignUp
+                  ? 'Create your operations account for booking management.'
+                  : 'Access quotations, invoices, and customer projects.'}
+              </span>
+            </div>
+
+            <form onSubmit={handleEmailAuth} className="login-form">
+              {isSignUp && (
+                <label>
+                  <UserRound size={17} />
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(event) => {
+                      setName(event.target.value)
+                      setAuthError('')
+                      setAuthMessage('')
+                    }}
+                    placeholder="Full name"
+                    autoComplete="name"
+                  />
+                </label>
+              )}
+
+              <label>
+                <Mail size={17} />
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => {
+                    setEmail(event.target.value)
+                    setAuthError('')
+                    setAuthMessage('')
+                  }}
+                  placeholder="Email"
+                  autoComplete="email"
+                />
+              </label>
+              {!isSignUp && (
+                <div className="password-row-meta">
+                  <span>Password</span>
+                  <button
+                    type="button"
+                    onClick={handlePasswordReset}
+                    disabled={isAuthLoading}
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+              )}
+              <label>
+                <LockKeyhole size={17} />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(event) => {
+                    setPassword(event.target.value)
+                    setAuthError('')
+                    setAuthMessage('')
+                  }}
+                  placeholder="Password"
+                  autoComplete={isSignUp ? 'new-password' : 'current-password'}
+                />
+              </label>
+
+              {isSignUp && (
+                <>
+                  <label>
+                    <LockKeyhole size={17} />
+                    <input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(event) => {
+                        setConfirmPassword(event.target.value)
+                        setAuthError('')
+                        setAuthMessage('')
+                      }}
+                      placeholder="Confirm password"
+                      autoComplete="new-password"
+                    />
+                  </label>
+
+                  {password && (
+                    <div
+                      className={`password-strength score-${passwordStrength.score}`}
+                    >
+                      <div>
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                      </div>
+                      <strong>{passwordStrength.label}</strong>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {authError && <p className="auth-error">{authError}</p>}
+              {authMessage && <p className="auth-success">{authMessage}</p>}
+
+              <div className="form-meta">
+                <span>
+                  {isSignUp
+                    ? 'Already part of the team?'
+                    : 'Firebase keeps trusted sessions signed in.'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScreen(isSignUp ? 'login' : 'signup')
+                    setAuthError('')
+                    setAuthMessage('')
+                  }}
+                >
+                  {isSignUp ? 'Log in instead' : 'Create account'}
+                </button>
+              </div>
+
+              <button className="login-btn" type="submit" disabled={isAuthLoading}>
+                {isAuthLoading
+                  ? 'Please wait'
+                  : isSignUp
+                    ? 'Sign Up'
+                    : 'Log In'}
+                <ArrowRight size={18} />
+              </button>
+            </form>
+          </div>
+
+          <aside className="auth-image-panel">
+            <img src={travelHero} alt="Travel destinations collage" />
+            <div className="image-overlay">
+              <div className="floating-icon">
+                <Plane size={26} />
+              </div>
+              <h2>Organize every client journey.</h2>
+              <p>
+                Prepare quotations, invoices, and travel records from one
+                professional workspace.
+              </p>
+              <div className="slide-dots">
+                <span></span>
+                <span className="active"></span>
+                <span></span>
+              </div>
+            </div>
+          </aside>
+        </section>
+      </main>
+    )
+  }
+
+  if (screen === 'verify-email') {
+    return (
+      <main className="auth-screen">
+        <section className="auth-card">
+          <div className="auth-form-panel">
+            <div className="auth-brand">
+              <img src={logo} alt="Lion and Lamb Travel logo" />
+              <div>
+                <strong>Lion and Lamb Travel</strong>
+                <span>Operations Desk</span>
+              </div>
+            </div>
+
+            <div className="auth-heading">
+              <p>Email verification</p>
+              <h1>Check your inbox</h1>
+              <span>
+                We sent a verification link to {authUser?.email ?? email}. Verify
+                that email before opening the dashboard.
+              </span>
+            </div>
+
+            <div className="verify-actions">
+              {authError && <p className="auth-error">{authError}</p>}
+              {authMessage && <p className="auth-success">{authMessage}</p>}
+
+              <button
+                className="login-btn"
+                type="button"
+                onClick={handleVerificationRefresh}
+                disabled={isAuthLoading}
+              >
+                {isAuthLoading ? 'Checking' : 'I verified my email'}
+                <RefreshCw size={18} />
+              </button>
+
+              <button
+                className="secondary-auth-btn"
+                type="button"
+                onClick={handleResendVerification}
+                disabled={isAuthLoading}
+              >
+                Resend verification email
+              </button>
+
+              <button
+                className="secondary-auth-btn"
+                type="button"
+                onClick={handleLogout}
+                disabled={isAuthLoading}
+              >
+                Use another account
+              </button>
+            </div>
+          </div>
+
+          <aside className="auth-image-panel">
+            <img src={travelHero} alt="Travel destinations collage" />
+            <div className="image-overlay">
+              <div className="floating-icon">
+                <Mail size={26} />
+              </div>
+              <h2>Secure access for the team.</h2>
+              <p>
+                Only verified email accounts can open the operations dashboard.
+              </p>
+            </div>
+          </aside>
+        </section>
+      </main>
+    )
+  }
+
+  if (screen === 'data-form') {
+    const isEditingBooking = Boolean(editingBookingId)
+    const editableLineItems = getEditableLineItems(bookingForm)
+    const lineItemTotals = getBookingLineItems(bookingForm)
+    const lineItemCurrencies = getLineItemCurrencies(lineItemTotals)
+    const showCurrencyPerGroup = lineItemCurrencies.length > 1
+
+    return (
+      <main className="data-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>{isEditingBooking ? 'Edit Booking' : 'Data Gathering'}</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              type="button"
+              onClick={() => {
+                setEditingBookingId('')
+                setScreen(isEditingBooking ? 'booking-detail' : 'home')
+              }}
+              title="Close"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <form className="data-form" onSubmit={handleSaveBooking}>
+          <header className="data-form-header">
+            <div>
+              <p>{isEditingBooking ? 'Update master record' : 'New inquiry'}</p>
+              <h1>{isEditingBooking ? 'Edit Booking Info' : 'Data Gathering Form'}</h1>
+              <span>
+                {isEditingBooking
+                  ? 'Fix client, travel, pricing, supplier, and voucher details from one master record.'
+                  : 'Start with the client inquiry. Later documents will only use the fields meant for each output.'}
+              </span>
+            </div>
+            <button type="submit" className="save-booking-btn">
+              <Save size={18} />
+              {isEditingBooking ? 'Save Changes' : 'Save Inquiry'}
+            </button>
+          </header>
+
+          {dataError && <p className="data-alert error">{dataError}</p>}
+          {dataMessage && <p className="data-alert info">{dataMessage}</p>}
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>01 · Client</p>
+              <h2>Client info</h2>
+            </div>
+            <div className="field-grid three">
+              <label>
+                Client name
+                <input
+                  required
+                  value={bookingForm.clientName}
+                  onChange={(event) =>
+                    updateBookingField('clientName', event.target.value)
+                  }
+                  placeholder="Ms. Joanna Pico"
+                />
+              </label>
+              <label>
+                Contact number
+                <input
+                  value={bookingForm.contactNumber}
+                  onChange={(event) =>
+                    updateBookingField('contactNumber', event.target.value)
+                  }
+                  placeholder="09xxxxxxxxx"
+                />
+              </label>
+              <label>
+                Email
+                <input
+                  type="email"
+                  value={bookingForm.clientEmail}
+                  onChange={(event) =>
+                    updateBookingField('clientEmail', event.target.value)
+                  }
+                  placeholder="client@email.com"
+                />
+              </label>
+            </div>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>02 · Travel</p>
+              <h2>Package details</h2>
+            </div>
+            <div className="field-grid three">
+              <label>
+                Package name
+                <input
+                  required
+                  value={bookingForm.packageName}
+                  onChange={(event) =>
+                    updateBookingField('packageName', event.target.value)
+                  }
+                  placeholder="3D2N Clark and Olongapo"
+                />
+              </label>
+              <label>
+                Destination
+                <input
+                  value={bookingForm.destination}
+                  onChange={(event) =>
+                    updateBookingField('destination', event.target.value)
+                  }
+                  placeholder="Clark, Boracay, Hong Kong"
+                />
+              </label>
+              <label>
+                No. of pax
+                <input
+                  value={bookingForm.pax}
+                  onChange={(event) => updateBookingField('pax', event.target.value)}
+                  placeholder="2 adults, 1 infant"
+                />
+              </label>
+              <label>
+                Travel start
+                <input
+                  type="date"
+                  value={bookingForm.travelStart}
+                  onChange={(event) =>
+                    updateBookingField('travelStart', event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Travel end
+                <input
+                  type="date"
+                  value={bookingForm.travelEnd}
+                  onChange={(event) =>
+                    updateBookingField('travelEnd', event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Status
+                <select
+                  value={bookingForm.status}
+                  onChange={(event) =>
+                    updateBookingField('status', event.target.value as BookingStatus)
+                  }
+                >
+                  <option>Inquiry</option>
+                  <option>Breakdown</option>
+                  <option>Quotation</option>
+                  <option>Purchase Order</option>
+                  <option>Invoice</option>
+                  <option>Confirmed</option>
+                </select>
+              </label>
+            </div>
+            <p className="field-help">
+              Status decides which dashboard list this booking appears in.
+              Start with Inquiry, then move it forward as documents are prepared.
+            </p>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>03 · Quotation</p>
+              <h2>Client-facing quote basics</h2>
+            </div>
+            <div className="field-grid four">
+              <label>
+                Quotation no.
+                <input
+                  value={bookingForm.quotationNo}
+                  onChange={(event) =>
+                    updateBookingField('quotationNo', event.target.value)
+                  }
+                  placeholder="QTHK26031-04"
+                />
+              </label>
+              <label className="wide-field">
+                Item description
+                <input
+                  required
+                  value={bookingForm.itemDescription}
+                  onChange={(event) =>
+                    updateBookingField('itemDescription', event.target.value)
+                  }
+                  placeholder="3D2N Hong Kong Free and Easy"
+                />
+              </label>
+              <label>
+                Quantity
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min="1"
+                  step="1"
+                  value={bookingForm.quantity}
+                  onChange={(event) =>
+                    updateBookingField('quantity', event.target.value)
+                  }
+                  onKeyDown={(e) => {
+                    if (['e','E','+','-','.'].includes(e.key)) e.preventDefault()
+                  }}
+                  placeholder="2"
+                />
+              </label>
+              <label>
+                Unit price
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  value={bookingForm.unitPrice}
+                  onChange={(event) =>
+                    updateBookingField('unitPrice', event.target.value)
+                  }
+                  onKeyDown={(e) => {
+                    if (['e','E','+','-'].includes(e.key)) e.preventDefault()
+                  }}
+                  placeholder="18888"
+                />
+              </label>
+            </div>
+            <div className="line-items-panel">
+              <div className="line-items-heading">
+                <div>
+                  <p>Charges / price breakdown</p>
+                  <h3>Line items</h3>
+                  <span>
+                    Use one row per service. Client price is what the customer
+                    pays. Supplier nett is the agency cost.
+                  </span>
+                </div>
+                <button type="button" onClick={addLineItem}>
+                  <Plus size={16} />
+                  Add item
+                </button>
+              </div>
+
+              <div className="line-items-table" role="table" aria-label="Line items">
+                <div className="line-items-row header" role="row">
+                  <span>Service / item</span>
+                  <span>Qty</span>
+                  <span>Currency</span>
+                  <span>Client price</span>
+                  <span>Supplier nett</span>
+                  <span>Profit</span>
+                  <span>Action</span>
+                </div>
+                {editableLineItems.map((item, index) => {
+                  const quantity = parseQuantity(item.quantity)
+                  const clientPrice = parseAmount(item.unitPrice)
+                  const supplierNett = parseAmount(item.nettCost)
+                  const profit = quantity * (clientPrice - supplierNett)
+                  const profitClass = profit > 0 ? 'positive' : profit < 0 ? 'negative' : 'zero'
+                  const itemCurrency = item.currency || 'PHP'
+
+                  return (
+                    <div className="line-items-row" role="row" key={index}>
+                      <select
+                        value={item.description}
+                        onChange={(event) =>
+                          updateLineItem(index, 'description', event.target.value)
+                        }
+                      >
+                        <option value="">Select item</option>
+                        {item.description &&
+                          !lineItemDescriptionOptions.includes(item.description) && (
+                            <option value={item.description}>{item.description}</option>
+                          )}
+                        {lineItemDescriptionOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min="1"
+                        step="1"
+                        value={item.quantity}
+                        onChange={(event) =>
+                          updateLineItem(index, 'quantity', event.target.value)
+                        }
+                        onKeyDown={(e) => {
+                          if (['e','E','+','-','.'].includes(e.key)) e.preventDefault()
+                        }}
+                        placeholder="1"
+                      />
+                      <select
+                        value={itemCurrency}
+                        onChange={(event) =>
+                          updateLineItem(index, 'currency', event.target.value)
+                        }
+                      >
+                        {currencyOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        step="0.01"
+                        value={item.unitPrice}
+                        onChange={(event) =>
+                          updateLineItem(index, 'unitPrice', event.target.value)
+                        }
+                        onKeyDown={(e) => {
+                          if (['e','E','+','-'].includes(e.key)) e.preventDefault()
+                        }}
+                        placeholder="0.00"
+                      />
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        step="0.01"
+                        value={item.nettCost}
+                        onChange={(event) =>
+                          updateLineItem(index, 'nettCost', event.target.value)
+                        }
+                        onKeyDown={(e) => {
+                          if (['e','E','+','-'].includes(e.key)) e.preventDefault()
+                        }}
+                        placeholder="0.00"
+                      />
+                      <div className={`line-item-profit ${profitClass}`}>
+                        {formatAmount(String(profit), itemCurrency)}
+                      </div>
+                      <button
+                        type="button"
+                        className="remove-line-btn"
+                        onClick={() => removeLineItem(index)}
+                        disabled={editableLineItems.length === 1}
+                        title="Remove item"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {lineItemCurrencies.map((currency) => {
+                const currencyItems = lineItemTotals.filter(
+                  (item) => (item.currency || 'PHP') === currency,
+                )
+                const clientTotal = sumLineItems(currencyItems, 'total')
+                const nettTotal = sumLineItems(currencyItems, 'nettTotal')
+                const profitTotal = sumLineItems(currencyItems, 'profit')
+
+                return (
+                  <div className="line-items-summary" key={currency}>
+                    <article>
+                      <span>Client total{showCurrencyPerGroup ? ` (${currency})` : ''}</span>
+                      <strong>{formatAmount(String(clientTotal), currency)}</strong>
+                    </article>
+                    <article>
+                      <span>Supplier nett total{showCurrencyPerGroup ? ` (${currency})` : ''}</span>
+                      <strong>{formatAmount(String(nettTotal), currency)}</strong>
+                    </article>
+                    <article>
+                      <span>Estimated profit{showCurrencyPerGroup ? ` (${currency})` : ''}</span>
+                      <strong className={profitTotal > 0 ? 'profit-total' : profitTotal < 0 ? 'profit-negative' : ''}>{formatAmount(String(profitTotal), currency)}</strong>
+                    </article>
+                  </div>
+                )
+              })}
+            </div>
+            <p className="field-help">
+              Put long airline/rebooking notes under Flight details or Special
+              instructions. Keep line items for prices only.
+            </p>
+          </section>
+
+          <section className="form-section internal-section">
+            <div className="form-section-heading">
+              <p>04 · Internal</p>
+              <h2>Supplier and costing</h2>
+            </div>
+            <div className="field-grid three">
+              <label>
+                Supplier / operator
+                <input
+                  value={bookingForm.supplier}
+                  onChange={(event) =>
+                    updateBookingField('supplier', event.target.value)
+                  }
+                  placeholder="Vendor or tour operator"
+                />
+              </label>
+              <label>
+                Supplier contact
+                <input
+                  value={bookingForm.supplierContact}
+                  onChange={(event) =>
+                    updateBookingField('supplierContact', event.target.value)
+                  }
+                  placeholder="Vendor contact person / number"
+                />
+              </label>
+              <label>
+                Nett cost
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  value={bookingForm.nettCost}
+                  onChange={(event) =>
+                    updateBookingField('nettCost', event.target.value)
+                  }
+                  onKeyDown={(e) => {
+                    if (['e','E','+','-'].includes(e.key)) e.preventDefault()
+                  }}
+                  placeholder="Internal only"
+                />
+              </label>
+              <label>
+                Selling price
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  value={bookingForm.sellingPrice}
+                  onChange={(event) =>
+                    updateBookingField('sellingPrice', event.target.value)
+                  }
+                  onKeyDown={(e) => {
+                    if (['e','E','+','-'].includes(e.key)) e.preventDefault()
+                  }}
+                  placeholder="Client price"
+                />
+              </label>
+            </div>
+            <p className="internal-note">
+              Internal costing is for breakdown only and must not appear on
+              client-facing quotation or voucher documents.
+            </p>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>05 · Invoice</p>
+              <h2>Payment details</h2>
+            </div>
+            <div className="field-grid three">
+              <label>
+                Payment method
+                <input
+                  value={bookingForm.paymentMethod}
+                  onChange={(event) =>
+                    updateBookingField('paymentMethod', event.target.value)
+                  }
+                  placeholder="Bank transfer, cash, GCash"
+                />
+              </label>
+              <label>
+                Amount paid
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  value={bookingForm.invoiceAmountPaid}
+                  onChange={(event) =>
+                    updateBookingField('invoiceAmountPaid', event.target.value)
+                  }
+                  onKeyDown={(e) => {
+                    if (['e','E','+','-'].includes(e.key)) e.preventDefault()
+                  }}
+                  placeholder="0.00"
+                />
+              </label>
+              <label>
+                Payment status
+                <select
+                  value={bookingForm.invoicePaymentStatus}
+                  onChange={(event) =>
+                    updateBookingField('invoicePaymentStatus', event.target.value)
+                  }
+                >
+                  <option>Unpaid</option>
+                  <option>Partially Paid</option>
+                  <option>Paid</option>
+                </select>
+              </label>
+            </div>
+            <div className="field-grid three">
+              <label>
+                Payment date
+                <input
+                  type="date"
+                  value={bookingForm.invoicePaymentDate}
+                  onChange={(event) =>
+                    updateBookingField('invoicePaymentDate', event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Payment reference
+                <input
+                  value={bookingForm.invoiceReference}
+                  onChange={(event) =>
+                    updateBookingField('invoiceReference', event.target.value)
+                  }
+                  placeholder="OR / bank ref / GCash ref"
+                />
+              </label>
+              <label>
+                Option date
+                <input
+                  type="date"
+                  value={bookingForm.optionDate}
+                  onChange={(event) =>
+                    updateBookingField('optionDate', event.target.value)
+                  }
+                />
+              </label>
+            </div>
+            <div className="field-grid three">
+              <label>
+                Prepared by
+                <input
+                  value={bookingForm.preparedBy}
+                  onChange={(event) =>
+                    updateBookingField('preparedBy', event.target.value)
+                  }
+                  placeholder="Staff name"
+                />
+              </label>
+            </div>
+            <label className="textarea-field">
+              Payment records
+              <textarea
+                value={bookingForm.paymentRecords}
+                onChange={(event) =>
+                  updateBookingField('paymentRecords', event.target.value)
+                }
+                placeholder="One payment update per line, e.g. DP MAR 3 PAID - PHP 40,000"
+              />
+            </label>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>06 · Voucher</p>
+              <h2>Travel confirmation details</h2>
+            </div>
+            <section className="mini-guide">
+              <ListChecks size={18} />
+              <p>
+                For ticket rebooking, paste the old and new flight schedule in
+                Flight / Rebooking details below. Keep price rows in Line items.
+              </p>
+            </section>
+            <div className="field-grid three">
+              <label>
+                Flight / Rebooking details
+                <input
+                  value={bookingForm.flightDetails}
+                  onChange={(event) =>
+                    updateBookingField('flightDetails', event.target.value)
+                  }
+                  placeholder="Original flight and new flight summary"
+                />
+              </label>
+              <label>
+                Accommodation
+                <input
+                  value={bookingForm.accommodation}
+                  onChange={(event) =>
+                    updateBookingField('accommodation', event.target.value)
+                  }
+                  placeholder="Hotel / resort name"
+                />
+              </label>
+              <label>
+                Emergency contact
+                <input
+                  value={bookingForm.emergencyContact}
+                  onChange={(event) =>
+                    updateBookingField('emergencyContact', event.target.value)
+                  }
+                  placeholder="Emergency contact number"
+                />
+              </label>
+            </div>
+            <label className="textarea-field">
+              Hotel address
+              <textarea
+                value={bookingForm.hotelAddress}
+                onChange={(event) =>
+                  updateBookingField('hotelAddress', event.target.value)
+                }
+                placeholder="Full hotel address for voucher"
+              />
+            </label>
+            <label className="textarea-field">
+              Itinerary
+              <textarea
+                value={bookingForm.itinerary}
+                onChange={(event) => updateBookingField('itinerary', event.target.value)}
+                placeholder="One itinerary note per line"
+              />
+            </label>
+            <label className="textarea-field">
+              Detailed airline / rebooking notes
+              <textarea
+                value={bookingForm.specialInstructions}
+                onChange={(event) =>
+                  updateBookingField('specialInstructions', event.target.value)
+                }
+                placeholder="Paste long airline text here, e.g. original schedule, new schedule, fare rule, non-user fee, reissue notes..."
+              />
+            </label>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>07 · Package</p>
+              <h2>Inclusions and exclusions</h2>
+            </div>
+            <div className="field-grid two">
+              <label className="textarea-field">
+                Inclusions
+                <textarea
+                  value={bookingForm.inclusions}
+                  onChange={(event) =>
+                    updateBookingField('inclusions', event.target.value)
+                  }
+                  placeholder="One inclusion per line"
+                />
+              </label>
+              <label className="textarea-field">
+                Exclusions
+                <textarea
+                  value={bookingForm.exclusions}
+                  onChange={(event) =>
+                    updateBookingField('exclusions', event.target.value)
+                  }
+                  placeholder="One exclusion per line"
+                />
+              </label>
+            </div>
+            <p className="field-help">
+              Supplier instructions and rebooking notes are handled in the
+              Travel confirmation section above so they appear in the correct
+              documents.
+            </p>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>08 · Notes</p>
+              <h2>Remarks</h2>
+            </div>
+            <label className="textarea-field">
+              Internal notes / special requests
+              <textarea
+                value={bookingForm.notes}
+                onChange={(event) => updateBookingField('notes', event.target.value)}
+                placeholder="Flight notes, hotel preferences, payment remarks, exclusions, reminders..."
+              />
+            </label>
+          </section>
+        </form>
+      </main>
+    )
+  }
+
+  if (screen === 'booking-detail') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Booking not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    return (
+      <main className="detail-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Booking Workspace</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button type="button" onClick={() => setScreen('home')} title="Back">
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <div className="detail-layout">
+          <section className="detail-main">
+            <header className="detail-header">
+              <div>
+                <p>{selectedBooking.status}</p>
+                <h1>{selectedBooking.packageName}</h1>
+                <span>{selectedBooking.clientName}</span>
+              </div>
+              <div className="detail-controls">
+                <label>
+                  Current stage
+                  <select
+                    value={selectedBooking.status}
+                    onChange={(event) =>
+                      updateSelectedBookingStatus(event.target.value as BookingStatus)
+                    }
+                  >
+                    <option>Inquiry</option>
+                    <option>Breakdown</option>
+                    <option>Quotation</option>
+                    <option>Purchase Order</option>
+                    <option>Invoice</option>
+                    <option>Confirmed</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="delete-project-btn"
+                  onClick={handleDeleteBooking}
+                >
+                  Delete project
+                </button>
+              </div>
+            </header>
+
+            <div className="detail-grid">
+              <article>
+                <span>Contact</span>
+                <strong>{selectedBooking.contactNumber || 'Not provided'}</strong>
+              </article>
+              <article>
+                <span>Email</span>
+                <strong>{selectedBooking.clientEmail || 'Not provided'}</strong>
+              </article>
+              <article>
+                <span>Destination</span>
+                <strong>{selectedBooking.destination || 'Not provided'}</strong>
+              </article>
+              <article>
+                <span>No. of pax</span>
+                <strong>{selectedBooking.pax || 'Not provided'}</strong>
+              </article>
+              <article>
+                <span>Travel dates</span>
+                <strong>
+                  {selectedBooking.travelStart || 'No start'} to{' '}
+                  {selectedBooking.travelEnd || 'No end'}
+                </strong>
+              </article>
+              <article>
+                <span>Quotation no.</span>
+                <strong>{selectedBooking.quotationNo || 'Not assigned'}</strong>
+              </article>
+              <article>
+                <span>Flight details</span>
+                <strong>{selectedBooking.flightDetails || 'Not provided'}</strong>
+              </article>
+              <article>
+                <span>Accommodation</span>
+                <strong>{selectedBooking.accommodation || 'Not provided'}</strong>
+              </article>
+              <article>
+                <span>Client price</span>
+                <strong>
+                  {formatAmount(
+                    String(getBookingClientTotal(selectedBooking)),
+                    getPrimaryLineItemCurrency(getBookingLineItems(selectedBooking)),
+                  )}
+                </strong>
+              </article>
+              <article className="internal-summary">
+                <span>Internal nett</span>
+                <strong>{formatAmount(selectedBooking.nettCost)}</strong>
+              </article>
+            </div>
+
+            <section className="detail-notes">
+              <div>
+                <p>Master data</p>
+                <h2>Collected notes</h2>
+              </div>
+              <p>{selectedBooking.notes || 'No notes yet.'}</p>
+            </section>
+          </section>
+
+          <aside className="document-panel">
+            <div className="document-panel-heading">
+              <p>Next actions</p>
+              <h2>What do you need?</h2>
+            </div>
+
+            <div className="workspace-actions">
+              <button
+                type="button"
+                className="primary-workspace-action"
+                onClick={openDocumentFolder}
+              >
+                <FolderKanban size={20} />
+                <span>
+                  <strong>Open document folder</strong>
+                  <small>Breakdown, quotation, invoice, P.O., and voucher.</small>
+                </span>
+                <ArrowRight size={17} />
+              </button>
+              <button type="button" onClick={handleEditBooking}>
+                <FileText size={19} />
+                <span>
+                  <strong>Edit booking info</strong>
+                  <small>Fix client, travel, price, supplier, or voucher fields.</small>
+                </span>
+                <ArrowRight size={17} />
+              </button>
+              <button type="button" onClick={openInvoiceEditor}>
+                <FileText size={19} />
+                <span>
+                  <strong>Update invoice payment</strong>
+                  <small>Edit paid amount, balance, date, method, and reference.</small>
+                </span>
+                <ArrowRight size={17} />
+              </button>
+            </div>
+
+            <div className="workflow-note">
+              <ListChecks size={20} />
+              <p>
+                Use the document folder for final previews. It keeps client
+                documents separate from internal breakdown details.
+              </p>
+            </div>
+          </aside>
+        </div>
+      </main>
+    )
+  }
+
+  if (screen === 'document-folder') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Document folder not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    const hasClientAmount = sumLineItems(getBookingLineItems(selectedBooking), 'total') > 0
+    const documentFolderItems = [
+      {
+        title: 'Breakdown',
+        label: 'Internal sheet',
+        description: 'Supplier nett, client price, and estimated profit.',
+        requirement: 'Needs supplier nett and client selling price.',
+        ready:
+          hasClientAmount &&
+          sumLineItems(getBookingLineItems(selectedBooking), 'nettTotal') > 0,
+      },
+      {
+        title: 'Quotation',
+        label: 'Client PDF',
+        description: 'Client-facing offer with inclusions and exclusions.',
+        requirement: 'Needs client, package, travel date, and selling price.',
+        ready: Boolean(
+          selectedBooking.clientName &&
+            selectedBooking.packageName &&
+            selectedBooking.travelStart &&
+            hasClientAmount,
+        ),
+      },
+      {
+        title: 'Invoice',
+        label: 'Editable before PDF',
+        description: 'Billing document with payment status and balance.',
+        requirement: 'Needs client, package, selling price, and payment update.',
+        ready: Boolean(selectedBooking.clientName && selectedBooking.packageName && hasClientAmount),
+      },
+      {
+        title: 'Purchase Order',
+        label: 'Supplier PDF',
+        description: 'Reservation instruction for supplier or operator.',
+        requirement: 'Needs supplier/operator, package, pax, and travel date.',
+        ready: Boolean(
+          selectedBooking.supplier &&
+            selectedBooking.packageName &&
+            selectedBooking.pax &&
+            selectedBooking.travelStart,
+        ),
+      },
+      {
+        title: 'Service Voucher',
+        label: 'Confirmation PDF',
+        description: 'Final confirmed travel details for the client.',
+        requirement: 'Needs itinerary, accommodation, contacts, and inclusions.',
+        ready: Boolean(
+          selectedBooking.itinerary &&
+            selectedBooking.accommodation &&
+            selectedBooking.contactNumber,
+        ),
+      },
+    ]
+
+    return (
+      <main className="detail-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Document Folder</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={() => setScreen('booking-detail')}
+              title="Back to booking workspace"
+            >
+              <X size={18} />
+              <span>Booking workspace</span>
+            </button>
+          </div>
+        </nav>
+
+        <section className="folder-layout">
+          <header className="folder-header">
+            <div>
+              <p>Booking folder</p>
+              <h1>{selectedBooking.packageName}</h1>
+              <span>
+                {selectedBooking.clientName || 'No client yet'} /{' '}
+                {selectedBooking.quotationNo || selectedBooking.id}
+              </span>
+            </div>
+            <div className="folder-badge">
+              <FolderKanban size={22} />
+              {documentFolderItems.filter((item) => item.ready).length}/
+              {documentFolderItems.length} ready
+            </div>
+          </header>
+
+          <div className="folder-grid">
+            {documentFolderItems.map((item) => (
+              <article className="folder-card" key={item.title}>
+                <div className="folder-card-top">
+                  <FileText size={22} />
+                  <span className={item.ready ? 'ready' : 'needs-data'}>
+                    {item.ready ? 'Ready' : 'Needs data'}
+                  </span>
+                </div>
+                <h2>{item.title}</h2>
+                <strong>{item.label}</strong>
+                <p>{item.description}</p>
+                <small>{item.requirement}</small>
+                <button
+                  type="button"
+                  className="folder-card-action"
+                  onClick={() => openDocumentByTitle(item.title)}
+                >
+                  {item.title === 'Invoice' ? 'Edit invoice' : 'Open preview'}
+                  <ArrowRight size={17} />
+                </button>
+              </article>
+            ))}
+          </div>
+
+          <section className="workflow-note folder-note">
+            <ListChecks size={20} />
+            <p>
+              This is the booking document folder. Client-facing previews only
+              show their filtered data, while the breakdown keeps internal nett
+              and profit details separate.
+            </p>
+          </section>
+        </section>
+      </main>
+    )
+  }
+
+  if (screen === 'quotation-preview') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Quotation not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    const lineItems = getBookingLineItems(selectedBooking)
+    const inclusions = getLines(selectedBooking.inclusions, [
+      'Travel arrangement based on selected package',
+    ])
+    const exclusions = getLines(selectedBooking.exclusions, [
+      'Meals not stated',
+      'Other incidental charges not stated',
+    ])
+
+    return (
+      <main className="preview-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Quotation Preview</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={handlePrintPreview}
+              title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
+              disabled={isPdfExporting}
+            >
+              <Printer size={18} />
+              <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setScreen('booking-detail')}
+              title="Back"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <section className="quotation-preview print-document">
+          <header className="quote-header">
+            <div className="quote-company">
+              <strong>LION AND LAMB TRAVEL</strong>
+              <span>BLK C 7-17 Olongapo City Public Market</span>
+              <span>East Bajac Bajac Olongapo City</span>
+              <span>travel_lionlamb@yahoo.com</span>
+            </div>
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+          </header>
+
+          <h1>Quotation</h1>
+
+          <section className="quote-meta-grid">
+            <article>
+              <span>Date</span>
+              <strong>{formatProjectDate(new Date().toISOString())}</strong>
+            </article>
+            <article>
+              <span>Quotation For</span>
+              <strong>{selectedBooking.clientName}</strong>
+            </article>
+            <article>
+              <span>Package Name</span>
+              <strong>{selectedBooking.packageName}</strong>
+            </article>
+            <article>
+              <span>Quotation No.</span>
+              <strong>{selectedBooking.quotationNo || selectedBooking.id}</strong>
+            </article>
+            <article>
+              <span>Date of Travel</span>
+              <strong>
+                {selectedBooking.travelStart
+                  ? `${formatProjectDate(selectedBooking.travelStart)}${
+                      selectedBooking.travelEnd
+                        ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
+                        : ''
+                    }`
+                  : 'To be advised'}
+              </strong>
+            </article>
+            <article>
+              <span>Condition</span>
+              <strong>Rate subject to change and availability</strong>
+            </article>
+          </section>
+
+          <table className="quote-table">
+            <thead>
+              <tr>
+                <th>Description</th>
+                <th>Qty</th>
+                <th>Unit price</th>
+                <th>Total price</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lineItems.map((item, index) => (
+                <tr key={`${item.description}-${index}`}>
+                  <td>{item.description}</td>
+                  <td>{item.quantity}</td>
+                  <td>{formatAmount(String(item.unitPrice), item.currency)}</td>
+                  <td>{formatAmount(String(item.total), item.currency)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <section className="quote-notes">
+            <p>Notes: No booking has been made yet.</p>
+            <strong>RATE SUBJECT TO CHANGE AND AVAILABILITY</strong>
+          </section>
+
+          <section className="preview-list-grid document-checklists">
+            <div className="included-list">
+              <h2>Inclusions</h2>
+              <ul>
+                {inclusions.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="excluded-list">
+              <h2>Exclusions</h2>
+              <ul>
+                {exclusions.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          </section>
+
+          <section className="quote-filter-warning">
+            <ListChecks size={19} />
+            <p>
+              Client quotation preview only. Internal supplier nett, markup, and
+              breakdown values are intentionally hidden.
+            </p>
+          </section>
+
+          <footer className="quote-footer-line">
+            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
+          </footer>
+        </section>
+      </main>
+    )
+  }
+
+  if (screen === 'invoice-editor') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Invoice not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    const lineItems = getBookingLineItems(selectedBooking)
+    const totalPrice = sumLineItems(lineItems, 'total')
+    const lineItemsCurrency = getPrimaryLineItemCurrency(lineItems)
+    const amountPaid = parseAmount(invoiceForm.invoiceAmountPaid)
+    const balance = Math.max(totalPrice - amountPaid, 0)
+
+    return (
+      <main className="data-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Editable Invoice</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              type="button"
+              onClick={() => setScreen('booking-detail')}
+              title="Back"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <form className="data-form" onSubmit={handleSaveInvoiceUpdate}>
+          <header className="data-form-header">
+            <div>
+              <p>Invoice update</p>
+              <h1>{selectedBooking.packageName}</h1>
+              <span>
+                Edit payment details first. The invoice PDF preview will use
+                this saved payment update.
+              </span>
+            </div>
+            <button type="submit" className="save-booking-btn">
+              <Save size={18} />
+              Save and preview invoice
+            </button>
+          </header>
+
+          <section className="invoice-edit-summary">
+            <article>
+              <span>Total invoice</span>
+              <strong>{formatAmount(String(totalPrice), lineItemsCurrency)}</strong>
+            </article>
+            <article>
+              <span>Amount paid</span>
+              <strong>{formatAmount(invoiceForm.invoiceAmountPaid, lineItemsCurrency)}</strong>
+            </article>
+            <article>
+              <span>Balance</span>
+              <strong>{formatAmount(String(balance), lineItemsCurrency)}</strong>
+            </article>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>Editable invoice</p>
+              <h2>Payment update before PDF</h2>
+            </div>
+            <div className="field-grid three">
+              <label>
+                Payment status
+                <select
+                  value={invoiceForm.invoicePaymentStatus}
+                  onChange={(event) =>
+                    updateInvoiceField('invoicePaymentStatus', event.target.value)
+                  }
+                >
+                  <option>Unpaid</option>
+                  <option>Partially Paid</option>
+                  <option>Paid</option>
+                </select>
+              </label>
+              <label>
+                Amount paid
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={invoiceForm.invoiceAmountPaid}
+                  onChange={(event) =>
+                    updateInvoiceField('invoiceAmountPaid', event.target.value)
+                  }
+                  placeholder="PHP 0.00"
+                />
+              </label>
+              <label>
+                Payment date
+                <input
+                  type="date"
+                  value={invoiceForm.invoicePaymentDate}
+                  onChange={(event) =>
+                    updateInvoiceField('invoicePaymentDate', event.target.value)
+                  }
+                />
+              </label>
+            </div>
+            <div className="field-grid two">
+              <label>
+                Payment method
+                <input
+                  value={invoiceForm.paymentMethod}
+                  onChange={(event) =>
+                    updateInvoiceField('paymentMethod', event.target.value)
+                  }
+                  placeholder="Bank transfer, cash, GCash"
+                />
+              </label>
+              <label>
+                Payment reference
+                <input
+                  value={invoiceForm.invoiceReference}
+                  onChange={(event) =>
+                    updateInvoiceField('invoiceReference', event.target.value)
+                  }
+                  placeholder="OR / bank ref / GCash ref"
+                />
+              </label>
+            </div>
+            <label className="textarea-field">
+              Payment records
+              <textarea
+                value={invoiceForm.paymentRecords}
+                onChange={(event) =>
+                  updateInvoiceField('paymentRecords', event.target.value)
+                }
+                placeholder="One payment update per line, e.g. DP MAR 3 PAID - PHP 40,000"
+              />
+            </label>
+          </section>
+        </form>
+      </main>
+    )
+  }
+
+  if (screen === 'invoice-preview') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Invoice not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    const lineItems = getBookingLineItems(selectedBooking)
+    const totalPrice = sumLineItems(lineItems, 'total')
+    const lineItemsCurrency = getPrimaryLineItemCurrency(lineItems)
+    const amountPaid = parseAmount(selectedBooking.invoiceAmountPaid)
+    const balance = Math.max(totalPrice - amountPaid, 0)
+    const paymentRecords = getLines(selectedBooking.paymentRecords, [
+      'No payment updates yet.',
+    ])
+    const inclusions = getLines(selectedBooking.inclusions, [
+      'Travel arrangement based on confirmed package',
+    ])
+    const exclusions = getLines(selectedBooking.exclusions, [
+      'Meals not stated',
+      'Other services not mentioned above',
+    ])
+
+    return (
+      <main className="preview-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Invoice Preview</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={handlePrintPreview}
+              title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
+              disabled={isPdfExporting}
+            >
+              <Printer size={18} />
+              <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={openInvoiceEditor}
+              title="Edit invoice"
+            >
+              <Save size={18} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setScreen('booking-detail')}
+              title="Back"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <section className="invoice-preview print-document">
+          <header className="invoice-header">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <h1>INVOICE</h1>
+              <strong>LION AND LAMB TRAVEL</strong>
+              <span>BLK C 7-17, Olongapo City Public Market</span>
+              <span>Rizal Ave. Olongapo City, Zambales 2200</span>
+              <span>travel_lionlamb@yahoo.com</span>
+            </div>
+            <img src={agencySeal} alt="DOT accreditation seal" />
+          </header>
+
+          <section className="invoice-strip">
+            <div>
+              <span>Invoice #</span>
+              <strong>{selectedBooking.id.replace('BK-', 'LLTP')}</strong>
+            </div>
+            <div>
+              <span>Invoice Date</span>
+              <strong>{formatProjectDate(new Date().toISOString())}</strong>
+            </div>
+            <div className="amount-due-box">
+              <span>Amount Due</span>
+              <strong>{formatAmount(String(balance), lineItemsCurrency)}</strong>
+            </div>
+          </section>
+
+          <section className="bill-to-row">
+            <strong>Bill To:</strong>
+            <span>{selectedBooking.clientName}</span>
+          </section>
+
+          <table className="invoice-table">
+            <thead>
+              <tr>
+                <th>Description</th>
+                <th>Qty</th>
+                <th>Unit Price</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lineItems.map((item, index) => (
+                <tr key={`${item.description}-${index}`}>
+                  <td>{item.description}</td>
+                  <td>{item.quantity}</td>
+                  <td>{formatAmount(String(item.unitPrice), item.currency)}</td>
+                  <td>{formatAmount(String(item.total), item.currency)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <section className="invoice-total-panel">
+            <div>
+              <span>Subtotal</span>
+              <strong>{formatAmount(String(totalPrice), lineItemsCurrency)}</strong>
+            </div>
+            <div>
+              <span>Total</span>
+              <strong>{formatAmount(String(totalPrice), lineItemsCurrency)}</strong>
+            </div>
+            <div>
+              <span>Paid</span>
+              <strong>{formatAmount(selectedBooking.invoiceAmountPaid, lineItemsCurrency)}</strong>
+            </div>
+            <div>
+              <span>Balance</span>
+              <strong>{formatAmount(String(balance), lineItemsCurrency)}</strong>
+            </div>
+            <div className="payment-placeholder">
+              <span>Payment Updates</span>
+              <ul>
+                {paymentRecords.map((record) => (
+                  <li key={record}>{record}</li>
+                ))}
+              </ul>
+            </div>
+          </section>
+
+          <section className="invoice-notes document-checklists">
+            <h2>Note to Customer</h2>
+            <div className="invoice-note-grid">
+              <div className="included-list">
+                <strong>Inclusions</strong>
+                <ul>
+                  {inclusions.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="excluded-list">
+                <strong>Exclusions</strong>
+                <ul>
+                  {exclusions.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <p>
+              Status: {selectedBooking.invoicePaymentStatus || 'Unpaid'}.
+              Payment method: {selectedBooking.paymentMethod || 'To be advised'}.
+              Payment date:{' '}
+              {selectedBooking.invoicePaymentDate
+                ? formatProjectDate(selectedBooking.invoicePaymentDate)
+                : 'To be advised'}.
+              Reference: {selectedBooking.invoiceReference || 'N/A'}.
+              Flight details: {selectedBooking.flightDetails || 'To be advised'}.
+            </p>
+            <section className="invoice-policy">
+              <h3>Flight Details</h3>
+              <p>{selectedBooking.flightDetails || 'To be advised'}</p>
+              <h3>Terms and Conditions</h3>
+              <p>Booking Policy: Payments are non-refundable once made.</p>
+              <p>
+                Hotel and tours are re-bookable under certain conditions and
+                subject to fees and penalties.
+              </p>
+              <p>
+                Any alteration made without approval from the issuing office
+                will be deemed null and void.
+              </p>
+              <p>
+                Any incidental expenses will be on the guest account. The
+                issuing office is not liable for problems caused by airline,
+                hotel, or local tour operators.
+              </p>
+              <p>
+                Passengers are responsible for checking travel documents and
+                immigration requirements before booking.
+              </p>
+            </section>
+            <div className="transaction-box">
+              <strong>For faster transactions</strong>
+              <span>Send deposit or payment proof with your booking reference.</span>
+              <span>BDO - OLONGAPO / SHARON R MORINE</span>
+            </div>
+          </section>
+
+          <section className="quote-filter-warning">
+            <ListChecks size={19} />
+            <p>
+              Client invoice preview only. Supplier nett and internal breakdown
+              values are hidden.
+            </p>
+          </section>
+        </section>
+      </main>
+    )
+  }
+
+  if (screen === 'purchase-order-preview') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Purchase order not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    const lineItems = getBookingLineItems(selectedBooking)
+    const amount = sumLineItems(lineItems, 'nettTotal') || sumLineItems(lineItems, 'total')
+    const lineItemsCurrency = getPrimaryLineItemCurrency(lineItems)
+    const poNumber = selectedBooking.id.replace('BK-', new Date().getFullYear().toString())
+
+    return (
+      <main className="preview-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Purchase Order Preview</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={handlePrintPreview}
+              title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
+              disabled={isPdfExporting}
+            >
+              <Printer size={18} />
+              <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setScreen('booking-detail')}
+              title="Back"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <section className="po-preview print-document">
+          <header className="po-header">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>LION AND LAMB TRAVEL</strong>
+              <span>BLK #7-17 OLONGAPO CITY PUBLIC MARKET</span>
+              <span>Olongapo City, Philippines 2200</span>
+              <span>travel_lionlamb@yahoo.com</span>
+              <span>DOT No: R03 - TTA 013652023</span>
+            </div>
+            <img src={agencySeal} alt="DOT accreditation seal" />
+          </header>
+
+          <h1>Purchase Order</h1>
+
+          <section className="po-meta-grid">
+            <article>
+              <span>Date</span>
+              <strong>{formatProjectDate(new Date().toISOString())}</strong>
+            </article>
+            <article>
+              <span>Invoice</span>
+              <strong>{selectedBooking.quotationNo || selectedBooking.id}</strong>
+            </article>
+            <article>
+              <span>P.O. No.</span>
+              <strong>{poNumber}</strong>
+            </article>
+          </section>
+
+          <section className="po-party-grid">
+            <div>
+              <span>Vendor:</span>
+              <strong>{selectedBooking.supplier || 'To be assigned'}</strong>
+              <small>
+                Agent:{' '}
+                {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
+              </small>
+              <small>Contact No.: {selectedBooking.supplierContact || 'N/A'}</small>
+            </div>
+            <div>
+              <span>Client Details:</span>
+              <strong>
+                {selectedBooking.clientName}
+                {selectedBooking.pax ? ` x${selectedBooking.pax}` : ''}
+              </strong>
+              <small>No. of pax: {selectedBooking.pax || 'N/A'}</small>
+              <small>Contact No.: {selectedBooking.contactNumber || 'N/A'}</small>
+            </div>
+          </section>
+
+          <table className="po-table">
+            <thead>
+              <tr>
+                <th>Payment Method</th>
+                <th>Type of Service</th>
+                <th>Travel Date</th>
+                <th>Option Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>{selectedBooking.paymentMethod || 'Bank Transfer'}</td>
+                <td>{selectedBooking.destination || 'Tours and Transfers'}</td>
+                <td>
+                  {selectedBooking.travelStart
+                    ? `${formatProjectDate(selectedBooking.travelStart)}${
+                        selectedBooking.travelEnd
+                          ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
+                          : ''
+                      }`
+                    : 'TBA'}
+                </td>
+                <td>
+                  {selectedBooking.optionDate
+                    ? formatProjectDate(selectedBooking.optionDate)
+                    : 'TBA'}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table className="po-table particulars">
+            <thead>
+              <tr>
+                <th>Qty</th>
+                <th># of Pax</th>
+                <th>Particular</th>
+                <th>Unit Price</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lineItems.map((item, index) => {
+                const poUnitPrice = item.nettCost || item.unitPrice
+                const poAmount = item.nettTotal || item.total
+
+                return (
+                  <tr key={`${item.description}-${index}`}>
+                    <td>{item.quantity}</td>
+                    <td>{selectedBooking.pax || item.quantity}</td>
+                    <td>{item.description}</td>
+                    <td>{formatAmount(String(poUnitPrice), item.currency)}</td>
+                    <td>{formatAmount(String(poAmount), item.currency)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+
+          <section className="po-total">
+            <span>Total Amount:</span>
+            <strong>{formatAmount(String(amount), lineItemsCurrency)}</strong>
+          </section>
+
+          <section className="po-notes-grid">
+            <div>
+              <span>Hotel:</span>
+              <strong>{selectedBooking.accommodation || selectedBooking.packageName || 'N/A'}</strong>
+            </div>
+            <div>
+              <span>Flight Details:</span>
+              <strong>{selectedBooking.flightDetails || 'N/A'}</strong>
+            </div>
+            <div>
+              <span>Special Instructions:</span>
+              <strong>
+                {selectedBooking.specialInstructions || selectedBooking.notes || 'N/A'}
+              </strong>
+            </div>
+          </section>
+
+          <footer className="po-footer">
+            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
+          </footer>
+        </section>
+      </main>
+    )
+  }
+
+  if (screen === 'voucher-preview') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Service voucher not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    const itineraryLines = getLines(selectedBooking.itinerary, [
+      selectedBooking.itemDescription ||
+        `Arrival and start of ${selectedBooking.packageName}`,
+      'Free own leisure. Final reminders and departure arrangements.',
+    ])
+    const inclusions = getLines(selectedBooking.inclusions, [
+      'Travel arrangement based on confirmed package',
+      'Accommodation / service details as stated above',
+      'Assistance from Lion and Lamb Travel',
+    ])
+    const exclusions = getLines(selectedBooking.exclusions, [
+      'Meals not stated',
+      'Optional tours or personal expenses',
+      'Other incidental charges not stated',
+    ])
+    const itineraryRows = itineraryLines.map((line, index) => ({
+      date:
+        index === 0
+          ? selectedBooking.travelStart
+            ? formatProjectDate(selectedBooking.travelStart)
+            : `Day ${index + 1}`
+          : index === itineraryLines.length - 1 && selectedBooking.travelEnd
+            ? formatProjectDate(selectedBooking.travelEnd)
+            : `Day ${index + 1}`,
+      itinerary: line,
+      hotel:
+        selectedBooking.hotelAddress ||
+        selectedBooking.accommodation ||
+        selectedBooking.destination ||
+        'Accommodation to be advised',
+    }))
+
+    return (
+      <main className="preview-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Service Voucher Preview</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={handlePrintPreview}
+              title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
+              disabled={isPdfExporting}
+            >
+              <Printer size={18} />
+              <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setScreen('booking-detail')}
+              title="Back"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <section className="voucher-preview print-document">
+          <header className="voucher-header">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>LION AND LAMB TRAVEL</strong>
+              <span>BLK C #7-17 OLONGAPO CITY PUBLIC MARKET</span>
+              <span>Olongapo City, Philippines 2200</span>
+              <span>travel_lionlamb@yahoo.com</span>
+              <span>DOT No: R03 - TTA 013652023</span>
+            </div>
+            <img src={agencySeal} alt="DOT accreditation seal" />
+          </header>
+
+          <h1>Service Voucher</h1>
+
+          <section className="voucher-meta">
+            <div>
+              <span>Date</span>
+              <strong>{formatProjectDate(new Date().toISOString())}</strong>
+            </div>
+            <div>
+              <span>Invoice</span>
+              <strong>{selectedBooking.quotationNo || selectedBooking.id}</strong>
+            </div>
+          </section>
+
+          <section className="voucher-party-grid">
+            <div>
+              <span>Package:</span>
+              <strong>{selectedBooking.packageName}</strong>
+              <small>
+                Tour Date:{' '}
+                {selectedBooking.travelStart
+                  ? `${formatProjectDate(selectedBooking.travelStart)}${
+                      selectedBooking.travelEnd
+                        ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
+                        : ''
+                    }`
+                  : 'TBA'}
+              </small>
+              <small>Flight Details: {selectedBooking.flightDetails || 'TBA'}</small>
+              <small>
+                Emergency Contact #: {selectedBooking.emergencyContact || 'TBA'}
+              </small>
+            </div>
+            <div>
+              <span>Client Details:</span>
+              <strong>Name: {selectedBooking.clientName}</strong>
+              <small>Guest Contact Number: {selectedBooking.contactNumber || 'TBA'}</small>
+              <small>
+                Accommodation:{' '}
+                {selectedBooking.accommodation || selectedBooking.packageName || 'TBA'}
+              </small>
+            </div>
+          </section>
+
+          <table className="voucher-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Itinerary</th>
+                <th>Hotel</th>
+              </tr>
+            </thead>
+            <tbody>
+              {itineraryRows.map((row) => (
+                <tr key={row.date}>
+                  <td>{row.date}</td>
+                  <td>{row.itinerary}</td>
+                  <td>{row.hotel}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <section className="voucher-lists document-checklists">
+            <div className="included-list">
+              <h2>Package Inclusions</h2>
+              <ul>
+                {inclusions.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="excluded-list">
+              <h2>Package Exclusions</h2>
+              <ul>
+                {exclusions.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          </section>
+
+          <section className="voucher-reminders">
+            <p>Itinerary may change depending on local weather condition or other unavoidable circumstances.</p>
+            <p>For any flight schedule change or flight delays, please inform us immediately.</p>
+            <p>Please be informed that whole period quarantine is needed and full charge for any cancellation, amendment, no show, or early check-out may apply.</p>
+            <p>Any unused portion for land arrangement is non-refundable.</p>
+            <p>All rights reserved by Lion and Lamb Travel if any changes occur without prior notice.</p>
+            {selectedBooking.specialInstructions && (
+              <p>{selectedBooking.specialInstructions}</p>
+            )}
+          </section>
+
+          <section className="voucher-disclaimer">
+            <strong>Disclaimer and Confidentiality Notice</strong>
+            <p>
+              Lion and Lamb Travel arranges travel services through independent
+              vendors such as airlines, accommodation, transportation, tours, and
+              related services. Confirmation vouchers are non-refundable,
+              non-transferable, and subject to supplier rules and availability.
+            </p>
+          </section>
+
+          <footer className="voucher-footer">
+            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
+          </footer>
+        </section>
+      </main>
+    )
+  }
+
+  if (screen === 'breakdown-preview') {
+    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+
+    if (!selectedBooking) {
+      return (
+        <main className="detail-screen">
+          <section className="missing-detail">
+            <FileText size={30} />
+            <h1>Breakdown not found</h1>
+            <button type="button" onClick={() => setScreen('home')}>
+              Back to dashboard
+            </button>
+          </section>
+        </main>
+      )
+    }
+
+    const lineItems = getBookingLineItems(selectedBooking)
+    const quantity = parseQuantity(selectedBooking.quantity)
+    const internalTotal = sumLineItems(lineItems, 'nettTotal')
+    const clientTotal = sumLineItems(lineItems, 'total')
+    const estimatedProfit = sumLineItems(lineItems, 'profit')
+    const lineItemsCurrency = getPrimaryLineItemCurrency(lineItems)
+
+    return (
+      <main className="preview-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Internal Breakdown Preview</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={handlePrintPreview}
+              title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
+              disabled={isPdfExporting}
+            >
+              <Printer size={18} />
+              <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setScreen('booking-detail')}
+              title="Back"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        <section className="breakdown-preview print-document">
+          <header className="breakdown-header">
+            <h1>QUOTATION: {selectedBooking.quotationNo || selectedBooking.id}</h1>
+            <strong>INTERNAL BREAKDOWN</strong>
+          </header>
+
+          <section className="breakdown-info">
+            <div>
+              <span>Name</span>
+              <strong>{selectedBooking.packageName}</strong>
+            </div>
+            <div>
+              <span>Date of Travel</span>
+              <strong>
+                {selectedBooking.travelStart
+                  ? `${formatProjectDate(selectedBooking.travelStart)}${
+                      selectedBooking.travelEnd
+                        ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
+                        : ''
+                    }`
+                  : 'TBA'}
+              </strong>
+            </div>
+            <div>
+              <span>No. of Pax</span>
+              <strong>{selectedBooking.pax || quantity}</strong>
+            </div>
+            <div>
+              <span>Operator</span>
+              <strong>{selectedBooking.supplier || 'To be assigned'}</strong>
+            </div>
+          </section>
+
+          <table className="breakdown-table">
+            <thead>
+              <tr>
+                <th>Service</th>
+                <th>Qty</th>
+                <th>Supplier Nett</th>
+                <th>Client Price</th>
+                <th>Profit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lineItems.map((item, index) => (
+                <tr key={`${item.description}-${index}`}>
+                  <td>{item.description}</td>
+                  <td>{item.quantity}</td>
+                  <td>{formatAmount(String(item.nettTotal), item.currency)}</td>
+                  <td>{formatAmount(String(item.total), item.currency)}</td>
+                  <td>{formatAmount(String(item.profit), item.currency)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <section className="breakdown-total-grid">
+            <div>
+              <span>Supplier Nett Total</span>
+              <strong>{formatAmount(String(internalTotal), lineItemsCurrency)}</strong>
+            </div>
+            <div>
+              <span>Client Total</span>
+              <strong>{formatAmount(String(clientTotal), lineItemsCurrency)}</strong>
+            </div>
+            <div>
+              <span>Estimated Profit</span>
+              <strong>{formatAmount(String(estimatedProfit), lineItemsCurrency)}</strong>
+            </div>
+          </section>
+
+          <section className="internal-warning">
+            <ListChecks size={20} />
+            <p>
+              Internal document only. Supplier nett, profit, and costing details
+              must not appear on quotation, invoice, or service voucher PDFs.
+            </p>
+          </section>
+        </section>
+      </main>
+    )
+  }
+
+  const activeProjects = bookings.length
+  const inquiryCount = bookings.filter((booking) => booking.status === 'Inquiry').length
+  const confirmedCount = bookings.filter((booking) => booking.status === 'Confirmed').length
+  const invoiceCount = bookings.filter((booking) => booking.status === 'Invoice').length
+  const quotationCount = bookings.filter(
+    (booking) => booking.status === 'Quotation' || booking.status === 'Inquiry',
+  ).length
+  const totalBookingValue = bookings.reduce(
+    (total, booking) => total + getBookingClientTotal(booking),
+    0,
+  )
+  const currentDateLabel = new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  })
+  const filteredBookings =
+    (activeBookingFilter === 'All'
+      ? bookings
+      : bookings.filter((booking) => booking.status === activeBookingFilter)
+    ).filter((booking) => {
+      const queryText = searchTerm.trim().toLowerCase()
+
+      if (!queryText) {
+        return true
+      }
+
+      return [
+        booking.clientName,
+        booking.packageName,
+        booking.destination,
+        booking.quotationNo,
+        booking.status,
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(queryText)
+    })
+  const statusCounts = bookingListFilters.reduce(
+    (counts, filter) => ({
+      ...counts,
+      [filter.value]:
+        filter.value === 'All'
+          ? bookings.length
+          : bookings.filter((booking) => booking.status === filter.value).length,
+    }),
+    {} as Record<BookingListFilter, number>,
+  )
+
+  return (
+    <main className="home-screen">
+      <nav className="app-nav">
+        <div className="nav-brand">
+          <img src={logo} alt="Lion and Lamb Travel logo" />
+          <div>
+            <strong>Lion and Lamb Travel</strong>
+            <span>Operations Desk</span>
+          </div>
+        </div>
+        <div className="nav-actions">
+          <div className="nav-date">
+            <CalendarDays size={16} />
+            <span>{currentDateLabel}</span>
+          </div>
+          <button type="button" onClick={handleLogout} title="Log out">
+            <LogOut size={18} />
+          </button>
+        </div>
+      </nav>
+
+      <div className="home-body">
+        <section className="home-main">
+          <section className="dashboard-banner">
+            <img src={travelBanner} alt="" />
+            <div className="dashboard-banner-overlay"></div>
+            <div className="dashboard-banner-content">
+              <div>
+                <p>Operations dashboard</p>
+                <h1>
+                  Good day,{' '}
+                  {authUser?.displayName ??
+                    (authUser?.email ? getDisplayName(authUser.email) : 'Team Member')}
+                </h1>
+                <span>{activeProjects} active booking records</span>
+              </div>
+              <button
+                type="button"
+                className="create-project-btn"
+                onClick={handleNewBooking}
+              >
+                <Plus size={20} />
+                New Inquiry
+              </button>
+            </div>
+          </section>
+
+          <section className="dashboard-grid">
+            <article className="summary-card teal">
+              <div className="summary-card-top">
+                <div className="summary-icon blue">
+                  <ClipboardList size={20} />
+                </div>
+                <span>Inquiries</span>
+              </div>
+              <strong>{inquiryCount}</strong>
+              <small>Awaiting preparation</small>
+            </article>
+            <article className="summary-card gold">
+              <div className="summary-card-top">
+                <div className="summary-icon gold">
+                  <Clock3 size={20} />
+                </div>
+                <span>Open Quotes</span>
+              </div>
+              <strong>{quotationCount}</strong>
+              <small>Inquiry and quotation</small>
+            </article>
+            <article className="summary-card green">
+              <div className="summary-card-top">
+                <div className="summary-icon green">
+                  <CheckCircle2 size={20} />
+                </div>
+                <span>Confirmed</span>
+              </div>
+              <strong>{confirmedCount}</strong>
+              <small>Ready for travel</small>
+            </article>
+            <article className="summary-card navy">
+              <div className="summary-card-top">
+                <div className="summary-icon navy">
+                  <CircleDollarSign size={20} />
+                </div>
+                <span>Booking Value</span>
+              </div>
+              <strong className="summary-money">{formatAmount(String(totalBookingValue))}</strong>
+              <small>{invoiceCount} invoice records</small>
+            </article>
+          </section>
+
+          <section className="pipeline-panel">
+            <div className="pipeline-heading">
+              <div>
+                <p>Workflow</p>
+                <h2>Booking pipeline</h2>
+              </div>
+              <span>{activeProjects} total</span>
+            </div>
+            <div className="pipeline-list">
+              {bookingListFilters.slice(1).map((filter, index) => {
+                const count = statusCounts[filter.value]
+                const progress = activeProjects > 0 ? (count / activeProjects) * 100 : 0
+
+                return (
+                  <button
+                    type="button"
+                    key={filter.value}
+                    className={`pipeline-row pipeline-${index + 1}`}
+                    onClick={() => setActiveBookingFilter(filter.value)}
+                  >
+                    <span className="pipeline-dot"></span>
+                    <span className="pipeline-name">{filter.label}</span>
+                    <span className="pipeline-track">
+                      <span style={{ width: `${progress}%` }}></span>
+                    </span>
+                    <strong>{count}</strong>
+                    <ChevronRight size={16} />
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        </section>
+
+        <section className="projects-panel">
+          <div className="section-heading">
+            <div>
+              <p>Booking workspace</p>
+              <h2>{activeBookingFilter === 'All' ? 'All bookings' : activeBookingFilter}</h2>
+            </div>
+            <span className="record-count">{filteredBookings.length} records</span>
+          </div>
+
+          {dataError && <p className="data-alert error">{dataError}</p>}
+          {dataMessage && <p className="data-alert info">{dataMessage}</p>}
+
+          <label className="booking-search">
+            <Search size={17} />
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Search client, package, destination, or quotation no."
+            />
+            {searchTerm.trim() && (
+              <button
+                type="button"
+                className="clear-search-btn"
+                onClick={() => setSearchTerm('')}
+                title="Clear search"
+              >
+                <X size={15} />
+              </button>
+            )}
+          </label>
+
+          <div className="booking-tabs" role="tablist" aria-label="Booking lists">
+            {bookingListFilters.map((filter) => (
+              <button
+                key={filter.value}
+                type="button"
+                role="tab"
+                aria-selected={activeBookingFilter === filter.value}
+                className={activeBookingFilter === filter.value ? 'active' : ''}
+                onClick={() => setActiveBookingFilter(filter.value)}
+              >
+                <span>{filter.label}</span>
+                <strong>{statusCounts[filter.value]}</strong>
+              </button>
+            ))}
+          </div>
+
+          <div className="project-list">
+            {filteredBookings.length === 0 && (
+              <div className="empty-list">
+                <FileText size={26} />
+                <strong>{searchTerm.trim() ? 'No matching records' : 'No records yet'}</strong>
+                <span>
+                  {searchTerm.trim()
+                    ? 'Try another client, package, destination, or quotation number.'
+                    : 'Saved inquiries with this status will appear here after data gathering.'}
+                </span>
+              </div>
+            )}
+
+            {filteredBookings.map((booking) => (
+              <button
+                className={`project-card status-${booking.status
+                  .toLowerCase()
+                  .replaceAll(' ', '-')}`}
+                key={booking.id}
+                type="button"
+                onClick={() => openBookingDetail(booking.id)}
+              >
+                <div className="project-main">
+                  <div className="project-icon">
+                    <FileText size={20} />
+                  </div>
+                  <div>
+                    <strong>{booking.packageName}</strong>
+                    <span>{booking.clientName}</span>
+                  </div>
+                </div>
+                <div className="project-meta">
+                  <span className="status-pill">{booking.status}</span>
+                  <span>
+                    <CalendarDays size={15} />
+                    {formatProjectDate(booking.createdAt)}
+                  </span>
+                  <span>
+                    <MapPin size={15} />
+                    {formatAmount(String(getBookingClientTotal(booking)))}
+                  </span>
+                  <ChevronRight className="project-chevron" size={18} />
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
+      </div>
+    </main>
+  )
+}
+
+export default App
