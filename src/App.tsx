@@ -1211,8 +1211,6 @@ function App() {
     const isEditingBooking = Boolean(editingBookingId)
     const currentInvoiceItems = getInvoiceItemsList()
     const currentBreakdownItems = getBreakdownItemsList()
-    
-    // Internal dynamically updated dashboard totals indicators
     const displayTotalClient = getBookingClientTotal(bookingForm)
     const displayTotalNett = getBookingBreakdownNettTotal(bookingForm)
     const displayTotalProfit = displayTotalClient - displayTotalNett
@@ -1222,10 +1220,17 @@ function App() {
         <nav className="app-nav">
           <div className="nav-brand">
             <img src={logo} alt="Lion and Lamb Travel logo" />
-            <div><strong>Lion and Lamb Travel</strong><span>{isEditingBooking ? 'Edit Booking' : 'Data Gathering'}</span></div>
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>{isEditingBooking ? 'Edit Booking' : 'Data Gathering'}</span>
+            </div>
           </div>
           <div className="nav-actions">
-            <button type="button" onClick={() => { setEditingBookingId(''); setScreen(isEditingBooking ? 'booking-detail' : 'home') }} title="Close">
+            <button
+              type="button"
+              onClick={() => { setEditingBookingId(''); setScreen(isEditingBooking ? 'booking-detail' : 'home') }}
+              title="Close"
+            >
               <X size={18} />
             </button>
           </div>
@@ -1236,217 +1241,441 @@ function App() {
             <div>
               <p>{isEditingBooking ? 'Update master record' : 'New inquiry'}</p>
               <h1>{isEditingBooking ? 'Edit Booking Info' : 'Data Gathering Form'}</h1>
-              <span>Configure individual settings for separate workflow views seamlessly from a single terminal interface.</span>
+              <span>Configure client, travel, pricing, and document details from a single workspace.</span>
             </div>
             <button type="submit" className="save-booking-btn">
-              <Save size={18} /> {isEditingBooking ? 'Save Changes' : 'Save Inquiry'}
+              <Save size={18} />
+              {isEditingBooking ? 'Save Changes' : 'Save Inquiry'}
             </button>
           </header>
 
           {dataError && <p className="data-alert error">{dataError}</p>}
           {dataMessage && <p className="data-alert info">{dataMessage}</p>}
 
+          {/* 01 · CLIENT */}
           <section className="form-section">
-            <div className="form-section-heading"><p>01 · Client</p><h2>Client info</h2></div>
+            <div className="form-section-heading">
+              <p>01 · Client</p>
+              <h2>Client info</h2>
+            </div>
             <div className="field-grid three">
-              <label>Client name <input required value={bookingForm.clientName} onChange={(event) => updateBookingField('clientName', event.target.value)} placeholder="Ms. Joanna Pico" /></label>
-              <label>Contact number <input value={bookingForm.contactNumber} onChange={(event) => updateBookingField('contactNumber', event.target.value)} placeholder="09xxxxxxxxx" /></label>
-              <label>Email <input type="email" value={bookingForm.clientEmail} onChange={(event) => updateBookingField('clientEmail', event.target.value)} placeholder="client@email.com" /></label>
+              <label>
+                Client name
+                <input required value={bookingForm.clientName} onChange={(e) => updateBookingField('clientName', e.target.value)} placeholder="Ms. Joanna Pico" />
+              </label>
+              <label>
+                Contact number
+                <input value={bookingForm.contactNumber} onChange={(e) => updateBookingField('contactNumber', e.target.value)} placeholder="09xxxxxxxxx" />
+              </label>
+              <label>
+                Email address
+                <input type="email" value={bookingForm.clientEmail} onChange={(e) => updateBookingField('clientEmail', e.target.value)} placeholder="client@email.com" />
+              </label>
             </div>
           </section>
 
+          {/* 02 · TRAVEL */}
           <section className="form-section">
-            <div className="form-section-heading"><p>02 · Travel</p><h2>Package details</h2></div>
+            <div className="form-section-heading">
+              <p>02 · Travel</p>
+              <h2>Package details</h2>
+            </div>
             <div className="field-grid three">
-              <label>Package name <input required value={bookingForm.packageName} onChange={(event) => updateBookingField('packageName', event.target.value)} placeholder="3D2N Clark and Olongapo" /></label>
-              <label>Destination <input value={bookingForm.destination} onChange={(event) => updateBookingField('destination', event.target.value)} placeholder="Clark, Boracay, Hong Kong" /></label>
-              <label>No. of pax <input value={bookingForm.pax} onChange={(event) => updateBookingField('pax', event.target.value)} placeholder="2 adults, 1 infant" /></label>
-              <label>Travel start <input type="date" value={bookingForm.travelStart} onChange={(event) => updateBookingField('travelStart', event.target.value)} /></label>
-              <label>Travel end <input type="date" value={bookingForm.travelEnd} onChange={(event) => updateBookingField('travelEnd', event.target.value)} /></label>
-              <label>Status 
-                <select value={bookingForm.status} onChange={(event) => updateBookingField('status', event.target.value as BookingStatus)}>
-                  <option>Inquiry</option><option>Breakdown</option><option>Quotation</option><option>Purchase Order</option><option>Invoice</option><option>Confirmed</option>
+              <label>
+                Package name
+                <input required value={bookingForm.packageName} onChange={(e) => updateBookingField('packageName', e.target.value)} placeholder="3D2N Clark and Olongapo" />
+              </label>
+              <label>
+                Destination
+                <input value={bookingForm.destination} onChange={(e) => updateBookingField('destination', e.target.value)} placeholder="Clark, Boracay, Hong Kong" />
+              </label>
+              <label>
+                No. of pax
+                <input value={bookingForm.pax} onChange={(e) => updateBookingField('pax', e.target.value)} placeholder="2 adults, 1 infant" />
+              </label>
+              <label>
+                Travel start
+                <input type="date" value={bookingForm.travelStart} onChange={(e) => updateBookingField('travelStart', e.target.value)} />
+              </label>
+              <label>
+                Travel end
+                <input type="date" value={bookingForm.travelEnd} onChange={(e) => updateBookingField('travelEnd', e.target.value)} />
+              </label>
+              <label>
+                Booking status
+                <select value={bookingForm.status} onChange={(e) => updateBookingField('status', e.target.value as BookingStatus)}>
+                  <option>Inquiry</option>
+                  <option>Breakdown</option>
+                  <option>Quotation</option>
+                  <option>Purchase Order</option>
+                  <option>Invoice</option>
+                  <option>Confirmed</option>
                 </select>
               </label>
             </div>
           </section>
 
-          {/* NEW DYNAMIC QUOTATION SECTION */}
+          {/* 03 · QUOTATION */}
           <section className="form-section">
-            <div className="form-section-heading"><p>03 · Quotation</p><h2>Basic</h2></div>
+            <div className="form-section-heading">
+              <p>03 · Quotation</p>
+              <h2>Reference and base price</h2>
+            </div>
             <div className="field-grid three">
-              <label>Quotation no. <input value={bookingForm.quotationNo} onChange={(event) => updateBookingField('quotationNo', event.target.value)} placeholder="QT-2026-0001" /></label>
-              <label>Option date <input type="date" value={bookingForm.optionDate} onChange={(event) => updateBookingField('optionDate', event.target.value)} /></label>
-              <label>Prepared by <input value={bookingForm.preparedBy} onChange={(event) => updateBookingField('preparedBy', event.target.value)} placeholder="Agent Name" /></label>
+              <label>
+                Quotation no.
+                <input value={bookingForm.quotationNo} onChange={(e) => updateBookingField('quotationNo', e.target.value)} placeholder="QT-2026-0001" />
+              </label>
+              <label>
+                Option date
+                <input type="date" value={bookingForm.optionDate} onChange={(e) => updateBookingField('optionDate', e.target.value)} />
+              </label>
+              <label>
+                Prepared by
+                <input value={bookingForm.preparedBy} onChange={(e) => updateBookingField('preparedBy', e.target.value)} placeholder="Agent Name" />
+              </label>
             </div>
-            
-            <div className="itemized-container" style={{ marginTop: '1.5rem' }}>
-              <div className="itemized-header" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '1rem', fontWeight: 'bold', paddingBottom: '0.5rem', borderBottom: '1px solid #ddd' }}>
-                <span>Package Name</span>
-                <span>QTY</span>
-                <span>Client Price</span>
-              </div>
-              <div className="itemized-row" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '1rem', marginTop: '0.5rem', alignItems: 'center' }}>
-                <input style={{ background: '#f5f5f5', cursor: 'not-allowed' }} disabled value={bookingForm.packageName || '(Set Package Name above)'} />
-                <input type="number" min="1" value={bookingForm.quantity || '1'} onChange={(e) => updateBookingField('quantity', e.target.value)} placeholder="1" />
-                <input type="text" value={bookingForm.unitPrice} onChange={(e) => updateBookingField('unitPrice', e.target.value)} placeholder="0.00" />
-              </div>
-              <p className="field-help" style={{ marginTop: '0.5rem', color: '#666' }}>
-                This is the simple client quotation price. Nett/supplier costs are handled in the invoice add-ons and internal breakdown.
-              </p>
-            </div>
-          </section>
 
-          {/* NEW INVOICE SECTION */}
-          <section className="form-section">
-            <div className="form-section-heading"><p>04 · Invoice</p><h2>Basic / Optional</h2></div>
-            <p className="field-help" style={{ marginBottom: '1rem' }}>Service / Item rows shown here are client-visible. The package is already included; add optional items only when needed.</p>
-            
-            <div className="itemized-container">
-              <div className="itemized-header" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 40px', gap: '0.5rem', fontWeight: 'bold', paddingBottom: '0.5rem', borderBottom: '1px solid #ddd' }}>
-                <span>Service / Item</span>
-                <span>QTY</span>
-                <span>Client Price</span>
-                <span>Supplier Nett</span>
-                <span></span>
-              </div>
-              
-              {currentInvoiceItems.map((item, index) => (
-                <div key={index} className="itemized-row" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 40px', gap: '0.5rem', marginTop: '0.5rem', alignItems: 'center' }}>
-                  {item.isPackageRow ? (
-                    <input style={{ background: '#f5f5f5', cursor: 'not-allowed' }} disabled value={bookingForm.packageName ? `${bookingForm.packageName} (Package Name)` : 'Basic Package'} />
-                  ) : (
-                    <select value={item.description} onChange={(e) => changeInvoiceItemField(index, 'description', e.target.value)}>
-                      {invoiceOptions.map((opt, oIdx) => <option key={oIdx} value={opt}>{opt}</option>)}
-                    </select>
-                  )}
-                  
-                  <input type="number" min="1" value={item.quantity} onChange={(e) => changeInvoiceItemField(index, 'quantity', e.target.value)} />
-                  <input type="text" value={item.unitPrice} onChange={(e) => changeInvoiceItemField(index, 'unitPrice', e.target.value)} placeholder="0.00" />
-                  
-                  {item.isPackageRow ? (
-                    <input style={{ background: '#f5f5f5', cursor: 'not-allowed', color: '#999' }} disabled value="N/A" />
-                  ) : (
-                    <input type="text" value={item.nettCost} onChange={(e) => changeInvoiceItemField(index, 'nettCost', e.target.value)} placeholder="0.00" />
-                  )}
-
-                  {!item.isPackageRow ? (
-                    <button type="button" className="remove-item-btn" onClick={() => removeInvoiceItemRow(index)} style={{ padding: '4px', background: '#ff4d4d', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>×</button>
-                  ) : <span />}
+            <div className="line-items-panel">
+              <div className="line-items-heading">
+                <div>
+                  <p>Base price</p>
+                  <h3>Client quotation price</h3>
+                  <span>This is the total the client sees on the quotation. Add optional invoice add-ons in section 04.</span>
                 </div>
-              ))}
-
-              <button type="button" className="add-item-btn" onClick={addInvoiceItemRow} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginTop: '1rem', padding: '0.5rem 1rem', background: '#008080', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
-                <Plus size={16} /> Add New Item
-              </button>
+              </div>
+              <div className="line-items-table">
+                <div className="line-items-row header">
+                  <span>Package name</span>
+                  <span>Qty</span>
+                  <span>Client price (PHP)</span>
+                </div>
+                <div className="line-items-row">
+                  <input disabled value={bookingForm.packageName || '(Set package name in section 02)'} className="disabled-field" />
+                  <input
+                    type="number" min="1"
+                    value={bookingForm.quantity || '1'}
+                    onChange={(e) => updateBookingField('quantity', e.target.value)}
+                    placeholder="1"
+                  />
+                  <input
+                    type="text"
+                    value={bookingForm.unitPrice}
+                    onChange={(e) => updateBookingField('unitPrice', e.target.value)}
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+              <p className="field-help">Supplier nett costs are handled in section 04 (invoice add-ons) and section 05 (internal breakdown).</p>
             </div>
           </section>
 
-          {/* NEW BREAKDOWN SECTION */}
+          {/* 04 · INVOICE LINE ITEMS */}
           <section className="form-section">
-            <div className="form-section-heading"><p>05 · Breakdown</p><h2>Charges / Optional</h2></div>
-            <p className="field-help" style={{ marginBottom: '1rem' }}>Service / Item rows here are for internal costing. Turn on "Show" only when a breakdown row should also appear in the invoice.</p>
-            
-            <div className="itemized-container">
-              <div className="itemized-header" style={{ display: 'grid', gridTemplateColumns: '2fr 0.8fr 1fr 1fr 1.2fr 40px', gap: '0.5rem', fontWeight: 'bold', paddingBottom: '0.5rem', borderBottom: '1px solid #ddd' }}>
-                <span>Service / Item</span>
-                <span>QTY</span>
-                <span>Client Price</span>
-                <span>Supplier Nett</span>
-                <span style={{ textAlign: 'center' }}>Send To Invoice?</span>
-                <span></span>
+            <div className="form-section-heading">
+              <p>04 · Invoice</p>
+              <h2>Client-visible line items</h2>
+            </div>
+            <p className="field-help">The package row is locked and auto-filled. Add optional service rows below — these appear on the client invoice.</p>
+
+            <div className="line-items-panel">
+              <div className="line-items-heading">
+                <div>
+                  <p>Invoice items</p>
+                  <h3>Services and add-ons</h3>
+                  <span>Client sees these rows on the final invoice PDF.</span>
+                </div>
+                <button type="button" onClick={addInvoiceItemRow}>
+                  <Plus size={15} /> Add item
+                </button>
               </div>
 
-              {currentBreakdownItems.map((item, index) => (
-                <div key={index} className="itemized-row" style={{ display: 'grid', gridTemplateColumns: '2fr 0.8fr 1fr 1fr 1.2fr 40px', gap: '0.5rem', marginTop: '0.5rem', alignItems: 'center' }}>
-                  {item.isPackageRow ? (
-                    <input style={{ background: '#f5f5f5', cursor: 'not-allowed' }} disabled value={`Calculated from Invoice: ${bookingForm.packageName || 'Basic Package'}`} />
-                  ) : (
-                    <select value={item.description} onChange={(e) => changeBreakdownItemField(index, 'description', e.target.value)}>
-                      {breakdownOptions.map((opt, oIdx) => <option key={oIdx} value={opt}>{opt}</option>)}
-                    </select>
-                  )}
+              <div className="line-items-table">
+                <div className="line-items-row header">
+                  <span>Service / item</span>
+                  <span>Qty</span>
+                  <span>Unit price</span>
+                  <span>Nett cost</span>
+                  <span>Total</span>
+                  <span></span>
+                </div>
 
-                  <input type="number" min="1" disabled={item.isPackageRow} style={item.isPackageRow ? { background: '#f5f5f5' } : {}} value={item.quantity} onChange={(e) => changeBreakdownItemField(index, 'quantity', e.target.value)} />
-                  <input type="text" disabled={item.isPackageRow} style={item.isPackageRow ? { background: '#f5f5f5' } : {}} value={item.unitPrice} onChange={(e) => changeBreakdownItemField(index, 'unitPrice', e.target.value)} placeholder="0.00" />
-                  <input type="text" value={item.nettCost} onChange={(e) => changeBreakdownItemField(index, 'nettCost', e.target.value)} placeholder="0.00" />
+                {currentInvoiceItems.map((item, index) => {
+                  const q = parseQuantity(item.quantity)
+                  const u = parseAmount(item.unitPrice)
+                  const rowTotal = q * u
+                  return (
+                    <div key={index} className="line-item-data-row">
+                      <div className="line-items-row">
+                        {item.isPackageRow ? (
+                          <input disabled className="disabled-field" value={bookingForm.packageName || 'Basic Package'} />
+                        ) : (
+                          <select value={item.description} onChange={(e) => changeInvoiceItemField(index, 'description', e.target.value)}>
+                            {invoiceOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                          </select>
+                        )}
+                        <input
+                          type="number" min="1"
+                          value={item.quantity}
+                          onChange={(e) => changeInvoiceItemField(index, 'quantity', e.target.value)}
+                        />
+                        <input
+                          type="text"
+                          value={item.unitPrice}
+                          onChange={(e) => changeInvoiceItemField(index, 'unitPrice', e.target.value)}
+                          placeholder="0.00"
+                        />
+                        {item.isPackageRow ? (
+                          <input disabled className="disabled-field" value="N/A" />
+                        ) : (
+                          <input
+                            type="text"
+                            value={item.nettCost}
+                            onChange={(e) => changeInvoiceItemField(index, 'nettCost', e.target.value)}
+                            placeholder="0.00"
+                          />
+                        )}
+                        <div className={`line-item-profit ${rowTotal > 0 ? 'positive' : 'zero'}`}>
+                          {formatAmount(String(rowTotal))}
+                        </div>
+                        <button
+                          type="button"
+                          className="remove-line-btn"
+                          onClick={() => removeInvoiceItemRow(index)}
+                          disabled={item.isPackageRow}
+                          title={item.isPackageRow ? 'Package row cannot be removed' : 'Remove row'}
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'center' }}>
-                    <button
-                      type="button"
-                      onClick={() => changeBreakdownItemField(index, 'sendToInvoice', !item.sendToInvoice)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.25rem',
-                        padding: '4px 8px',
-                        borderRadius: '4px',
-                        border: '1px solid #ccc',
-                        background: item.sendToInvoice ? '#e6f7ff' : '#fff',
-                        color: item.sendToInvoice ? '#1890ff' : '#666',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      {item.sendToInvoice ? <Eye size={14} /> : <EyeOff size={14} />}
-                      <span style={{ fontSize: '11px' }}>{item.sendToInvoice ? 'Showing' : 'Hidden'}</span>
-                    </button>
+              <div className="line-items-summary">
+                <article>
+                  <span>Invoice total</span>
+                  <strong>{formatAmount(String(displayTotalClient))}</strong>
+                </article>
+                <article>
+                  <span>Items</span>
+                  <strong>{currentInvoiceItems.length} row{currentInvoiceItems.length !== 1 ? 's' : ''}</strong>
+                </article>
+                <article>
+                  <span>Status</span>
+                  <strong>{bookingForm.status}</strong>
+                </article>
+              </div>
+            </div>
+          </section>
+
+          {/* 05 · INTERNAL BREAKDOWN */}
+          <section className="form-section internal-section">
+            <div className="form-section-heading">
+              <p>05 · Breakdown</p>
+              <h2>Internal supplier costing</h2>
+            </div>
+            <p className="field-help">For internal use only. Enable "Send to invoice" on any row to also push it to the client invoice.</p>
+
+            <div className="line-items-panel">
+              <div className="line-items-heading">
+                <div>
+                  <p>Costing sheet</p>
+                  <h3>Supplier nett vs client price</h3>
+                  <span>These rows are hidden from the client. Toggle visibility per row.</span>
+                </div>
+                <button type="button" onClick={addBreakdownItemRow}>
+                  <Plus size={15} /> Add row
+                </button>
+              </div>
+
+              <div className="line-items-table">
+                <div className="line-items-row breakdown-row header">
+                  <span>Service / item</span>
+                  <span>Qty</span>
+                  <span>Client price</span>
+                  <span>Supplier nett</span>
+                  <span>Send to invoice</span>
+                  <span></span>
+                </div>
+
+                {currentBreakdownItems.map((item, index) => (
+                  <div key={index} className="line-item-data-row">
+                    <div className="line-items-row breakdown-row">
+                      {item.isPackageRow ? (
+                        <input disabled className="disabled-field" value={`Auto: ${bookingForm.packageName || 'Basic Package'}`} />
+                      ) : (
+                        <select value={item.description} onChange={(e) => changeBreakdownItemField(index, 'description', e.target.value)}>
+                          {breakdownOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                        </select>
+                      )}
+                      <input
+                        type="number" min="1"
+                        disabled={item.isPackageRow}
+                        className={item.isPackageRow ? 'disabled-field' : ''}
+                        value={item.quantity}
+                        onChange={(e) => changeBreakdownItemField(index, 'quantity', e.target.value)}
+                      />
+                      <input
+                        type="text"
+                        disabled={item.isPackageRow}
+                        className={item.isPackageRow ? 'disabled-field' : ''}
+                        value={item.unitPrice}
+                        onChange={(e) => changeBreakdownItemField(index, 'unitPrice', e.target.value)}
+                        placeholder="0.00"
+                      />
+                      <input
+                        type="text"
+                        value={item.nettCost}
+                        onChange={(e) => changeBreakdownItemField(index, 'nettCost', e.target.value)}
+                        placeholder="0.00"
+                      />
+                      <button
+                        type="button"
+                        className={`send-to-invoice-btn ${item.sendToInvoice ? 'active' : ''}`}
+                        onClick={() => changeBreakdownItemField(index, 'sendToInvoice', !item.sendToInvoice)}
+                      >
+                        {item.sendToInvoice ? <Eye size={14} /> : <EyeOff size={14} />}
+                        <span>{item.sendToInvoice ? 'Showing' : 'Hidden'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="remove-line-btn"
+                        onClick={() => removeBreakdownItemRow(index)}
+                        disabled={item.isPackageRow}
+                        title={item.isPackageRow ? 'Package row cannot be removed' : 'Remove row'}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
                   </div>
+                ))}
+              </div>
 
-                  {!item.isPackageRow ? (
-                    <button type="button" className="remove-item-btn" onClick={() => removeBreakdownItemRow(index)} style={{ padding: '4px', background: '#ff4d4d', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>×</button>
-                  ) : <span />}
-                </div>
-              ))}
-
-              <button type="button" className="add-item-btn" onClick={addBreakdownItemRow} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginTop: '1rem', padding: '0.5rem 1rem', background: '#2575fc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
-                <Plus size={16} /> Add Item
-              </button>
-            </div>
-
-            <div className="form-summary-card" style={{ marginTop: '1.5rem', padding: '1rem', background: '#f9f9f9', borderRadius: '6px', border: '1px solid #eee' }}>
-              <h3>Live Cost and Profit Summary</h3>
-              <div style={{ display: 'flex', gap: '2rem', marginTop: '0.5rem' }}>
-                <div><strong>Invoice Client Total:</strong> <span style={{ color: '#2e7d32' }}>{formatAmount(String(displayTotalClient))}</span></div>
-                <div><strong>Internal Nett Total:</strong> <span style={{ color: '#c62828' }}>{formatAmount(String(displayTotalNett))}</span></div>
-                <div><strong>Estimated Profit:</strong> <span style={{ color: '#1565c0', fontWeight: 'bold' }}>{formatAmount(String(displayTotalProfit))}</span></div>
+              <div className="line-items-summary">
+                <article>
+                  <span>Client total</span>
+                  <strong>{formatAmount(String(displayTotalClient))}</strong>
+                </article>
+                <article>
+                  <span>Supplier nett</span>
+                  <strong>{formatAmount(String(displayTotalNett))}</strong>
+                </article>
+                <article>
+                  <span>Est. profit</span>
+                  <strong className={displayTotalProfit >= 0 ? 'profit-total' : 'profit-negative'}>
+                    {formatAmount(String(displayTotalProfit))}
+                  </strong>
+                </article>
               </div>
             </div>
           </section>
 
+          {/* 06 · SUPPLIER */}
           <section className="form-section">
-            <div className="form-section-heading"><p>06 · Logistics</p><h2>Fulfillment context</h2></div>
+            <div className="form-section-heading">
+              <p>06 · Supplier</p>
+              <h2>Operator details</h2>
+            </div>
             <div className="field-grid two">
-              <label>Flight details <textarea rows={3} value={bookingForm.flightDetails} onChange={(event) => updateBookingField('flightDetails', event.target.value)} placeholder="MNL-MPH PR2041 0800AM, MPH-MNL PR2042 0500PM" /></label>
-              <label>Accommodation details <textarea rows={3} value={bookingForm.accommodation} onChange={(event) => updateBookingField('accommodation', event.target.value)} placeholder="Henann Regency Beach Resort (Superior Room)" /></label>
-              <label>Hotel location address <textarea rows={2} value={bookingForm.hotelAddress} onChange={(event) => updateBookingField('hotelAddress', event.target.value)} placeholder="Station 2, Balabag, Boracay Island, Malay, Aklan" /></label>
-              <label>Emergency local contact <textarea rows={2} value={bookingForm.emergencyContact} onChange={(event) => updateBookingField('emergencyContact', event.target.value)} placeholder="Hotel Front Desk: (036) 288-6111" /></label>
+              <label>
+                Supplier / operator
+                <input value={bookingForm.supplier} onChange={(e) => updateBookingField('supplier', e.target.value)} placeholder="Tour operator or hotel name" />
+              </label>
+              <label>
+                Supplier contact
+                <input value={bookingForm.supplierContact} onChange={(e) => updateBookingField('supplierContact', e.target.value)} placeholder="09xxxxxxxxx or email" />
+              </label>
             </div>
           </section>
 
+          {/* 07 · LOGISTICS */}
           <section className="form-section">
-            <div className="form-section-heading"><p>07 · Inclusions</p><h2>Document line specifications</h2></div>
+            <div className="form-section-heading">
+              <p>07 · Logistics</p>
+              <h2>Fulfillment context</h2>
+            </div>
             <div className="field-grid two">
-              <label>Inclusions <textarea rows={4} value={bookingForm.inclusions} onChange={(event) => updateBookingField('inclusions', event.target.value)} placeholder="Daily Breakfast&#10;Roundtrip Airport Transfers&#10;Free Wi-Fi access" /></label>
-              <label>Exclusions <textarea rows={4} value={bookingForm.exclusions} onChange={(event) => updateBookingField('exclusions', event.target.value)} placeholder="Tipping for Tour Guide&#10;Personal spending money&#10;Travel insurance" /></label>
+              <label className="textarea-field">
+                Flight details
+                <textarea rows={3} value={bookingForm.flightDetails} onChange={(e) => updateBookingField('flightDetails', e.target.value)} placeholder="MNL-MPH PR2041 0800AM, MPH-MNL PR2042 0500PM" />
+              </label>
+              <label className="textarea-field">
+                Accommodation details
+                <textarea rows={3} value={bookingForm.accommodation} onChange={(e) => updateBookingField('accommodation', e.target.value)} placeholder="Henann Regency Beach Resort (Superior Room)" />
+              </label>
+              <label className="textarea-field">
+                Hotel location address
+                <textarea rows={2} value={bookingForm.hotelAddress} onChange={(e) => updateBookingField('hotelAddress', e.target.value)} placeholder="Station 2, Balabag, Boracay Island, Malay, Aklan" />
+              </label>
+              <label className="textarea-field">
+                Emergency local contact
+                <textarea rows={2} value={bookingForm.emergencyContact} onChange={(e) => updateBookingField('emergencyContact', e.target.value)} placeholder="Hotel Front Desk: (036) 288-6111" />
+              </label>
             </div>
           </section>
 
+          {/* 08 · INCLUSIONS */}
           <section className="form-section">
-            <div className="form-section-heading"><p>08 · Schedule</p><h2>Itinerary roadmap</h2></div>
-            <label>Daily routing schedule <textarea rows={6} value={bookingForm.itinerary} onChange={(event) => updateBookingField('itinerary', event.target.value)} placeholder="Day 1: Arrival at Caticlan Airport, Transfer to Resort, Free Time&#10;Day 2: Boracay Island Hopping Tour with Lunch&#10;Day 3: Breakfast, Free Time until checkout, Departure transfer" /></label>
+            <div className="form-section-heading">
+              <p>08 · Inclusions</p>
+              <h2>Document line specifications</h2>
+            </div>
+            <div className="field-grid two">
+              <label className="textarea-field">
+                Inclusions
+                <textarea rows={4} value={bookingForm.inclusions} onChange={(e) => updateBookingField('inclusions', e.target.value)} placeholder={'Daily Breakfast\nRoundtrip Airport Transfers\nFree Wi-Fi access'} />
+              </label>
+              <label className="textarea-field">
+                Exclusions
+                <textarea rows={4} value={bookingForm.exclusions} onChange={(e) => updateBookingField('exclusions', e.target.value)} placeholder={'Tipping for Tour Guide\nPersonal spending money\nTravel insurance'} />
+              </label>
+            </div>
           </section>
 
+          {/* 09 · SCHEDULE */}
           <section className="form-section">
-            <div className="form-section-heading"><p>09 · Remarks</p><h2>Internal operations index</h2></div>
+            <div className="form-section-heading">
+              <p>09 · Schedule</p>
+              <h2>Itinerary roadmap</h2>
+            </div>
+            <label className="textarea-field">
+              Daily routing schedule
+              <textarea rows={6} value={bookingForm.itinerary} onChange={(e) => updateBookingField('itinerary', e.target.value)} placeholder={'Day 1: Arrival at Caticlan Airport, Transfer to Resort, Free Time\nDay 2: Boracay Island Hopping Tour with Lunch\nDay 3: Breakfast, Free Time until checkout, Departure transfer'} />
+            </label>
+          </section>
+
+          {/* 10 · REMARKS */}
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>10 · Remarks</p>
+              <h2>Internal operations notes</h2>
+            </div>
             <div className="field-grid two">
-              <label>Special client requests <textarea rows={3} value={bookingForm.specialInstructions} onChange={(event) => updateBookingField('specialInstructions', event.target.value)} placeholder="Requesting high floor rooms if available. Senior friendly pacing." /></label>
-              <label>Private desk notes <textarea rows={3} value={bookingForm.notes} onChange={(event) => updateBookingField('notes', event.target.value)} placeholder="Supplier confirmed rate lock until next Friday only." /></label>
+              <label className="textarea-field">
+                Special client requests
+                <textarea rows={3} value={bookingForm.specialInstructions} onChange={(e) => updateBookingField('specialInstructions', e.target.value)} placeholder="Requesting high floor rooms if available. Senior friendly pacing." />
+              </label>
+              <label className="textarea-field">
+                Private desk notes
+                <textarea rows={3} value={bookingForm.notes} onChange={(e) => updateBookingField('notes', e.target.value)} placeholder="Supplier confirmed rate lock until next Friday only." />
+              </label>
             </div>
           </section>
 
           <footer className="form-actions-bar">
-            <button type="button" className="cancel-form-btn" onClick={() => { setEditingBookingId(''); setScreen(isEditingBooking ? 'booking-detail' : 'home') }}>Cancel changes</button>
-            <button type="submit" className="save-booking-btn"><Save size={18} /> {isEditingBooking ? 'Save Changes' : 'Save Booking Record'}</button>
+            <button
+              type="button"
+              className="cancel-form-btn"
+              onClick={() => { setEditingBookingId(''); setScreen(isEditingBooking ? 'booking-detail' : 'home') }}
+            >
+              Cancel changes
+            </button>
+            <button type="submit" className="save-booking-btn">
+              <Save size={18} />
+              {isEditingBooking ? 'Save Changes' : 'Save Booking Record'}
+            </button>
           </footer>
         </form>
       </main>
