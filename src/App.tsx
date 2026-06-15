@@ -40,8 +40,12 @@ import {
   RefreshCw,
   Save,
   Search,
+  Sparkles,
   UserRound,
   X,
+  Check,
+  EyeOff,
+  Eye
 } from 'lucide-react'
 import { auth, db } from './firebase'
 import agencySeal from './assets/brand/agency-seal.png'
@@ -65,12 +69,37 @@ type Screen =
   | 'purchase-order-preview'
   | 'voucher-preview'
   | 'breakdown-preview'
+
 type PasswordStrength = {
   label: 'Weak' | 'Fair' | 'Strong'
   score: 1 | 2 | 3
 }
+
 type BookingStatus = 'Inquiry' | 'Breakdown' | 'Quotation' | 'Purchase Order' | 'Invoice' | 'Confirmed'
 type BookingListFilter = BookingStatus | 'All'
+
+// New modular types for separate sections
+type InvoiceLineItem = {
+  id?: string
+  description: string // drop-down options or Package Name
+  quantity: string
+  unitPrice: string
+  nettCost: string
+  isPackageRow?: boolean
+  source?: 'manual' | 'breakdown'
+  sourceKey?: string
+}
+
+type BreakdownLineItem = {
+  id?: string
+  description: string // drop-down choices
+  quantity: string
+  unitPrice: string
+  nettCost: string
+  sendToInvoice: boolean
+  isPackageRow?: boolean
+}
+
 type BookingFormData = {
   clientName: string
   contactNumber: string
@@ -81,8 +110,12 @@ type BookingFormData = {
   travelEnd: string
   pax: string
   quotationNo: string
-  lineItems: string
-  basicPackageItems: string
+  
+  // Legacy backups kept structural, but serializing our new lists here
+  lineItems: string 
+  invoiceLineItemsJson: string
+  breakdownLineItemsJson: string
+
   itemDescription: string
   quantity: string
   unitPrice: string
@@ -109,10 +142,12 @@ type BookingFormData = {
   status: BookingStatus
   notes: string
 }
+
 type BookingRecord = BookingFormData & {
   id: string
   createdAt: string
 }
+
 type BookingLineItem = {
   description: string
   quantity: number
@@ -121,49 +156,11 @@ type BookingLineItem = {
   total: number
   nettTotal: number
   profit: number
-  currency: string
-}
-type EditableLineItem = {
-  description: string
-  quantity: string
-  unitPrice: string
-  nettCost: string
-  currency: string
-  sendToInvoice?: boolean
 }
 
 const bookingStorageKey = 'lion-lamb-bookings'
 const bookingsCollectionKey = 'bookings'
-const lineItemDescriptionOptions = [
-  'Add-on Luggage - One Way',
-  'Add-on Luggage - Round Trip',
-  'Fuel Surcharge',
-  'Travel Insurance',
-  'Airport Transport (Manila/Clark)',
-  'Tipping',
-  'Visa',
-  'Other',
-]
-const basicPackageDescriptionOptions = [
-  'Group Package',
-  'Airfare',
-  'Land Arrangement',
-  'Hotel',
-  'Airport Transfer (Outbound)',
-  'Airport Transfer (Manila/Clark)',
-  'Optional Tours',
-  'Ph Tax',
-  'Add-on Luggage - One Way',
-  'Add-on Luggage - Round Trip',
-  'Fuel Surcharge',
-  'Travel Insurance',
-  'Tipping',
-  'Visa',
-  'Travel Kit',
-  'LLTP',
-  'Other',
-]
-const currencyOptions = ['PHP', 'USD']
+
 const bookingListFilters: Array<{ label: string; value: BookingListFilter }> = [
   { label: 'All', value: 'All' },
   { label: 'Inquiries', value: 'Inquiry' },
@@ -173,6 +170,7 @@ const bookingListFilters: Array<{ label: string; value: BookingListFilter }> = [
   { label: 'Invoices', value: 'Invoice' },
   { label: 'Confirmed', value: 'Confirmed' },
 ]
+
 const emptyBookingForm: BookingFormData = {
   clientName: '',
   contactNumber: '',
@@ -184,7 +182,8 @@ const emptyBookingForm: BookingFormData = {
   pax: '',
   quotationNo: '',
   lineItems: '',
-  basicPackageItems: '',
+  invoiceLineItemsJson: '',
+  breakdownLineItemsJson: '',
   itemDescription: '',
   quantity: '1',
   unitPrice: '',
@@ -219,7 +218,7 @@ const previousProjects = [
     client: 'Juan Dela Cruz',
     status: 'Quotation',
     date: 'June 10, 2026',
-    amount: 'â‚±18,000',
+    amount: '18000',
   },
   {
     id: 'INV-2026-0002',
@@ -227,7 +226,7 @@ const previousProjects = [
     client: 'Maria Santos',
     status: 'Invoice',
     date: 'June 9, 2026',
-    amount: 'â‚±26,500',
+    amount: '26500',
   },
   {
     id: 'QT-2026-0003',
@@ -235,54 +234,26 @@ const previousProjects = [
     client: 'Ramon Cruz',
     status: 'Draft',
     date: 'June 8, 2026',
-    amount: 'â‚±7,500',
+    amount: '7500',
   },
 ]
 
 const sampleBookings: BookingRecord[] = previousProjects.map((project) => ({
+  ...emptyBookingForm,
   id: project.id,
   createdAt: project.date,
   clientName: project.client,
-  contactNumber: '',
-  clientEmail: '',
   packageName: project.title,
-  destination: '',
-  travelStart: '',
-  travelEnd: '',
-  pax: '',
   quotationNo: project.id,
-  lineItems: '',
-  basicPackageItems: '',
   itemDescription: project.title,
   quantity: '1',
-  unitPrice: '',
-  supplier: '',
-  supplierContact: '',
-  nettCost: '',
+  unitPrice: project.amount,
   sellingPrice: project.amount,
-  paymentMethod: '',
-  paymentRecords: '',
-  invoiceAmountPaid: '',
-  invoicePaymentDate: '',
-  invoicePaymentStatus: 'Unpaid',
-  invoiceReference: '',
-  optionDate: '',
-  flightDetails: '',
-  accommodation: '',
-  hotelAddress: '',
-  emergencyContact: '',
-  inclusions: '',
-  exclusions: '',
-  itinerary: '',
-  specialInstructions: '',
-  preparedBy: '',
   status: project.status === 'Draft' ? 'Inquiry' : (project.status as BookingStatus),
-  notes: '',
 }))
 
 function getDisplayName(emailAddress: string) {
   const username = emailAddress.split('@')[0] || 'Team Member'
-
   return username
     .split(/[._-]/)
     .filter(Boolean)
@@ -292,24 +263,20 @@ function getDisplayName(emailAddress: string) {
 
 function getPasswordStrength(passwordValue: string): PasswordStrength {
   let score = 0
-
   if (passwordValue.length >= 8) score += 1
   if (/[A-Z]/.test(passwordValue) && /[a-z]/.test(passwordValue)) score += 1
   if (/\d/.test(passwordValue) || /[^A-Za-z0-9]/.test(passwordValue)) score += 1
 
   if (score >= 3) return { label: 'Strong', score: 3 }
   if (score === 2) return { label: 'Fair', score: 2 }
-
   return { label: 'Weak', score: 1 }
 }
 
 function getStoredBookings(storageKey = bookingStorageKey, useSamples = true) {
   const storedBookings = window.localStorage.getItem(storageKey)
-
   if (!storedBookings) {
     return useSamples ? sampleBookings : []
   }
-
   try {
     return (JSON.parse(storedBookings) as BookingRecord[]).map(normalizeBooking)
   } catch {
@@ -327,15 +294,12 @@ function normalizeBooking(booking: BookingRecord): BookingRecord {
   }
 }
 
-function formatAmount(value?: string, currency?: string) {
+function formatAmount(value?: string) {
   const amount = parseAmount(value)
-  const code = currency || 'PHP'
-
   if (!Number.isFinite(amount) || amount <= 0) {
-    return `${code} 0.00`
+    return 'PHP 0.00'
   }
-
-  return `${code} ${amount.toLocaleString(code === 'USD' ? 'en-US' : 'en-PH', {
+  return `PHP ${amount.toLocaleString('en-PH', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`
@@ -347,210 +311,122 @@ function parseAmount(value?: string) {
 
 function parseQuantity(value?: string) {
   const quantity = Number((value ?? '').replace(/[^\d.]/g, ''))
-
   return Number.isFinite(quantity) && quantity > 0 ? quantity : 1
 }
 
-function serializeLineItems(items: EditableLineItem[]) {
-  return items
-    .filter((item) =>
-      [item.description, item.quantity, item.unitPrice, item.nettCost].some((value) =>
-        value.trim(),
-      ),
-    )
-    .map((item) =>
-      [
-        item.description.trim(),
-        item.quantity.trim() || '1',
-        item.unitPrice.trim() || '0',
-        item.nettCost.trim() || '0',
-        item.currency.trim() || 'PHP',
-        item.sendToInvoice ? 'show' : 'hide',
-      ].join(' | '),
-    )
-    .join('\n')
+function createLineItemId() {
+  return `LI-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-function getEditableLineItems(booking: BookingFormData): EditableLineItem[] {
-  const rows = getLines(booking.lineItems, [])
-    .filter((line) => line.includes('|'))
-    .map((line) => {
-      const [description, quantity, unitPrice, nettCost, currency] = line
-        .split('|')
-        .map((part) => part.trim())
-
-      return {
-        description,
-        quantity: quantity || '1',
-        unitPrice: unitPrice || '',
-        nettCost: nettCost || '',
-        currency: currency || 'PHP',
-        sendToInvoice: false,
-      }
-    })
-
-  if (rows.length > 0) {
-    return rows
-  }
-
-  return []
+function getLines(value: string | undefined, fallback: string[]) {
+  const lines = (value ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  return lines.length > 0 ? lines : fallback
 }
 
-function getEditableBasicPackageItems(booking: BookingFormData): EditableLineItem[] {
-  const rows = getLines(booking.basicPackageItems, [])
-    .filter((line) => line.includes('|'))
-    .map((line) => {
-      const [description, quantity, unitPrice, nettCost, currency, visibility] = line
-        .split('|')
-        .map((part) => part.trim())
-
-      return {
-        description,
-        quantity: quantity || '1',
-        unitPrice: unitPrice || '',
-        nettCost: nettCost || '',
-        currency: currency || 'PHP',
-        sendToInvoice: visibility === 'show' || visibility === 'true' || visibility === '1',
-      }
-    })
-
-  if (rows.length > 0) {
-    return rows
-  }
-
-  return []
+function readInvoiceItems(booking: BookingFormData): InvoiceLineItem[] {
+  try {
+    if (booking.invoiceLineItemsJson) {
+      return JSON.parse(booking.invoiceLineItemsJson)
+    }
+  } catch {}
+  return [
+    {
+      description: booking.packageName || 'Basic Package',
+      quantity: booking.quantity || '1',
+      unitPrice: booking.unitPrice || booking.sellingPrice,
+      nettCost: '0',
+      isPackageRow: true,
+    },
+  ]
 }
 
-function parseStoredLineItems(value: string | undefined, fallbackDescription: string): BookingLineItem[] {
-  return getLines(value, [])
-    .filter((line) => line.includes('|'))
-    .map((line) => {
-    const [description, quantity, unitPrice, nettCost, currency] = line
-      .split('|')
-      .map((part) => part.trim())
-    const parsedQuantity = parseQuantity(quantity)
-    const parsedUnitPrice = parseAmount(unitPrice)
-    const parsedNettCost = parseAmount(nettCost)
+function readBreakdownItems(booking: BookingFormData): BreakdownLineItem[] {
+  try {
+    if (booking.breakdownLineItemsJson) {
+      return JSON.parse(booking.breakdownLineItemsJson)
+    }
+  } catch {}
+  return [
+    {
+      description: 'Group Package',
+      quantity: '1',
+      unitPrice: booking.unitPrice || booking.sellingPrice,
+      nettCost: booking.nettCost,
+      sendToInvoice: false,
+      isPackageRow: true,
+    },
+  ]
+}
 
+function mapInvoiceItemsToBookingLines(items: InvoiceLineItem[], packageName = 'Basic Package'): BookingLineItem[] {
+  return items.map((it) => {
+    const q = parseQuantity(it.quantity)
+    const u = parseAmount(it.unitPrice)
+    const n = it.isPackageRow ? 0 : parseAmount(it.nettCost)
     return {
-      description: description || fallbackDescription,
-      quantity: parsedQuantity,
-      unitPrice: parsedUnitPrice,
-      nettCost: parsedNettCost,
-      total: parsedQuantity * parsedUnitPrice,
-      nettTotal: parsedQuantity * parsedNettCost,
-      profit: parsedQuantity * (parsedUnitPrice - parsedNettCost),
-      currency: currency || 'PHP',
+      description: it.isPackageRow ? packageName || 'Basic Package' : it.description,
+      quantity: q,
+      unitPrice: u,
+      nettCost: n,
+      total: q * u,
+      nettTotal: q * n,
+      profit: q * (u - n),
     }
   })
 }
 
-function getInvoiceVisibleBreakdownItems(booking: BookingFormData): BookingLineItem[] {
-  return getEditableBasicPackageItems(booking)
-    .filter((item) => item.sendToInvoice)
-    .map((item) => {
-      const quantity = parseQuantity(item.quantity)
-      const unitPrice = parseAmount(item.unitPrice)
-      const nettCost = parseAmount(item.nettCost)
-
-      return {
-        description: item.description || 'Other',
-        quantity,
-        unitPrice,
-        nettCost,
-        total: quantity * unitPrice,
-        nettTotal: quantity * nettCost,
-        profit: quantity * (unitPrice - nettCost),
-        currency: item.currency || 'PHP',
-      }
-    })
+function mapBreakdownItemsToBookingLines(items: BreakdownLineItem[]): BookingLineItem[] {
+  return items.map((it) => {
+    const q = parseQuantity(it.quantity)
+    const u = parseAmount(it.unitPrice)
+    const n = parseAmount(it.nettCost)
+    return {
+      description: it.description,
+      quantity: q,
+      unitPrice: u,
+      nettCost: n,
+      total: q * u,
+      nettTotal: q * n,
+      profit: q * (u - n),
+    }
+  })
 }
 
-function getBookingQuotationLineItems(booking: BookingFormData): BookingLineItem[] {
+function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
+  const invoiceItems = readInvoiceItems(booking)
+  if (invoiceItems.length > 0) {
+    return mapInvoiceItemsToBookingLines(invoiceItems, booking.packageName)
+  }
+
   const quantity = parseQuantity(booking.quantity)
   const unitPrice = parseAmount(booking.unitPrice || booking.sellingPrice)
 
   return [
     {
-      description: booking.packageName || booking.itemDescription || 'Basic Package',
+      description: booking.packageName || 'Basic Package',
       quantity,
       unitPrice,
       nettCost: 0,
       total: quantity * unitPrice,
       nettTotal: 0,
       profit: quantity * unitPrice,
-      currency: 'PHP',
     },
   ]
-}
-
-function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
-  const packageItems = getBookingQuotationLineItems(booking)
-  const invoiceAddOns = parseStoredLineItems(booking.lineItems, 'Other')
-  const visibleBreakdownItems = getInvoiceVisibleBreakdownItems(booking)
-
-  return [...packageItems, ...invoiceAddOns, ...visibleBreakdownItems]
-}
-
-function getBookingBreakdownLineItems(booking: BookingFormData): BookingLineItem[] {
-  const invoiceItems = getBookingLineItems(booking)
-  const invoiceTotal = sumLineItems(invoiceItems, 'total')
-  const invoiceCurrency = getPrimaryLineItemCurrency(invoiceItems)
-  const packageNettCost = parseAmount(booking.nettCost)
-  const packageRow: BookingLineItem = {
-    description: booking.packageName || 'Group Package',
-    quantity: 1,
-    unitPrice: invoiceTotal,
-    nettCost: packageNettCost,
-    total: invoiceTotal,
-    nettTotal: packageNettCost,
-    profit: invoiceTotal - packageNettCost,
-    currency: invoiceCurrency,
-  }
-
-  return [packageRow, ...parseStoredLineItems(booking.basicPackageItems, 'Other')]
-}
-
-function getBookingBasicPackageItems(booking: BookingFormData): BookingLineItem[] {
-  return getLines(booking.basicPackageItems, [])
-    .filter((line) => line.includes('|'))
-    .map((line) => {
-      const [description, quantity, unitPrice, nettCost, currency] = line
-        .split('|')
-        .map((part) => part.trim())
-      const parsedQuantity = parseQuantity(quantity)
-      const parsedUnitPrice = parseAmount(unitPrice)
-      const parsedNettCost = parseAmount(nettCost)
-
-      return {
-        description,
-        quantity: parsedQuantity,
-        unitPrice: parsedUnitPrice,
-        nettCost: parsedNettCost,
-        total: parsedQuantity * parsedUnitPrice,
-        nettTotal: parsedQuantity * parsedNettCost,
-        profit: parsedQuantity * (parsedUnitPrice - parsedNettCost),
-        currency: currency || 'PHP',
-      }
-    })
 }
 
 function sumLineItems(items: BookingLineItem[], field: 'total' | 'nettTotal' | 'profit') {
   return items.reduce((sum, item) => sum + item[field], 0)
 }
 
-function getLineItemCurrencies(items: BookingLineItem[]) {
-  const currencies = Array.from(new Set(items.map((item) => item.currency || 'PHP')))
-
-  return currencies.length > 0 ? currencies : ['PHP']
-}
-
-function getPrimaryLineItemCurrency(items: BookingLineItem[]) {
-  return items[0]?.currency || 'PHP'
-}
-
 function getBookingClientTotal(booking: BookingFormData) {
   return sumLineItems(getBookingLineItems(booking), 'total')
+}
+
+function getBookingBreakdownNettTotal(booking: BookingFormData) {
+  return sumLineItems(mapBreakdownItemsToBookingLines(readBreakdownItems(booking)), 'nettTotal')
 }
 
 function getUserBookingsCollectionPath(userId: string) {
@@ -559,25 +435,14 @@ function getUserBookingsCollectionPath(userId: string) {
 
 function formatProjectDate(value: string) {
   const date = new Date(value)
-
   if (Number.isNaN(date.getTime())) {
     return value || 'No date'
   }
-
   return date.toLocaleDateString('en-US', {
     month: 'long',
     day: 'numeric',
     year: 'numeric',
   })
-}
-
-function getLines(value: string | undefined, fallback: string[]) {
-  const lines = (value ?? '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-
-  return lines.length > 0 ? lines : fallback
 }
 
 function App() {
@@ -603,12 +468,43 @@ function App() {
     invoicePaymentStatus: 'Unpaid',
     invoiceReference: '',
   })
-  const [activeBookingFilter, setActiveBookingFilter] =
-    useState<BookingListFilter>('All')
+  const [activeBookingFilter, setActiveBookingFilter] = useState<BookingListFilter>('All')
   const [selectedBookingId, setSelectedBookingId] = useState('')
   const [editingBookingId, setEditingBookingId] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const passwordStrength = getPasswordStrength(password)
+
+  // Options lists
+  const invoiceOptions = [
+    'Add-on Luggage - One Way',
+    'Add-on Luggage - Round Trip',
+    'Fuel Surcharge',
+    'Travel Insurance',
+    'Airport Transport (Manila/Clark)',
+    'Tipping',
+    'Visa',
+    'Other'
+  ]
+
+  const breakdownOptions = [
+    'Group Package',
+    'Airfare',
+    'Land Arrangement',
+    'Hotel',
+    'Airport Transfer (Outbound)',
+    'Airport Transfer (Manila/Clark)',
+    'Optional Tours',
+    'Ph Tax',
+    'Add-on Luggage - One Way',
+    'Add-on Luggage - Round Trip',
+    'Fuel Surcharge',
+    'Travel Insurance',
+    'Tipping',
+    'Visa',
+    'Travel Kit',
+    'LLTP',
+    'Other'
+  ]
 
   useEffect(() => {
     return onAuthStateChanged(auth, (user: FirebaseUser | null) => {
@@ -624,7 +520,6 @@ function App() {
     const userStorageKey = authUser?.uid
       ? `${bookingStorageKey}-${authUser.uid}`
       : bookingStorageKey
-
     window.localStorage.setItem(userStorageKey, JSON.stringify(bookings))
   }, [authUser?.uid, bookings])
 
@@ -632,12 +527,10 @@ function App() {
     if (!authUser?.emailVerified) {
       return undefined
     }
-
     const bookingsQuery = query(
       collection(db, getUserBookingsCollectionPath(authUser.uid)),
       orderBy('createdAt', 'desc'),
     )
-
     return onSnapshot(
       bookingsQuery,
       (snapshot) => {
@@ -647,41 +540,29 @@ function App() {
             id: bookingDoc.id,
           }),
         )
-
         setBookings(firestoreBookings)
         setDataError('')
       },
       () => {
-        setDataError(
-          'Could not load cloud bookings. Check Firestore setup and rules.',
-        )
+        setDataError('Could not load cloud bookings. Check Firestore setup and rules.')
       },
     )
   }, [authUser])
 
   useEffect(() => {
-    if (isAuthLoading) {
-      return
-    }
-
+    if (isAuthLoading) return
     const timer = window.setTimeout(() => {
       if (!authUser) {
         setScreen('login')
         return
       }
-
       setScreen(authUser.emailVerified ? 'home' : 'verify-email')
     }, 2600)
-
     return () => window.clearTimeout(timer)
   }, [authUser, isAuthLoading])
 
   function getAuthErrorMessage(error: unknown) {
-    const code =
-      typeof error === 'object' && error && 'code' in error
-        ? (error as AuthError).code
-        : ''
-
+    const code = typeof error === 'object' && error && 'code' in error ? (error as AuthError).code : ''
     if (code) {
       switch (code) {
         case 'auth/invalid-credential':
@@ -708,58 +589,29 @@ function App() {
           return `Sign-in failed: ${code}`
       }
     }
-
     return 'Sign-in failed. Please try again.'
   }
 
   async function handleEmailAuth(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const isSignUp = screen === 'signup'
-
-    if (!email.trim()) {
-      setAuthError('Enter your email address to continue.')
-      return
-    }
-
-    if (!password.trim()) {
-      setAuthError('Enter your password to continue.')
-      return
-    }
-
-    if (isSignUp && !name.trim()) {
-      setAuthError('Enter your full name to create an account.')
-      return
-    }
-
-    if (isSignUp && password !== confirmPassword) {
-      setAuthError('Password and confirm password do not match.')
-      return
-    }
-
-    if (isSignUp && passwordStrength.score === 1) {
-      setAuthError('Use a stronger password before creating the account.')
-      return
-    }
+    if (!email.trim()) { setAuthError('Enter your email address to continue.'); return }
+    if (!password.trim()) { setAuthError('Enter your password to continue.'); return }
+    if (isSignUp && !name.trim()) { setAuthError('Enter your full name to create an account.'); return }
+    if (isSignUp && password !== confirmPassword) { setAuthError('Password and confirm password do not match.'); return }
+    if (isSignUp && passwordStrength.score === 1) { setAuthError('Use a stronger password before creating the account.'); return }
 
     try {
       setIsAuthLoading(true)
-
       if (isSignUp) {
-        const credential = await createUserWithEmailAndPassword(
-          auth,
-          email,
-          password,
-        )
-        await updateProfile(credential.user, {
-          displayName: name.trim() || getDisplayName(email),
-        })
+        const credential = await createUserWithEmailAndPassword(auth, email, password)
+        await updateProfile(credential.user, { displayName: name.trim() || getDisplayName(email) })
         await sendEmailVerification(credential.user)
         setAuthUser(credential.user)
         setAuthMessage('Verification email sent. Check your inbox.')
         setScreen('verify-email')
       } else {
         const credential = await signInWithEmailAndPassword(auth, email, password)
-
         if (!credential.user.emailVerified) {
           setAuthUser(credential.user)
           setAuthError('Verify your email before opening the dashboard.')
@@ -767,7 +619,6 @@ function App() {
           setScreen('verify-email')
           return
         }
-
         setAuthError('')
         setAuthMessage('')
         setScreen('home')
@@ -780,12 +631,7 @@ function App() {
   }
 
   async function handlePasswordReset() {
-    if (!email.trim()) {
-      setAuthError('Enter your email address first.')
-      setAuthMessage('')
-      return
-    }
-
+    if (!email.trim()) { setAuthError('Enter your email address first.'); setAuthMessage(''); return }
     try {
       setIsAuthLoading(true)
       await sendPasswordResetEmail(auth, email)
@@ -801,12 +647,9 @@ function App() {
 
   async function handleResendVerification() {
     if (!auth.currentUser) {
-      setAuthError('Log in again before requesting a new verification email.')
-      setAuthMessage('')
-      setScreen('login')
+      setAuthError('Log in again before requesting a new verification email.'); setAuthMessage(''); setScreen('login')
       return
     }
-
     try {
       setIsAuthLoading(true)
       await sendEmailVerification(auth.currentUser)
@@ -821,24 +664,16 @@ function App() {
   }
 
   async function handleVerificationRefresh() {
-    if (!auth.currentUser) {
-      setScreen('login')
-      return
-    }
-
+    if (!auth.currentUser) { setScreen('login'); return }
     try {
       setIsAuthLoading(true)
       await auth.currentUser.reload()
       const refreshedUser = auth.currentUser
       setAuthUser(refreshedUser)
-
       if (refreshedUser?.emailVerified) {
-        setAuthError('')
-        setAuthMessage('')
-        setScreen('home')
+        setAuthError(''); setAuthMessage(''); setScreen('home')
       } else {
-        setAuthError('Email is not verified yet.')
-        setAuthMessage('')
+        setAuthError('Email is not verified yet.'); setAuthMessage('')
       }
     } finally {
       setIsAuthLoading(false)
@@ -854,23 +689,49 @@ function App() {
 
   function handleNewBooking() {
     setEditingBookingId('')
-    setBookingForm({
+    const freshForm = {
       ...emptyBookingForm,
       quotationNo: `QT-${new Date().getFullYear()}-${String(bookings.length + 1).padStart(4, '0')}`,
-    })
+      quantity: '1',
+    }
+    // Seed initial JSON representations
+    const initialInvoice: InvoiceLineItem[] = [
+      { id: createLineItemId(), description: '', quantity: '1', unitPrice: '', nettCost: '', isPackageRow: true }
+    ]
+    const initialBreakdown: BreakdownLineItem[] = [
+      { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false, isPackageRow: true }
+    ]
+    freshForm.invoiceLineItemsJson = JSON.stringify(initialInvoice)
+    freshForm.breakdownLineItemsJson = JSON.stringify(initialBreakdown)
+    
+    setBookingForm(freshForm)
     setScreen('data-form')
   }
 
   function handleEditBooking() {
     const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
-
     if (!selectedBooking) {
       setScreen('home')
       return
     }
-
     setEditingBookingId(selectedBooking.id)
-    setBookingForm(normalizeBooking(selectedBooking))
+    const normalized = normalizeBooking(selectedBooking)
+    
+    // Fallback parsing if JSON objects don't exist yet
+    if (!normalized.invoiceLineItemsJson) {
+      const fallbackInv: InvoiceLineItem[] = [
+        { id: createLineItemId(), description: normalized.packageName, quantity: normalized.quantity || '1', unitPrice: normalized.unitPrice || normalized.sellingPrice, nettCost: '0', isPackageRow: true }
+      ]
+      normalized.invoiceLineItemsJson = JSON.stringify(fallbackInv)
+    }
+    if (!normalized.breakdownLineItemsJson) {
+      const fallbackBrk: BreakdownLineItem[] = [
+        { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: normalized.unitPrice || normalized.sellingPrice, nettCost: normalized.nettCost || '0', sendToInvoice: false, isPackageRow: true }
+      ]
+      normalized.breakdownLineItemsJson = JSON.stringify(fallbackBrk)
+    }
+
+    setBookingForm(normalized)
     setScreen('data-form')
   }
 
@@ -880,133 +741,138 @@ function App() {
   ) {
     setDataError('')
     setDataMessage('')
-    setBookingForm((currentForm) => ({
-      ...currentForm,
-      [field]: value,
+    setBookingForm((currentForm) => {
+      const updated = { ...currentForm, [field]: value }
+      
+      // Keep package calculations aligned if fields shift globally
+      if (field === 'packageName' || field === 'quantity' || field === 'unitPrice') {
+        try {
+          const invItems: InvoiceLineItem[] = readInvoiceItems(updated)
+          const brkItems: BreakdownLineItem[] = readBreakdownItems(updated)
+          
+          const nextInv = invItems.map(item => item.isPackageRow ? { ...item, description: updated.packageName, quantity: updated.quantity || '1', unitPrice: updated.unitPrice } : item)
+          const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(nextInv, updated.packageName), 'total')
+          const nextBrk = brkItems.map(item => item.isPackageRow ? { ...item, description: 'Group Package', quantity: '1', unitPrice: String(invoiceTotal) } : item)
+          
+          updated.invoiceLineItemsJson = JSON.stringify(nextInv)
+          updated.breakdownLineItemsJson = JSON.stringify(nextBrk)
+        } catch(e){}
+      }
+      return updated
+    })
+  }
+
+  // Functional parsing helpers for the dynamic interface tables
+  function getInvoiceItemsList(): InvoiceLineItem[] {
+    return readInvoiceItems(bookingForm).map((item) => ({
+      ...item,
+      id: item.id || createLineItemId(),
+      description: item.isPackageRow ? bookingForm.packageName : item.description,
     }))
   }
 
-  function updateLineItem(index: number, field: keyof EditableLineItem, value: string) {
-    setDataError('')
-    setDataMessage('')
-    const currentRows = getEditableLineItems(bookingForm)
-    const nextRows = currentRows.map((item, itemIndex) =>
-      itemIndex === index ? { ...item, [field]: value } : item,
-    )
-
-    setBookingForm((currentForm) => ({
-      ...currentForm,
-      lineItems: serializeLineItems(nextRows),
+  function getBreakdownItemsList(): BreakdownLineItem[] {
+    const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(readInvoiceItems(bookingForm), bookingForm.packageName), 'total')
+    return readBreakdownItems(bookingForm).map((item) => ({
+      ...item,
+      id: item.id || createLineItemId(),
+      ...(item.isPackageRow ? { description: 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : {}),
     }))
   }
 
-  function addLineItem() {
-    const nextRows = [
-      ...getEditableLineItems(bookingForm),
-      {
-        description: lineItemDescriptionOptions[0],
-        quantity: '1',
-        unitPrice: '',
-        nettCost: '',
-        currency: 'PHP',
-        sendToInvoice: false,
-      },
-    ]
+  function saveInvoiceItemsList(items: InvoiceLineItem[]) {
+    setBookingForm(prev => {
+      const normalizedItems = items.map((item) => ({ ...item, id: item.id || createLineItemId() }))
+      const updated = { ...prev, invoiceLineItemsJson: JSON.stringify(normalizedItems) }
+      const packageInvRow = normalizedItems.find(i => i.isPackageRow)
+      if (packageInvRow) {
+        updated.quantity = packageInvRow.quantity
+        updated.unitPrice = packageInvRow.unitPrice
+      }
 
-    setBookingForm((currentForm) => ({
-      ...currentForm,
-      lineItems: serializeLineItems(nextRows),
-    }))
+      try {
+        const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(normalizedItems, updated.packageName), 'total')
+        const brkItems = readBreakdownItems(updated)
+        const nextBrk = brkItems.map((item) =>
+          item.isPackageRow ? { ...item, id: item.id || createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : { ...item, id: item.id || createLineItemId() },
+        )
+        updated.breakdownLineItemsJson = JSON.stringify(nextBrk)
+      } catch(e){}
+      return updated
+    })
   }
 
-  function removeLineItem(index: number) {
-    const nextRows = getEditableLineItems(bookingForm).filter(
-      (_item, itemIndex) => itemIndex !== index,
-    )
+  function saveBreakdownItemsList(items: BreakdownLineItem[]) {
+    setBookingForm(prev => {
+      const invoiceItems = readInvoiceItems(prev).map((item) => ({ ...item, id: item.id || createLineItemId() }))
+      const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(invoiceItems, prev.packageName), 'total')
+      const normalizedBreakdown = items.map((item) => ({
+        ...item,
+        id: item.id || createLineItemId(),
+        ...(item.isPackageRow ? { description: 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : {}),
+      }))
+      const manualInvoiceItems = invoiceItems.filter((item) => item.source !== 'breakdown')
+      const breakdownInvoiceItems: InvoiceLineItem[] = normalizedBreakdown
+        .filter((item) => item.sendToInvoice && !item.isPackageRow)
+        .map((item) => ({
+          id: `INV-${item.id}`,
+          source: 'breakdown',
+          sourceKey: item.id,
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          nettCost: item.nettCost,
+        }))
 
-    setBookingForm((currentForm) => ({
-      ...currentForm,
-      lineItems: serializeLineItems(nextRows.length > 0 ? nextRows : [
-        {
-          description: lineItemDescriptionOptions[0],
-          quantity: '1',
-          unitPrice: '',
-          nettCost: '',
-          currency: 'PHP',
-          sendToInvoice: false,
-        },
-      ]),
-    }))
+      return {
+        ...prev,
+        invoiceLineItemsJson: JSON.stringify([...manualInvoiceItems, ...breakdownInvoiceItems]),
+        breakdownLineItemsJson: JSON.stringify(normalizedBreakdown),
+      }
+    })
   }
 
-  function updateBasicPackageItem(index: number, field: keyof EditableLineItem, value: string | boolean) {
-    setDataError('')
-    setDataMessage('')
-    const currentRows = getEditableBasicPackageItems(bookingForm)
-    const nextRows = currentRows.map((item, itemIndex) =>
-      itemIndex === index ? { ...item, [field]: value } : item,
-    )
-
-    setBookingForm((currentForm) => ({
-      ...currentForm,
-      basicPackageItems: serializeLineItems(nextRows),
-    }))
+  function addInvoiceItemRow() {
+    const current = getInvoiceItemsList()
+    current.push({ id: createLineItemId(), description: invoiceOptions[0], quantity: '1', unitPrice: '', nettCost: '', source: 'manual' })
+    saveInvoiceItemsList(current)
   }
 
-  function addBasicPackageItem() {
-    const nextRows = [
-      ...getEditableBasicPackageItems(bookingForm),
-      {
-        description: basicPackageDescriptionOptions[0],
-        quantity: '1',
-        unitPrice: '',
-        nettCost: '',
-        currency: 'PHP',
-        sendToInvoice: false,
-      },
-    ]
-
-    setBookingForm((currentForm) => ({
-      ...currentForm,
-      basicPackageItems: serializeLineItems(nextRows),
-    }))
+  function removeInvoiceItemRow(index: number) {
+    const current = getInvoiceItemsList()
+    if (current[index]?.isPackageRow) return // lock baseline row protection
+    current.splice(index, 1)
+    saveInvoiceItemsList(current)
   }
 
-  function removeBasicPackageItem(index: number) {
-    const nextRows = getEditableBasicPackageItems(bookingForm).filter(
-      (_item, itemIndex) => itemIndex !== index,
-    )
+  function changeInvoiceItemField(index: number, field: keyof InvoiceLineItem, value: string) {
+    const current = getInvoiceItemsList()
+    current[index] = { ...current[index], [field]: value }
+    saveInvoiceItemsList(current)
+  }
 
-    setBookingForm((currentForm) => ({
-      ...currentForm,
-      basicPackageItems: serializeLineItems(nextRows.length > 0 ? nextRows : [
-        {
-          description: basicPackageDescriptionOptions[0],
-          quantity: '1',
-          unitPrice: '',
-          nettCost: '',
-          currency: 'PHP',
-          sendToInvoice: false,
-        },
-      ]),
-    }))
+  function addBreakdownItemRow() {
+    const current = getBreakdownItemsList()
+    current.push({ id: createLineItemId(), description: breakdownOptions[0], quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false })
+    saveBreakdownItemsList(current)
+  }
+
+  function removeBreakdownItemRow(index: number) {
+    const current = getBreakdownItemsList()
+    if (current[index]?.isPackageRow) return
+    current.splice(index, 1)
+    saveBreakdownItemsList(current)
+  }
+
+  function changeBreakdownItemField(index: number, field: keyof BreakdownLineItem, value: any) {
+    const current = getBreakdownItemsList()
+    current[index] = { ...current[index], [field]: value }
+    saveBreakdownItemsList(current)
   }
 
   function validateBookingForm() {
-    if (!bookingForm.clientName.trim()) {
-      return 'Enter the client name before saving.'
-    }
-
-    if (!bookingForm.packageName.trim()) {
-      return 'Enter the package or project name before saving.'
-    }
-
-    const hasPrice = getBookingClientTotal(bookingForm) > 0 || parseAmount(bookingForm.sellingPrice) > 0
-
-    if (!hasPrice) {
-      return 'Enter the package client price before saving.'
-    }
-
+    if (!bookingForm.clientName.trim()) return 'Enter the client name before saving.'
+    if (!bookingForm.packageName.trim()) return 'Enter the package or project name before saving.'
     return ''
   }
 
@@ -1014,36 +880,33 @@ function App() {
     event.preventDefault()
     const isEditing = Boolean(editingBookingId)
     const validationError = validateBookingForm()
-
     if (validationError) {
       setDataError(validationError)
       setDataMessage('')
       return
     }
 
+    // Capture calculated totals inside submission mapping parameters
+    const finalInvoiceList = getInvoiceItemsList()
+    const baseInvRow = finalInvoiceList.find(i => i.isPackageRow)
+    const calculatedUnitPrice = baseInvRow ? parseAmount(baseInvRow.unitPrice) : parseAmount(bookingForm.unitPrice)
+    
     const booking: BookingRecord = {
       ...bookingForm,
-      itemDescription: bookingForm.itemDescription || bookingForm.packageName,
+      unitPrice: String(calculatedUnitPrice),
       sellingPrice: String(getBookingClientTotal(bookingForm)),
       id: editingBookingId || `BK-${Date.now()}`,
-      createdAt:
-        bookings.find((currentBooking) => currentBooking.id === editingBookingId)
-          ?.createdAt || new Date().toISOString(),
+      createdAt: bookings.find((currentBooking) => currentBooking.id === editingBookingId)?.createdAt || new Date().toISOString(),
     }
 
     setBookings((currentBookings) =>
       isEditing
-        ? currentBookings.map((currentBooking) =>
-            currentBooking.id === booking.id ? booking : currentBooking,
-          )
+        ? currentBookings.map((currentBooking) => currentBooking.id === booking.id ? booking : currentBooking)
         : [booking, ...currentBookings],
     )
 
     try {
-      if (!authUser) {
-        throw new Error('Missing signed-in user')
-      }
-
+      if (!authUser) throw new Error('Missing signed-in user')
       await setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), booking.id), {
         ...booking,
         ownerId: authUser.uid,
@@ -1051,17 +914,14 @@ function App() {
         createdByEmail: authUser.email || '',
         updatedAt: new Date().toISOString(),
       }, { merge: true })
+      
       setDataError('')
       setDataMessage(isEditing ? 'Booking changes saved successfully.' : 'Inquiry saved successfully.')
       setSelectedBookingId(booking.id)
       setEditingBookingId('')
       setScreen(isEditing ? 'booking-detail' : 'home')
     } catch {
-      setDataError(
-        isEditing
-          ? 'Booking updated locally, but cloud update failed.'
-          : 'Booking saved locally, but cloud save failed.',
-      )
+      setDataError(isEditing ? 'Booking updated locally, but cloud update failed.' : 'Booking saved locally, but cloud save failed.')
       setDataMessage('')
       setSelectedBookingId(booking.id)
       setEditingBookingId('')
@@ -1076,9 +936,7 @@ function App() {
 
   function updateSelectedBookingStatus(status: BookingStatus) {
     setBookings((currentBookings) =>
-      currentBookings.map((booking) =>
-        booking.id === selectedBookingId ? { ...booking, status } : booking,
-      ),
+      currentBookings.map((booking) => booking.id === selectedBookingId ? { ...booking, status } : booking)
     )
 
     if (selectedBookingId) {
@@ -1086,30 +944,23 @@ function App() {
         setDataError('Log in again before updating cloud records.')
         return
       }
-
       void setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId), {
         status,
         updatedAt: new Date().toISOString(),
-      }, {
-        merge: true,
-      }).catch(() => {
+      }, { merge: true }).catch(() => {
         setDataError('Status updated locally, but cloud update failed.')
       })
     }
   }
 
-  function openQuotationPreview() {
-    setScreen('quotation-preview')
-  }
-
+  function openQuotationPreview() { setScreen('quotation-preview') }
+  
   function openInvoiceEditor() {
     const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
-
     if (!selectedBooking) {
       setScreen('home')
       return
     }
-
     setInvoiceForm({
       paymentMethod: selectedBooking.paymentMethod || '',
       paymentRecords: selectedBooking.paymentRecords || '',
@@ -1125,39 +976,24 @@ function App() {
     field: Field,
     value: (typeof invoiceForm)[Field],
   ) {
-    setInvoiceForm((currentForm) => ({
-      ...currentForm,
-      [field]: value,
-    }))
+    setInvoiceForm((currentForm) => ({ ...currentForm, [field]: value }))
   }
 
   async function handleSaveInvoiceUpdate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-
     setBookings((currentBookings) =>
       currentBookings.map((booking) =>
-        booking.id === selectedBookingId
-          ? {
-              ...booking,
-              ...invoiceForm,
-              status: 'Invoice',
-            }
-          : booking,
-      ),
+        booking.id === selectedBookingId ? { ...booking, ...invoiceForm, status: 'Invoice' } : booking
+      )
     )
 
     try {
-      if (!authUser) {
-        throw new Error('Missing signed-in user')
-      }
-
+      if (!authUser) throw new Error('Missing signed-in user')
       await setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId), {
         ...invoiceForm,
         status: 'Invoice',
         updatedAt: new Date().toISOString(),
-      }, {
-        merge: true,
-      })
+      }, { merge: true })
       setDataError('')
       setDataMessage('Invoice payment details saved successfully.')
       setScreen('invoice-preview')
@@ -1170,102 +1006,48 @@ function App() {
 
   async function handleDeleteBooking() {
     const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    if (!selectedBooking) { setScreen('home'); return }
 
-    if (!selectedBooking) {
-      setScreen('home')
-      return
-    }
+    const confirmed = window.confirm(`Delete ${selectedBooking.packageName || 'this project'}? This cannot be undone.`)
+    if (!confirmed) return
 
-    const confirmed = window.confirm(
-      `Delete ${selectedBooking.packageName || 'this project'}? This cannot be undone.`,
-    )
-
-    if (!confirmed) {
-      return
-    }
-
-    setBookings((currentBookings) =>
-      currentBookings.filter((booking) => booking.id !== selectedBookingId),
-    )
-
+    setBookings((currentBookings) => currentBookings.filter((booking) => booking.id !== selectedBookingId))
     try {
-      if (!authUser) {
-        throw new Error('Missing signed-in user')
-      }
-
+      if (!authUser) throw new Error('Missing signed-in user')
       await deleteDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId))
       setDataError('')
       setDataMessage('Project deleted successfully.')
     } catch {
       setDataError('Project deleted locally, but cloud delete failed.')
       setDataMessage('')
-    } finally {
-      setSelectedBookingId('')
-      setScreen('home')
     }
+    setSelectedBookingId('')
+    setScreen('home')
   }
 
-  function openPurchaseOrderPreview() {
-    setScreen('purchase-order-preview')
-  }
-
-  function openVoucherPreview() {
-    setScreen('voucher-preview')
-  }
-
-  function openBreakdownPreview() {
-    setScreen('breakdown-preview')
-  }
-
-  function openDocumentFolder() {
-    setScreen('document-folder')
-  }
+  function openPurchaseOrderPreview() { setScreen('purchase-order-preview') }
+  function openVoucherPreview() { setScreen('voucher-preview') }
+  function openBreakdownPreview() { setScreen('breakdown-preview') }
+  function openDocumentFolder() { setScreen('document-folder') }
 
   function openDocumentByTitle(title: string) {
-    if (title === 'Breakdown') {
-      openBreakdownPreview()
-      return
-    }
-
-    if (title === 'Quotation') {
-      openQuotationPreview()
-      return
-    }
-
-    if (title === 'Invoice') {
-      openInvoiceEditor()
-      return
-    }
-
-    if (title === 'Purchase Order') {
-      openPurchaseOrderPreview()
-      return
-    }
-
-    if (title === 'Service Voucher') {
-      openVoucherPreview()
-    }
+    if (title === 'Breakdown') { openBreakdownPreview(); return }
+    if (title === 'Quotation') { openQuotationPreview(); return }
+    if (title === 'Invoice') { openInvoiceEditor(); return }
+    if (title === 'Purchase Order') { openPurchaseOrderPreview(); return }
+    if (title === 'Service Voucher') { openVoucherPreview() }
   }
 
   async function handlePrintPreview() {
     const printableArea = document.querySelector<HTMLElement>('.print-document')
-
-    if (!printableArea) {
-      window.print()
-      return
-    }
-
+    if (!printableArea) { window.print(); return }
     try {
       setIsPdfExporting(true)
       const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
         import('html2canvas'),
         import('jspdf'),
       ])
-      const canvas = await html2canvas(printableArea, {
-        backgroundColor: '#ffffff',
-        scale: 2,
-        useCORS: true,
-      })
+      const canvas = await html2canvas(printableArea, { backgroundColor: '#ffffff', scale: 2, useCORS: true })
       const pdf = new jsPDF('p', 'mm', 'a4')
       const pageWidth = pdf.internal.pageSize.getWidth()
       const pageHeight = pdf.internal.pageSize.getHeight()
@@ -1277,14 +1059,12 @@ function App() {
 
       pdf.addImage(imageData, 'PNG', 0, yPosition, imgWidth, imgHeight)
       remainingHeight -= pageHeight
-
       while (remainingHeight > 0) {
         yPosition -= pageHeight
         pdf.addPage()
         pdf.addImage(imageData, 'PNG', 0, yPosition, imgWidth, imgHeight)
         remainingHeight -= pageHeight
       }
-
       const currentBooking = bookings.find((booking) => booking.id === selectedBookingId)
       const fileName = `${currentBooking?.quotationNo || currentBooking?.id || 'lion-lamb-document'}.pdf`
       pdf.save(fileName.replace(/[^\w.-]+/g, '_'))
@@ -1309,7 +1089,6 @@ function App() {
 
   if (screen === 'login' || screen === 'signup') {
     const isSignUp = screen === 'signup'
-
     return (
       <main className="auth-screen">
         <section className="auth-card">
@@ -1321,156 +1100,68 @@ function App() {
                 <span>Operations Desk</span>
               </div>
             </div>
-
             <div className="auth-heading">
               <p>{isSignUp ? 'Create access' : 'Welcome back'}</p>
               <h1>{isSignUp ? 'Sign up for an account' : 'Log in to your account'}</h1>
               <span>
-                {isSignUp
-                  ? 'Create your operations account for booking management.'
-                  : 'Access quotations, invoices, and customer projects.'}
+                {isSignUp ? 'Create your operations account for booking management.' : 'Access quotations, invoices, and customer projects.'}
               </span>
             </div>
-
             <form onSubmit={handleEmailAuth} className="login-form">
               {isSignUp && (
                 <label>
                   <UserRound size={17} />
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(event) => {
-                      setName(event.target.value)
-                      setAuthError('')
-                      setAuthMessage('')
-                    }}
-                    placeholder="Full name"
-                    autoComplete="name"
-                  />
+                  <input type="text" value={name} onChange={(event) => { setName(event.target.value); setAuthError(''); setAuthMessage('') }} placeholder="Full name" autoComplete="name" />
                 </label>
               )}
-
               <label>
                 <Mail size={17} />
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(event) => {
-                    setEmail(event.target.value)
-                    setAuthError('')
-                    setAuthMessage('')
-                  }}
-                  placeholder="Email"
-                  autoComplete="email"
-                />
+                <input type="email" value={email} onChange={(event) => { setEmail(event.target.value); setAuthError(''); setAuthMessage('') }} placeholder="Email" autoComplete="email" />
               </label>
               {!isSignUp && (
                 <div className="password-row-meta">
                   <span>Password</span>
-                  <button
-                    type="button"
-                    onClick={handlePasswordReset}
-                    disabled={isAuthLoading}
-                  >
-                    Forgot password?
-                  </button>
+                  <button type="button" onClick={handlePasswordReset} disabled={isAuthLoading}>Forgot password?</button>
                 </div>
               )}
               <label>
                 <LockKeyhole size={17} />
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(event) => {
-                    setPassword(event.target.value)
-                    setAuthError('')
-                    setAuthMessage('')
-                  }}
-                  placeholder="Password"
-                  autoComplete={isSignUp ? 'new-password' : 'current-password'}
-                />
+                <input type="password" value={password} onChange={(event) => { setPassword(event.target.value); setAuthError(''); setAuthMessage('') }} placeholder="Password" autoComplete={isSignUp ? 'new-password' : 'current-password'} />
               </label>
-
               {isSignUp && (
                 <>
                   <label>
                     <LockKeyhole size={17} />
-                    <input
-                      type="password"
-                      value={confirmPassword}
-                      onChange={(event) => {
-                        setConfirmPassword(event.target.value)
-                        setAuthError('')
-                        setAuthMessage('')
-                      }}
-                      placeholder="Confirm password"
-                      autoComplete="new-password"
-                    />
+                    <input type="password" value={confirmPassword} onChange={(event) => { setConfirmPassword(event.target.value); setAuthError(''); setAuthMessage('') }} placeholder="Confirm password" autoComplete="new-password" />
                   </label>
-
                   {password && (
-                    <div
-                      className={`password-strength score-${passwordStrength.score}`}
-                    >
-                      <div>
-                        <span></span>
-                        <span></span>
-                        <span></span>
-                      </div>
+                    <div className={`password-strength score-${passwordStrength.score}`}>
+                      <div><span></span><span></span><span></span></div>
                       <strong>{passwordStrength.label}</strong>
                     </div>
                   )}
                 </>
               )}
-
               {authError && <p className="auth-error">{authError}</p>}
               {authMessage && <p className="auth-success">{authMessage}</p>}
-
               <div className="form-meta">
-                <span>
-                  {isSignUp
-                    ? 'Already part of the team?'
-                    : 'Firebase keeps trusted sessions signed in.'}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setScreen(isSignUp ? 'login' : 'signup')
-                    setAuthError('')
-                    setAuthMessage('')
-                  }}
-                >
+                <span>{isSignUp ? 'Already part of the team?' : 'Firebase keeps trusted sessions signed in.'}</span>
+                <button type="button" onClick={() => { setScreen(isSignUp ? 'login' : 'signup'); setAuthError(''); setAuthMessage('') }}>
                   {isSignUp ? 'Log in instead' : 'Create account'}
                 </button>
               </div>
-
               <button className="login-btn" type="submit" disabled={isAuthLoading}>
-                {isAuthLoading
-                  ? 'Please wait'
-                  : isSignUp
-                    ? 'Sign Up'
-                    : 'Log In'}
+                {isAuthLoading ? 'Please wait' : isSignUp ? 'Sign Up' : 'Log In'}
                 <ArrowRight size={18} />
               </button>
             </form>
           </div>
-
           <aside className="auth-image-panel">
             <img src={travelHero} alt="Travel destinations collage" />
             <div className="image-overlay">
-              <div className="floating-icon">
-                <Plane size={26} />
-              </div>
+              <div className="floating-icon"><Plane size={26} /></div>
               <h2>Organize every client journey.</h2>
-              <p>
-                Prepare quotations, invoices, and travel records from one
-                professional workspace.
-              </p>
-              <div className="slide-dots">
-                <span></span>
-                <span className="active"></span>
-                <span></span>
-              </div>
+              <p>Prepare quotations, invoices, and travel records from one professional workspace.</p>
             </div>
           </aside>
         </section>
@@ -1485,65 +1176,30 @@ function App() {
           <div className="auth-form-panel">
             <div className="auth-brand">
               <img src={logo} alt="Lion and Lamb Travel logo" />
-              <div>
-                <strong>Lion and Lamb Travel</strong>
-                <span>Operations Desk</span>
-              </div>
+              <div><strong>Lion and Lamb Travel</strong><span>Operations Desk</span></div>
             </div>
-
             <div className="auth-heading">
               <p>Email verification</p>
               <h1>Check your inbox</h1>
-              <span>
-                We sent a verification link to {authUser?.email ?? email}. Verify
-                that email before opening the dashboard.
-              </span>
+              <span>We sent a verification link to {authUser?.email ?? email}. Verify that email before opening the dashboard.</span>
             </div>
-
             <div className="verify-actions">
               {authError && <p className="auth-error">{authError}</p>}
               {authMessage && <p className="auth-success">{authMessage}</p>}
-
-              <button
-                className="login-btn"
-                type="button"
-                onClick={handleVerificationRefresh}
-                disabled={isAuthLoading}
-              >
+              <button className="login-btn" type="button" onClick={handleVerificationRefresh} disabled={isAuthLoading}>
                 {isAuthLoading ? 'Checking' : 'I verified my email'}
                 <RefreshCw size={18} />
               </button>
-
-              <button
-                className="secondary-auth-btn"
-                type="button"
-                onClick={handleResendVerification}
-                disabled={isAuthLoading}
-              >
-                Resend verification email
-              </button>
-
-              <button
-                className="secondary-auth-btn"
-                type="button"
-                onClick={handleLogout}
-                disabled={isAuthLoading}
-              >
-                Use another account
-              </button>
+              <button className="secondary-auth-btn" type="button" onClick={handleResendVerification} disabled={isAuthLoading}>Resend verification email</button>
+              <button className="secondary-auth-btn" type="button" onClick={handleLogout} disabled={isAuthLoading}>Use another account</button>
             </div>
           </div>
-
           <aside className="auth-image-panel">
             <img src={travelHero} alt="Travel destinations collage" />
             <div className="image-overlay">
-              <div className="floating-icon">
-                <Mail size={26} />
-              </div>
+              <div className="floating-icon"><Mail size={26} /></div>
               <h2>Secure access for the team.</h2>
-              <p>
-                Only verified email accounts can open the operations dashboard.
-              </p>
+              <p>Only verified email accounts can open the operations dashboard.</p>
             </div>
           </aside>
         </section>
@@ -1553,34 +1209,23 @@ function App() {
 
   if (screen === 'data-form') {
     const isEditingBooking = Boolean(editingBookingId)
-    const editableLineItems = getEditableLineItems(bookingForm)
-    const lineItemTotals = getBookingLineItems(bookingForm)
-    const lineItemCurrencies = getLineItemCurrencies(lineItemTotals)
-    const showCurrencyPerGroup = lineItemCurrencies.length > 1
-    const editableBasicPackageItems = getEditableBasicPackageItems(bookingForm)
-    const basicPackageTotals = getBookingBreakdownLineItems(bookingForm)
-    const basicPackageCurrencies = getLineItemCurrencies(basicPackageTotals)
-    const showBasicPackageCurrencyPerGroup = basicPackageCurrencies.length > 1
+    const currentInvoiceItems = getInvoiceItemsList()
+    const currentBreakdownItems = getBreakdownItemsList()
+    
+    // Internal dynamically updated dashboard totals indicators
+    const displayTotalClient = getBookingClientTotal(bookingForm)
+    const displayTotalNett = getBookingBreakdownNettTotal(bookingForm)
+    const displayTotalProfit = displayTotalClient - displayTotalNett
 
     return (
       <main className="data-screen">
         <nav className="app-nav">
           <div className="nav-brand">
             <img src={logo} alt="Lion and Lamb Travel logo" />
-            <div>
-              <strong>Lion and Lamb Travel</strong>
-              <span>{isEditingBooking ? 'Edit Booking' : 'Data Gathering'}</span>
-            </div>
+            <div><strong>Lion and Lamb Travel</strong><span>{isEditingBooking ? 'Edit Booking' : 'Data Gathering'}</span></div>
           </div>
           <div className="nav-actions">
-            <button
-              type="button"
-              onClick={() => {
-                setEditingBookingId('')
-                setScreen(isEditingBooking ? 'booking-detail' : 'home')
-              }}
-              title="Close"
-            >
+            <button type="button" onClick={() => { setEditingBookingId(''); setScreen(isEditingBooking ? 'booking-detail' : 'home') }} title="Close">
               <X size={18} />
             </button>
           </div>
@@ -1591,15 +1236,10 @@ function App() {
             <div>
               <p>{isEditingBooking ? 'Update master record' : 'New inquiry'}</p>
               <h1>{isEditingBooking ? 'Edit Booking Info' : 'Data Gathering Form'}</h1>
-              <span>
-                {isEditingBooking
-                  ? 'Fix client, travel, pricing, supplier, and voucher details from one master record.'
-                  : 'Start with the client inquiry. Later documents will only use the fields meant for each output.'}
-              </span>
+              <span>Configure individual settings for separate workflow views seamlessly from a single terminal interface.</span>
             </div>
             <button type="submit" className="save-booking-btn">
-              <Save size={18} />
-              {isEditingBooking ? 'Save Changes' : 'Save Inquiry'}
+              <Save size={18} /> {isEditingBooking ? 'Save Changes' : 'Save Inquiry'}
             </button>
           </header>
 
@@ -1607,874 +1247,207 @@ function App() {
           {dataMessage && <p className="data-alert info">{dataMessage}</p>}
 
           <section className="form-section">
-            <div className="form-section-heading">
-              <p>01 · Client</p>
-              <h2>Client info</h2>
-            </div>
+            <div className="form-section-heading"><p>01 · Client</p><h2>Client info</h2></div>
             <div className="field-grid three">
-              <label>
-                Client name
-                <input
-                  required
-                  value={bookingForm.clientName}
-                  onChange={(event) =>
-                    updateBookingField('clientName', event.target.value)
-                  }
-                  placeholder="Ms. Joanna Pico"
-                />
-              </label>
-              <label>
-                Contact number
-                <input
-                  value={bookingForm.contactNumber}
-                  onChange={(event) =>
-                    updateBookingField('contactNumber', event.target.value)
-                  }
-                  placeholder="09xxxxxxxxx"
-                />
-              </label>
-              <label>
-                Email
-                <input
-                  type="email"
-                  value={bookingForm.clientEmail}
-                  onChange={(event) =>
-                    updateBookingField('clientEmail', event.target.value)
-                  }
-                  placeholder="client@email.com"
-                />
-              </label>
+              <label>Client name <input required value={bookingForm.clientName} onChange={(event) => updateBookingField('clientName', event.target.value)} placeholder="Ms. Joanna Pico" /></label>
+              <label>Contact number <input value={bookingForm.contactNumber} onChange={(event) => updateBookingField('contactNumber', event.target.value)} placeholder="09xxxxxxxxx" /></label>
+              <label>Email <input type="email" value={bookingForm.clientEmail} onChange={(event) => updateBookingField('clientEmail', event.target.value)} placeholder="client@email.com" /></label>
             </div>
           </section>
 
           <section className="form-section">
-            <div className="form-section-heading">
-              <p>02 · Travel</p>
-              <h2>Package details</h2>
-            </div>
+            <div className="form-section-heading"><p>02 · Travel</p><h2>Package details</h2></div>
             <div className="field-grid three">
-              <label>
-                Package name
-                <input
-                  required
-                  value={bookingForm.packageName}
-                  onChange={(event) =>
-                    updateBookingField('packageName', event.target.value)
-                  }
-                  placeholder="3D2N Clark and Olongapo"
-                />
-              </label>
-              <label>
-                Destination
-                <input
-                  value={bookingForm.destination}
-                  onChange={(event) =>
-                    updateBookingField('destination', event.target.value)
-                  }
-                  placeholder="Clark, Boracay, Hong Kong"
-                />
-              </label>
-              <label>
-                No. of pax
-                <input
-                  value={bookingForm.pax}
-                  onChange={(event) => updateBookingField('pax', event.target.value)}
-                  placeholder="2 adults, 1 infant"
-                />
-              </label>
-              <label>
-                Travel start
-                <input
-                  type="date"
-                  value={bookingForm.travelStart}
-                  onChange={(event) =>
-                    updateBookingField('travelStart', event.target.value)
-                  }
-                />
-              </label>
-              <label>
-                Travel end
-                <input
-                  type="date"
-                  value={bookingForm.travelEnd}
-                  onChange={(event) =>
-                    updateBookingField('travelEnd', event.target.value)
-                  }
-                />
-              </label>
-              <label>
-                Status
-                <select
-                  value={bookingForm.status}
-                  onChange={(event) =>
-                    updateBookingField('status', event.target.value as BookingStatus)
-                  }
-                >
-                  <option>Inquiry</option>
-                  <option>Breakdown</option>
-                  <option>Quotation</option>
-                  <option>Purchase Order</option>
-                  <option>Invoice</option>
-                  <option>Confirmed</option>
+              <label>Package name <input required value={bookingForm.packageName} onChange={(event) => updateBookingField('packageName', event.target.value)} placeholder="3D2N Clark and Olongapo" /></label>
+              <label>Destination <input value={bookingForm.destination} onChange={(event) => updateBookingField('destination', event.target.value)} placeholder="Clark, Boracay, Hong Kong" /></label>
+              <label>No. of pax <input value={bookingForm.pax} onChange={(event) => updateBookingField('pax', event.target.value)} placeholder="2 adults, 1 infant" /></label>
+              <label>Travel start <input type="date" value={bookingForm.travelStart} onChange={(event) => updateBookingField('travelStart', event.target.value)} /></label>
+              <label>Travel end <input type="date" value={bookingForm.travelEnd} onChange={(event) => updateBookingField('travelEnd', event.target.value)} /></label>
+              <label>Status 
+                <select value={bookingForm.status} onChange={(event) => updateBookingField('status', event.target.value as BookingStatus)}>
+                  <option>Inquiry</option><option>Breakdown</option><option>Quotation</option><option>Purchase Order</option><option>Invoice</option><option>Confirmed</option>
                 </select>
               </label>
             </div>
-            <p className="field-help">
-              Status decides which dashboard list this booking appears in.
-              Start with Inquiry, then move it forward as documents are prepared.
-            </p>
           </section>
+
+          {/* NEW DYNAMIC QUOTATION SECTION */}
           <section className="form-section">
-            <div className="form-section-heading">
-              <p>03 · Quotation</p>
-              <h2>Basic</h2>
-            </div>
+            <div className="form-section-heading"><p>03 · Quotation</p><h2>Basic</h2></div>
             <div className="field-grid three">
-              <label>
-                Quotation no.
-                <input
-                  value={bookingForm.quotationNo}
-                  onChange={(event) =>
-                    updateBookingField('quotationNo', event.target.value)
-                  }
-                  placeholder="QT-2026-0001"
-                />
-              </label>
-              <label>
-                Option date
-                <input
-                  type="date"
-                  value={bookingForm.optionDate}
-                  onChange={(event) =>
-                    updateBookingField('optionDate', event.target.value)
-                  }
-                />
-              </label>
-              <label>
-                Prepared by
-                <input
-                  value={bookingForm.preparedBy}
-                  onChange={(event) =>
-                    updateBookingField('preparedBy', event.target.value)
-                  }
-                  placeholder="Agent name"
-                />
-              </label>
+              <label>Quotation no. <input value={bookingForm.quotationNo} onChange={(event) => updateBookingField('quotationNo', event.target.value)} placeholder="QT-2026-0001" /></label>
+              <label>Option date <input type="date" value={bookingForm.optionDate} onChange={(event) => updateBookingField('optionDate', event.target.value)} /></label>
+              <label>Prepared by <input value={bookingForm.preparedBy} onChange={(event) => updateBookingField('preparedBy', event.target.value)} placeholder="Agent Name" /></label>
             </div>
-
-            <div className="line-items-panel">
-              <div className="line-items-heading">
-                <div>
-                  <p>Quotation</p>
-                  <h3>Basic</h3>
-                  <span>
-                    Only the package name, quantity, and client price appear in
-                    the basic quotation.
-                  </span>
-                </div>
+            
+            <div className="itemized-container" style={{ marginTop: '1.5rem' }}>
+              <div className="itemized-header" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '1rem', fontWeight: 'bold', paddingBottom: '0.5rem', borderBottom: '1px solid #ddd' }}>
+                <span>Package Name</span>
+                <span>QTY</span>
+                <span>Client Price</span>
               </div>
-
-              <div className="line-items-table" role="table" aria-label="Quotation basic package">
-                <div className="line-items-row quotation-basic-row header" role="row">
-                  <span>Package name</span>
-                  <span>Qty</span>
-                  <span>Client price</span>
-                </div>
-                <div className="line-items-row quotation-basic-row" role="row">
-                  <input
-                    disabled
-                    value={bookingForm.packageName || 'Set Package Name above'}
-                    title="Package name comes from the Travel section"
-                  />
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min="1"
-                    step="1"
-                    value={bookingForm.quantity}
-                    onChange={(event) =>
-                      updateBookingField('quantity', event.target.value)
-                    }
-                    onKeyDown={(event) => {
-                      if (['e','E','+','-','.'].includes(event.key)) event.preventDefault()
-                    }}
-                    placeholder="1"
-                  />
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="0.01"
-                    value={bookingForm.unitPrice}
-                    onChange={(event) =>
-                      updateBookingField('unitPrice', event.target.value)
-                    }
-                    onKeyDown={(event) => {
-                      if (['e','E','+','-'].includes(event.key)) event.preventDefault()
-                    }}
-                    placeholder="0.00"
-                  />
-                </div>
+              <div className="itemized-row" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '1rem', marginTop: '0.5rem', alignItems: 'center' }}>
+                <input style={{ background: '#f5f5f5', cursor: 'not-allowed' }} disabled value={bookingForm.packageName || '(Set Package Name above)'} />
+                <input type="number" min="1" value={bookingForm.quantity || '1'} onChange={(e) => updateBookingField('quantity', e.target.value)} placeholder="1" />
+                <input type="text" value={bookingForm.unitPrice} onChange={(e) => updateBookingField('unitPrice', e.target.value)} placeholder="0.00" />
               </div>
-            </div>
-          </section>
-
-          <section className="form-section">
-            <div className="form-section-heading">
-              <p>04 · Invoice</p>
-              <h2>Basic / Optional</h2>
-            </div>
-            <p className="field-help">
-              The package is already included. Add optional invoice items only
-              when they should be visible to the client.
-            </p>
-            <div className="line-items-panel">
-              <div className="line-items-heading">
-                <div>
-                  <p>Invoice</p>
-                  <h3>Service / Item</h3>
-                  <span>
-                    Client price is what the customer pays. Supplier nett is the
-                    agency cost for optional invoice add-ons.
-                  </span>
-                </div>
-                <button type="button" onClick={addLineItem}>
-                  <Plus size={16} />
-                  Add New Item
-                </button>
-              </div>
-
-              <div className="line-items-table" role="table" aria-label="Invoice line items">
-                <div className="line-items-row header" role="row">
-                  <span>Service / item</span>
-                  <span>Qty</span>
-                  <span>Currency</span>
-                  <span>Client price</span>
-                  <span>Nett price</span>
-                  <span>Profit</span>
-                  <span>Action</span>
-                </div>
-                <div className="line-items-row locked-line-row" role="row">
-                  <input disabled value={bookingForm.packageName || 'Basic Package'} />
-                  <input disabled value={bookingForm.quantity || '1'} />
-                  <input disabled value="PHP" />
-                  <input disabled value={bookingForm.unitPrice || '0.00'} />
-                  <input disabled value="N/A" />
-                  <div className="line-item-profit positive">
-                    {formatAmount(String(parseQuantity(bookingForm.quantity) * parseAmount(bookingForm.unitPrice)), 'PHP')}
-                  </div>
-                  <button type="button" className="remove-line-btn" disabled title="Package row is required">
-                    <X size={15} />
-                  </button>
-                </div>
-                {editableLineItems.map((item, index) => {
-                  const quantity = parseQuantity(item.quantity)
-                  const clientPrice = parseAmount(item.unitPrice)
-                  const supplierNett = parseAmount(item.nettCost)
-                  const profit = quantity * (clientPrice - supplierNett)
-                  const profitClass = profit > 0 ? 'positive' : profit < 0 ? 'negative' : 'zero'
-                  const itemCurrency = item.currency || 'PHP'
-
-                  return (
-                    <div className="line-items-row" role="row" key={index}>
-                      <select
-                        value={item.description}
-                        onChange={(event) =>
-                          updateLineItem(index, 'description', event.target.value)
-                        }
-                      >
-                        <option value="">Select item</option>
-                        {item.description &&
-                          !lineItemDescriptionOptions.includes(item.description) && (
-                            <option value={item.description}>{item.description}</option>
-                          )}
-                        {lineItemDescriptionOptions.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        min="1"
-                        step="1"
-                        value={item.quantity}
-                        onChange={(event) =>
-                          updateLineItem(index, 'quantity', event.target.value)
-                        }
-                        onKeyDown={(event) => {
-                          if (['e','E','+','-','.'].includes(event.key)) event.preventDefault()
-                        }}
-                        placeholder="1"
-                      />
-                      <select
-                        value={itemCurrency}
-                        onChange={(event) =>
-                          updateLineItem(index, 'currency', event.target.value)
-                        }
-                      >
-                        {currencyOptions.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        min="0"
-                        step="0.01"
-                        value={item.unitPrice}
-                        onChange={(event) =>
-                          updateLineItem(index, 'unitPrice', event.target.value)
-                        }
-                        onKeyDown={(event) => {
-                          if (['e','E','+','-'].includes(event.key)) event.preventDefault()
-                        }}
-                        placeholder="0.00"
-                      />
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        min="0"
-                        step="0.01"
-                        value={item.nettCost}
-                        onChange={(event) =>
-                          updateLineItem(index, 'nettCost', event.target.value)
-                        }
-                        onKeyDown={(event) => {
-                          if (['e','E','+','-'].includes(event.key)) event.preventDefault()
-                        }}
-                        placeholder="0.00"
-                      />
-                      <div className={`line-item-profit ${profitClass}`}>
-                        {formatAmount(String(profit), itemCurrency)}
-                      </div>
-                      <button
-                        type="button"
-                        className="remove-line-btn"
-                        onClick={() => removeLineItem(index)}
-                        title="Remove item"
-                      >
-                        <X size={15} />
-                      </button>
-                    </div>
-                  )
-                })}
-              </div>
-
-              {lineItemCurrencies.map((currency) => {
-                const currencyItems = lineItemTotals.filter(
-                  (item) => (item.currency || 'PHP') === currency,
-                )
-                const clientTotal = sumLineItems(currencyItems, 'total')
-                const nettTotal = sumLineItems(currencyItems, 'nettTotal')
-                const profitTotal = sumLineItems(currencyItems, 'profit')
-
-                return (
-                  <div className="line-items-summary" key={currency}>
-                    <article>
-                      <span>Invoice total{showCurrencyPerGroup ? ` (${currency})` : ''}</span>
-                      <strong>{formatAmount(String(clientTotal), currency)}</strong>
-                    </article>
-                    <article>
-                      <span>Nett total{showCurrencyPerGroup ? ` (${currency})` : ''}</span>
-                      <strong>{formatAmount(String(nettTotal), currency)}</strong>
-                    </article>
-                    <article>
-                      <span>Estimated profit{showCurrencyPerGroup ? ` (${currency})` : ''}</span>
-                      <strong className={profitTotal > 0 ? 'profit-total' : profitTotal < 0 ? 'profit-negative' : ''}>{formatAmount(String(profitTotal), currency)}</strong>
-                    </article>
-                  </div>
-                )
-              })}
-            </div>
-          </section>
-
-          <section className="form-section internal-section">
-            <div className="form-section-heading">
-              <p>05 · Breakdown</p>
-              <h2>Charges / Optional</h2>
-            </div>
-            <p className="field-help">
-              This is the internal costing area. Turn on Show when a breakdown
-              item should also appear on the invoice.
-            </p>
-            <div className="line-items-panel">
-              <div className="line-items-heading">
-                <div>
-                  <p>Breakdown</p>
-                  <h3>Service / Item</h3>
-                  <span>
-                    The package row is calculated from the invoice total. Add
-                    internal costs and optional charges below.
-                  </span>
-                </div>
-                <button type="button" onClick={addBasicPackageItem}>
-                  <Plus size={16} />
-                  Add Item
-                </button>
-              </div>
-
-              <div className="line-items-table" role="table" aria-label="Breakdown line items">
-                <div className="line-items-row breakdown-row header" role="row">
-                  <span>Service / item</span>
-                  <span>Qty</span>
-                  <span>Currency</span>
-                  <span>Client price</span>
-                  <span>Supplier nett</span>
-                  <span>Show</span>
-                  <span>Action</span>
-                </div>
-                <div className="line-items-row breakdown-row locked-line-row" role="row">
-                  <input disabled value={`Calculated from Invoice: ${bookingForm.packageName || 'Basic Package'}`} />
-                  <input disabled value="1" />
-                  <input disabled value="PHP" />
-                  <input disabled value={String(sumLineItems(lineItemTotals, 'total'))} />
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="0.01"
-                    value={bookingForm.nettCost}
-                    onChange={(event) =>
-                      updateBookingField('nettCost', event.target.value)
-                    }
-                    onKeyDown={(event) => {
-                      if (['e','E','+','-'].includes(event.key)) event.preventDefault()
-                    }}
-                    placeholder="Internal package cost"
-                  />
-                  <div className="line-item-profit zero">Package</div>
-                  <button type="button" className="remove-line-btn" disabled title="Package row is required">
-                    <X size={15} />
-                  </button>
-                </div>
-                {editableBasicPackageItems.map((item, index) => {
-                  const itemCurrency = item.currency || 'PHP'
-
-                  return (
-                    <div className="line-items-row breakdown-row" role="row" key={index}>
-                      <select
-                        value={item.description}
-                        onChange={(event) =>
-                          updateBasicPackageItem(index, 'description', event.target.value)
-                        }
-                      >
-                        <option value="">Select item</option>
-                        {item.description &&
-                          !basicPackageDescriptionOptions.includes(item.description) && (
-                            <option value={item.description}>{item.description}</option>
-                          )}
-                        {basicPackageDescriptionOptions.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        min="1"
-                        step="1"
-                        value={item.quantity}
-                        onChange={(event) =>
-                          updateBasicPackageItem(index, 'quantity', event.target.value)
-                        }
-                        onKeyDown={(event) => {
-                          if (['e','E','+','-','.'].includes(event.key)) event.preventDefault()
-                        }}
-                        placeholder="1"
-                      />
-                      <select
-                        value={itemCurrency}
-                        onChange={(event) =>
-                          updateBasicPackageItem(index, 'currency', event.target.value)
-                        }
-                      >
-                        {currencyOptions.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        min="0"
-                        step="0.01"
-                        value={item.unitPrice}
-                        onChange={(event) =>
-                          updateBasicPackageItem(index, 'unitPrice', event.target.value)
-                        }
-                        onKeyDown={(event) => {
-                          if (['e','E','+','-'].includes(event.key)) event.preventDefault()
-                        }}
-                        placeholder="0.00"
-                      />
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        min="0"
-                        step="0.01"
-                        value={item.nettCost}
-                        onChange={(event) =>
-                          updateBasicPackageItem(index, 'nettCost', event.target.value)
-                        }
-                        onKeyDown={(event) => {
-                          if (['e','E','+','-'].includes(event.key)) event.preventDefault()
-                        }}
-                        placeholder="0.00"
-                      />
-                      <button
-                        type="button"
-                        className={`send-invoice-toggle ${item.sendToInvoice ? 'active' : ''}`}
-                        onClick={() =>
-                          updateBasicPackageItem(index, 'sendToInvoice', !item.sendToInvoice)
-                        }
-                      >
-                        {item.sendToInvoice ? 'Shown' : 'Hidden'}
-                      </button>
-                      <button
-                        type="button"
-                        className="remove-line-btn"
-                        onClick={() => removeBasicPackageItem(index)}
-                        title="Remove item"
-                      >
-                        <X size={15} />
-                      </button>
-                    </div>
-                  )
-                })}
-              </div>
-
-              {basicPackageCurrencies.map((currency) => {
-                const currencyItems = basicPackageTotals.filter(
-                  (item) => (item.currency || 'PHP') === currency,
-                )
-                const clientTotal = sumLineItems(currencyItems, 'total')
-                const nettTotal = sumLineItems(currencyItems, 'nettTotal')
-                const profitTotal = sumLineItems(currencyItems, 'profit')
-
-                return (
-                  <div className="line-items-summary" key={currency}>
-                    <article>
-                      <span>Breakdown total{showBasicPackageCurrencyPerGroup ? ` (${currency})` : ''}</span>
-                      <strong>{formatAmount(String(clientTotal), currency)}</strong>
-                    </article>
-                    <article>
-                      <span>Supplier nett total{showBasicPackageCurrencyPerGroup ? ` (${currency})` : ''}</span>
-                      <strong>{formatAmount(String(nettTotal), currency)}</strong>
-                    </article>
-                    <article>
-                      <span>Estimated profit{showBasicPackageCurrencyPerGroup ? ` (${currency})` : ''}</span>
-                      <strong className={profitTotal > 0 ? 'profit-total' : profitTotal < 0 ? 'profit-negative' : ''}>{formatAmount(String(profitTotal), currency)}</strong>
-                    </article>
-                  </div>
-                )
-              })}
-            </div>
-          </section>
-
-          <section className="form-section internal-section">
-            <div className="form-section-heading">
-              <p>06 · Internal</p>
-              <h2>Supplier and costing</h2>
-            </div>
-
-          <section className="form-section internal-section">
-            <div className="form-section-heading">
-              <p>06 · Internal</p>
-              <h2>Supplier and costing</h2>
-            </div>
-            <div className="field-grid three">
-              <label>
-                Supplier / operator
-                <input
-                  value={bookingForm.supplier}
-                  onChange={(event) =>
-                    updateBookingField('supplier', event.target.value)
-                  }
-                  placeholder="Vendor or tour operator"
-                />
-              </label>
-              <label>
-                Supplier contact
-                <input
-                  value={bookingForm.supplierContact}
-                  onChange={(event) =>
-                    updateBookingField('supplierContact', event.target.value)
-                  }
-                  placeholder="Vendor contact person / number"
-                />
-              </label>
-              <label>
-                Nett cost
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="0.01"
-                  value={bookingForm.nettCost}
-                  onChange={(event) =>
-                    updateBookingField('nettCost', event.target.value)
-                  }
-                  onKeyDown={(e) => {
-                    if (['e','E','+','-'].includes(e.key)) e.preventDefault()
-                  }}
-                  placeholder="Internal only"
-                />
-              </label>
-              <label>
-                Selling price
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="0.01"
-                  value={bookingForm.sellingPrice}
-                  onChange={(event) =>
-                    updateBookingField('sellingPrice', event.target.value)
-                  }
-                  onKeyDown={(e) => {
-                    if (['e','E','+','-'].includes(e.key)) e.preventDefault()
-                  }}
-                  placeholder="Client price"
-                />
-              </label>
-            </div>
-            <p className="internal-note">
-              Internal costing is for breakdown only and must not appear on
-              client-facing quotation or voucher documents.
-            </p>
-          </section>
-
-          <section className="form-section">
-            <div className="form-section-heading">
-              <p>07 · Payment</p>
-              <h2>Payment details</h2>
-            </div>
-            <div className="field-grid three">
-              <label>
-                Payment method
-                <input
-                  value={bookingForm.paymentMethod}
-                  onChange={(event) =>
-                    updateBookingField('paymentMethod', event.target.value)
-                  }
-                  placeholder="Bank transfer, cash, GCash"
-                />
-              </label>
-              <label>
-                Amount paid
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="0.01"
-                  value={bookingForm.invoiceAmountPaid}
-                  onChange={(event) =>
-                    updateBookingField('invoiceAmountPaid', event.target.value)
-                  }
-                  onKeyDown={(e) => {
-                    if (['e','E','+','-'].includes(e.key)) e.preventDefault()
-                  }}
-                  placeholder="0.00"
-                />
-              </label>
-              <label>
-                Payment status
-                <select
-                  value={bookingForm.invoicePaymentStatus}
-                  onChange={(event) =>
-                    updateBookingField('invoicePaymentStatus', event.target.value)
-                  }
-                >
-                  <option>Unpaid</option>
-                  <option>Partially Paid</option>
-                  <option>Paid</option>
-                </select>
-              </label>
-            </div>
-            <div className="field-grid three">
-              <label>
-                Payment date
-                <input
-                  type="date"
-                  value={bookingForm.invoicePaymentDate}
-                  onChange={(event) =>
-                    updateBookingField('invoicePaymentDate', event.target.value)
-                  }
-                />
-              </label>
-              <label>
-                Payment reference
-                <input
-                  value={bookingForm.invoiceReference}
-                  onChange={(event) =>
-                    updateBookingField('invoiceReference', event.target.value)
-                  }
-                  placeholder="OR / bank ref / GCash ref"
-                />
-              </label>
-              <label>
-                Option date
-                <input
-                  type="date"
-                  value={bookingForm.optionDate}
-                  onChange={(event) =>
-                    updateBookingField('optionDate', event.target.value)
-                  }
-                />
-              </label>
-            </div>
-            <div className="field-grid three">
-              <label>
-                Prepared by
-                <input
-                  value={bookingForm.preparedBy}
-                  onChange={(event) =>
-                    updateBookingField('preparedBy', event.target.value)
-                  }
-                  placeholder="Staff name"
-                />
-              </label>
-            </div>
-            <label className="textarea-field">
-              Payment records
-              <textarea
-                value={bookingForm.paymentRecords}
-                onChange={(event) =>
-                  updateBookingField('paymentRecords', event.target.value)
-                }
-                placeholder="One payment update per line, e.g. DP MAR 3 PAID - PHP 40,000"
-              />
-            </label>
-          </section>
-
-          <section className="form-section">
-            <div className="form-section-heading">
-              <p>08 · Voucher</p>
-              <h2>Travel confirmation details</h2>
-            </div>
-            <section className="mini-guide">
-              <ListChecks size={18} />
-              <p>
-                For ticket rebooking, paste the old and new flight schedule in
-                Flight / Rebooking details below. Keep price rows in Line items.
+              <p className="field-help" style={{ marginTop: '0.5rem', color: '#666' }}>
+                This is the simple client quotation price. Nett/supplier costs are handled in the invoice add-ons and internal breakdown.
               </p>
-            </section>
-            <div className="field-grid three">
-              <label>
-                Flight / Rebooking details
-                <input
-                  value={bookingForm.flightDetails}
-                  onChange={(event) =>
-                    updateBookingField('flightDetails', event.target.value)
-                  }
-                  placeholder="Original flight and new flight summary"
-                />
-              </label>
-              <label>
-                Accommodation
-                <input
-                  value={bookingForm.accommodation}
-                  onChange={(event) =>
-                    updateBookingField('accommodation', event.target.value)
-                  }
-                  placeholder="Hotel / resort name"
-                />
-              </label>
-              <label>
-                Emergency contact
-                <input
-                  value={bookingForm.emergencyContact}
-                  onChange={(event) =>
-                    updateBookingField('emergencyContact', event.target.value)
-                  }
-                  placeholder="Emergency contact number"
-                />
-              </label>
             </div>
-            <label className="textarea-field">
-              Hotel address
-              <textarea
-                value={bookingForm.hotelAddress}
-                onChange={(event) =>
-                  updateBookingField('hotelAddress', event.target.value)
-                }
-                placeholder="Full hotel address for voucher"
-              />
-            </label>
-            <label className="textarea-field">
-              Itinerary
-              <textarea
-                value={bookingForm.itinerary}
-                onChange={(event) => updateBookingField('itinerary', event.target.value)}
-                placeholder="One itinerary note per line"
-              />
-            </label>
-            <label className="textarea-field">
-              Detailed airline / rebooking notes
-              <textarea
-                value={bookingForm.specialInstructions}
-                onChange={(event) =>
-                  updateBookingField('specialInstructions', event.target.value)
-                }
-                placeholder="Paste long airline text here, e.g. original schedule, new schedule, fare rule, non-user fee, reissue notes..."
-              />
-            </label>
+          </section>
+
+          {/* NEW INVOICE SECTION */}
+          <section className="form-section">
+            <div className="form-section-heading"><p>04 · Invoice</p><h2>Basic / Optional</h2></div>
+            <p className="field-help" style={{ marginBottom: '1rem' }}>Service / Item rows shown here are client-visible. The package is already included; add optional items only when needed.</p>
+            
+            <div className="itemized-container">
+              <div className="itemized-header" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 40px', gap: '0.5rem', fontWeight: 'bold', paddingBottom: '0.5rem', borderBottom: '1px solid #ddd' }}>
+                <span>Service / Item</span>
+                <span>QTY</span>
+                <span>Client Price</span>
+                <span>Supplier Nett</span>
+                <span></span>
+              </div>
+              
+              {currentInvoiceItems.map((item, index) => (
+                <div key={index} className="itemized-row" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 40px', gap: '0.5rem', marginTop: '0.5rem', alignItems: 'center' }}>
+                  {item.isPackageRow ? (
+                    <input style={{ background: '#f5f5f5', cursor: 'not-allowed' }} disabled value={bookingForm.packageName ? `${bookingForm.packageName} (Package Name)` : 'Basic Package'} />
+                  ) : (
+                    <select value={item.description} onChange={(e) => changeInvoiceItemField(index, 'description', e.target.value)}>
+                      {invoiceOptions.map((opt, oIdx) => <option key={oIdx} value={opt}>{opt}</option>)}
+                    </select>
+                  )}
+                  
+                  <input type="number" min="1" value={item.quantity} onChange={(e) => changeInvoiceItemField(index, 'quantity', e.target.value)} />
+                  <input type="text" value={item.unitPrice} onChange={(e) => changeInvoiceItemField(index, 'unitPrice', e.target.value)} placeholder="0.00" />
+                  
+                  {item.isPackageRow ? (
+                    <input style={{ background: '#f5f5f5', cursor: 'not-allowed', color: '#999' }} disabled value="N/A" />
+                  ) : (
+                    <input type="text" value={item.nettCost} onChange={(e) => changeInvoiceItemField(index, 'nettCost', e.target.value)} placeholder="0.00" />
+                  )}
+
+                  {!item.isPackageRow ? (
+                    <button type="button" className="remove-item-btn" onClick={() => removeInvoiceItemRow(index)} style={{ padding: '4px', background: '#ff4d4d', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>×</button>
+                  ) : <span />}
+                </div>
+              ))}
+
+              <button type="button" className="add-item-btn" onClick={addInvoiceItemRow} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginTop: '1rem', padding: '0.5rem 1rem', background: '#008080', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+                <Plus size={16} /> Add New Item
+              </button>
+            </div>
+          </section>
+
+          {/* NEW BREAKDOWN SECTION */}
+          <section className="form-section">
+            <div className="form-section-heading"><p>05 · Breakdown</p><h2>Charges / Optional</h2></div>
+            <p className="field-help" style={{ marginBottom: '1rem' }}>Service / Item rows here are for internal costing. Turn on "Show" only when a breakdown row should also appear in the invoice.</p>
+            
+            <div className="itemized-container">
+              <div className="itemized-header" style={{ display: 'grid', gridTemplateColumns: '2fr 0.8fr 1fr 1fr 1.2fr 40px', gap: '0.5rem', fontWeight: 'bold', paddingBottom: '0.5rem', borderBottom: '1px solid #ddd' }}>
+                <span>Service / Item</span>
+                <span>QTY</span>
+                <span>Client Price</span>
+                <span>Supplier Nett</span>
+                <span style={{ textAlign: 'center' }}>Send To Invoice?</span>
+                <span></span>
+              </div>
+
+              {currentBreakdownItems.map((item, index) => (
+                <div key={index} className="itemized-row" style={{ display: 'grid', gridTemplateColumns: '2fr 0.8fr 1fr 1fr 1.2fr 40px', gap: '0.5rem', marginTop: '0.5rem', alignItems: 'center' }}>
+                  {item.isPackageRow ? (
+                    <input style={{ background: '#f5f5f5', cursor: 'not-allowed' }} disabled value={`Calculated from Invoice: ${bookingForm.packageName || 'Basic Package'}`} />
+                  ) : (
+                    <select value={item.description} onChange={(e) => changeBreakdownItemField(index, 'description', e.target.value)}>
+                      {breakdownOptions.map((opt, oIdx) => <option key={oIdx} value={opt}>{opt}</option>)}
+                    </select>
+                  )}
+
+                  <input type="number" min="1" disabled={item.isPackageRow} style={item.isPackageRow ? { background: '#f5f5f5' } : {}} value={item.quantity} onChange={(e) => changeBreakdownItemField(index, 'quantity', e.target.value)} />
+                  <input type="text" disabled={item.isPackageRow} style={item.isPackageRow ? { background: '#f5f5f5' } : {}} value={item.unitPrice} onChange={(e) => changeBreakdownItemField(index, 'unitPrice', e.target.value)} placeholder="0.00" />
+                  <input type="text" value={item.nettCost} onChange={(e) => changeBreakdownItemField(index, 'nettCost', e.target.value)} placeholder="0.00" />
+
+                  <div style={{ display: 'flex', justifyContent: 'center' }}>
+                    <button
+                      type="button"
+                      onClick={() => changeBreakdownItemField(index, 'sendToInvoice', !item.sendToInvoice)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.25rem',
+                        padding: '4px 8px',
+                        borderRadius: '4px',
+                        border: '1px solid #ccc',
+                        background: item.sendToInvoice ? '#e6f7ff' : '#fff',
+                        color: item.sendToInvoice ? '#1890ff' : '#666',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {item.sendToInvoice ? <Eye size={14} /> : <EyeOff size={14} />}
+                      <span style={{ fontSize: '11px' }}>{item.sendToInvoice ? 'Showing' : 'Hidden'}</span>
+                    </button>
+                  </div>
+
+                  {!item.isPackageRow ? (
+                    <button type="button" className="remove-item-btn" onClick={() => removeBreakdownItemRow(index)} style={{ padding: '4px', background: '#ff4d4d', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>×</button>
+                  ) : <span />}
+                </div>
+              ))}
+
+              <button type="button" className="add-item-btn" onClick={addBreakdownItemRow} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginTop: '1rem', padding: '0.5rem 1rem', background: '#2575fc', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+                <Plus size={16} /> Add Item
+              </button>
+            </div>
+
+            <div className="form-summary-card" style={{ marginTop: '1.5rem', padding: '1rem', background: '#f9f9f9', borderRadius: '6px', border: '1px solid #eee' }}>
+              <h3>Live Cost and Profit Summary</h3>
+              <div style={{ display: 'flex', gap: '2rem', marginTop: '0.5rem' }}>
+                <div><strong>Invoice Client Total:</strong> <span style={{ color: '#2e7d32' }}>{formatAmount(String(displayTotalClient))}</span></div>
+                <div><strong>Internal Nett Total:</strong> <span style={{ color: '#c62828' }}>{formatAmount(String(displayTotalNett))}</span></div>
+                <div><strong>Estimated Profit:</strong> <span style={{ color: '#1565c0', fontWeight: 'bold' }}>{formatAmount(String(displayTotalProfit))}</span></div>
+              </div>
+            </div>
           </section>
 
           <section className="form-section">
-            <div className="form-section-heading">
-              <p>09 · Package</p>
-              <h2>Inclusions and exclusions</h2>
-            </div>
+            <div className="form-section-heading"><p>06 · Logistics</p><h2>Fulfillment context</h2></div>
             <div className="field-grid two">
-              <label className="textarea-field">
-                Inclusions
-                <textarea
-                  value={bookingForm.inclusions}
-                  onChange={(event) =>
-                    updateBookingField('inclusions', event.target.value)
-                  }
-                  placeholder="One inclusion per line"
-                />
-              </label>
-              <label className="textarea-field">
-                Exclusions
-                <textarea
-                  value={bookingForm.exclusions}
-                  onChange={(event) =>
-                    updateBookingField('exclusions', event.target.value)
-                  }
-                  placeholder="One exclusion per line"
-                />
-              </label>
+              <label>Flight details <textarea rows={3} value={bookingForm.flightDetails} onChange={(event) => updateBookingField('flightDetails', event.target.value)} placeholder="MNL-MPH PR2041 0800AM, MPH-MNL PR2042 0500PM" /></label>
+              <label>Accommodation details <textarea rows={3} value={bookingForm.accommodation} onChange={(event) => updateBookingField('accommodation', event.target.value)} placeholder="Henann Regency Beach Resort (Superior Room)" /></label>
+              <label>Hotel location address <textarea rows={2} value={bookingForm.hotelAddress} onChange={(event) => updateBookingField('hotelAddress', event.target.value)} placeholder="Station 2, Balabag, Boracay Island, Malay, Aklan" /></label>
+              <label>Emergency local contact <textarea rows={2} value={bookingForm.emergencyContact} onChange={(event) => updateBookingField('emergencyContact', event.target.value)} placeholder="Hotel Front Desk: (036) 288-6111" /></label>
             </div>
-            <p className="field-help">
-              Supplier instructions and rebooking notes are handled in the
-              Travel confirmation section above so they appear in the correct
-              documents.
-            </p>
           </section>
 
           <section className="form-section">
-            <div className="form-section-heading">
-              <p>10 · Notes</p>
-              <h2>Remarks</h2>
+            <div className="form-section-heading"><p>07 · Inclusions</p><h2>Document line specifications</h2></div>
+            <div className="field-grid two">
+              <label>Inclusions <textarea rows={4} value={bookingForm.inclusions} onChange={(event) => updateBookingField('inclusions', event.target.value)} placeholder="Daily Breakfast&#10;Roundtrip Airport Transfers&#10;Free Wi-Fi access" /></label>
+              <label>Exclusions <textarea rows={4} value={bookingForm.exclusions} onChange={(event) => updateBookingField('exclusions', event.target.value)} placeholder="Tipping for Tour Guide&#10;Personal spending money&#10;Travel insurance" /></label>
             </div>
-            <label className="textarea-field">
-              Internal notes / special requests
-              <textarea
-                value={bookingForm.notes}
-                onChange={(event) => updateBookingField('notes', event.target.value)}
-                placeholder="Flight notes, hotel preferences, payment remarks, exclusions, reminders..."
-              />
-            </label>
           </section>
+
+          <section className="form-section">
+            <div className="form-section-heading"><p>08 · Schedule</p><h2>Itinerary roadmap</h2></div>
+            <label>Daily routing schedule <textarea rows={6} value={bookingForm.itinerary} onChange={(event) => updateBookingField('itinerary', event.target.value)} placeholder="Day 1: Arrival at Caticlan Airport, Transfer to Resort, Free Time&#10;Day 2: Boracay Island Hopping Tour with Lunch&#10;Day 3: Breakfast, Free Time until checkout, Departure transfer" /></label>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading"><p>09 · Remarks</p><h2>Internal operations index</h2></div>
+            <div className="field-grid two">
+              <label>Special client requests <textarea rows={3} value={bookingForm.specialInstructions} onChange={(event) => updateBookingField('specialInstructions', event.target.value)} placeholder="Requesting high floor rooms if available. Senior friendly pacing." /></label>
+              <label>Private desk notes <textarea rows={3} value={bookingForm.notes} onChange={(event) => updateBookingField('notes', event.target.value)} placeholder="Supplier confirmed rate lock until next Friday only." /></label>
+            </div>
+          </section>
+
+          <footer className="form-actions-bar">
+            <button type="button" className="cancel-form-btn" onClick={() => { setEditingBookingId(''); setScreen(isEditingBooking ? 'booking-detail' : 'home') }}>Cancel changes</button>
+            <button type="submit" className="save-booking-btn"><Save size={18} /> {isEditingBooking ? 'Save Changes' : 'Save Booking Record'}</button>
+          </footer>
         </form>
       </main>
     )
@@ -2587,16 +1560,11 @@ function App() {
               </article>
               <article>
                 <span>Client price</span>
-                <strong>
-                  {formatAmount(
-                    String(getBookingClientTotal(selectedBooking)),
-                    getPrimaryLineItemCurrency(getBookingLineItems(selectedBooking)),
-                  )}
-                </strong>
+                <strong>{formatAmount(String(getBookingClientTotal(selectedBooking)))}</strong>
               </article>
               <article className="internal-summary">
                 <span>Internal nett</span>
-                <strong>{formatAmount(selectedBooking.nettCost)}</strong>
+                <strong>{formatAmount(String(getBookingBreakdownNettTotal(selectedBooking)))}</strong>
               </article>
             </div>
 
@@ -2685,7 +1653,7 @@ function App() {
         requirement: 'Needs supplier nett and client selling price.',
         ready:
           hasClientAmount &&
-          sumLineItems(getBookingLineItems(selectedBooking), 'nettTotal') > 0,
+          getBookingBreakdownNettTotal(selectedBooking) > 0,
       },
       {
         title: 'Quotation',
@@ -2826,7 +1794,7 @@ function App() {
       )
     }
 
-    const lineItems = getBookingQuotationLineItems(selectedBooking)
+    const lineItems = getBookingLineItems(selectedBooking)
     const inclusions = getLines(selectedBooking.inclusions, [
       'Travel arrangement based on selected package',
     ])
@@ -2928,8 +1896,8 @@ function App() {
                 <tr key={`${item.description}-${index}`}>
                   <td>{item.description}</td>
                   <td>{item.quantity}</td>
-                  <td>{formatAmount(String(item.unitPrice), item.currency)}</td>
-                  <td>{formatAmount(String(item.total), item.currency)}</td>
+                  <td>{formatAmount(String(item.unitPrice))}</td>
+                  <td>{formatAmount(String(item.total))}</td>
                 </tr>
               ))}
             </tbody>
@@ -2994,7 +1962,6 @@ function App() {
 
     const lineItems = getBookingLineItems(selectedBooking)
     const totalPrice = sumLineItems(lineItems, 'total')
-    const lineItemsCurrency = getPrimaryLineItemCurrency(lineItems)
     const amountPaid = parseAmount(invoiceForm.invoiceAmountPaid)
     const balance = Math.max(totalPrice - amountPaid, 0)
 
@@ -3038,15 +2005,15 @@ function App() {
           <section className="invoice-edit-summary">
             <article>
               <span>Total invoice</span>
-              <strong>{formatAmount(String(totalPrice), lineItemsCurrency)}</strong>
+              <strong>{formatAmount(String(totalPrice))}</strong>
             </article>
             <article>
               <span>Amount paid</span>
-              <strong>{formatAmount(invoiceForm.invoiceAmountPaid, lineItemsCurrency)}</strong>
+              <strong>{formatAmount(invoiceForm.invoiceAmountPaid)}</strong>
             </article>
             <article>
               <span>Balance</span>
-              <strong>{formatAmount(String(balance), lineItemsCurrency)}</strong>
+              <strong>{formatAmount(String(balance))}</strong>
             </article>
           </section>
 
@@ -3150,7 +2117,6 @@ function App() {
 
     const lineItems = getBookingLineItems(selectedBooking)
     const totalPrice = sumLineItems(lineItems, 'total')
-    const lineItemsCurrency = getPrimaryLineItemCurrency(lineItems)
     const amountPaid = parseAmount(selectedBooking.invoiceAmountPaid)
     const balance = Math.max(totalPrice - amountPaid, 0)
     const paymentRecords = getLines(selectedBooking.paymentRecords, [
@@ -3226,7 +2192,7 @@ function App() {
             </div>
             <div className="amount-due-box">
               <span>Amount Due</span>
-              <strong>{formatAmount(String(balance), lineItemsCurrency)}</strong>
+              <strong>{formatAmount(String(balance))}</strong>
             </div>
           </section>
 
@@ -3249,8 +2215,8 @@ function App() {
                 <tr key={`${item.description}-${index}`}>
                   <td>{item.description}</td>
                   <td>{item.quantity}</td>
-                  <td>{formatAmount(String(item.unitPrice), item.currency)}</td>
-                  <td>{formatAmount(String(item.total), item.currency)}</td>
+                  <td>{formatAmount(String(item.unitPrice))}</td>
+                  <td>{formatAmount(String(item.total))}</td>
                 </tr>
               ))}
             </tbody>
@@ -3259,19 +2225,19 @@ function App() {
           <section className="invoice-total-panel">
             <div>
               <span>Subtotal</span>
-              <strong>{formatAmount(String(totalPrice), lineItemsCurrency)}</strong>
+              <strong>{formatAmount(String(totalPrice))}</strong>
             </div>
             <div>
               <span>Total</span>
-              <strong>{formatAmount(String(totalPrice), lineItemsCurrency)}</strong>
+              <strong>{formatAmount(String(totalPrice))}</strong>
             </div>
             <div>
               <span>Paid</span>
-              <strong>{formatAmount(selectedBooking.invoiceAmountPaid, lineItemsCurrency)}</strong>
+              <strong>{formatAmount(selectedBooking.invoiceAmountPaid)}</strong>
             </div>
             <div>
               <span>Balance</span>
-              <strong>{formatAmount(String(balance), lineItemsCurrency)}</strong>
+              <strong>{formatAmount(String(balance))}</strong>
             </div>
             <div className="payment-placeholder">
               <span>Payment Updates</span>
@@ -3372,9 +2338,8 @@ function App() {
       )
     }
 
-    const lineItems = getBookingBreakdownLineItems(selectedBooking)
+    const lineItems = getBookingLineItems(selectedBooking)
     const amount = sumLineItems(lineItems, 'nettTotal') || sumLineItems(lineItems, 'total')
-    const lineItemsCurrency = getPrimaryLineItemCurrency(lineItems)
     const poNumber = selectedBooking.id.replace('BK-', new Date().getFullYear().toString())
 
     return (
@@ -3510,8 +2475,8 @@ function App() {
                     <td>{item.quantity}</td>
                     <td>{selectedBooking.pax || item.quantity}</td>
                     <td>{item.description}</td>
-                    <td>{formatAmount(String(poUnitPrice), item.currency)}</td>
-                    <td>{formatAmount(String(poAmount), item.currency)}</td>
+                    <td>{formatAmount(String(poUnitPrice))}</td>
+                    <td>{formatAmount(String(poAmount))}</td>
                   </tr>
                 )
               })}
@@ -3520,7 +2485,7 @@ function App() {
 
           <section className="po-total">
             <span>Total Amount:</span>
-            <strong>{formatAmount(String(amount), lineItemsCurrency)}</strong>
+            <strong>{formatAmount(String(amount))}</strong>
           </section>
 
           <section className="po-notes-grid">
@@ -3768,12 +2733,11 @@ function App() {
       )
     }
 
-    const lineItems = getBookingBreakdownLineItems(selectedBooking)
+    const lineItems = mapBreakdownItemsToBookingLines(readBreakdownItems(selectedBooking))
     const quantity = parseQuantity(selectedBooking.quantity)
     const internalTotal = sumLineItems(lineItems, 'nettTotal')
     const clientTotal = sumLineItems(lineItems, 'total')
     const estimatedProfit = sumLineItems(lineItems, 'profit')
-    const lineItemsCurrency = getPrimaryLineItemCurrency(lineItems)
 
     return (
       <main className="preview-screen">
@@ -3854,9 +2818,9 @@ function App() {
                 <tr key={`${item.description}-${index}`}>
                   <td>{item.description}</td>
                   <td>{item.quantity}</td>
-                  <td>{formatAmount(String(item.nettTotal), item.currency)}</td>
-                  <td>{formatAmount(String(item.total), item.currency)}</td>
-                  <td>{formatAmount(String(item.profit), item.currency)}</td>
+                  <td>{formatAmount(String(item.nettTotal))}</td>
+                  <td>{formatAmount(String(item.total))}</td>
+                  <td>{formatAmount(String(item.profit))}</td>
                 </tr>
               ))}
             </tbody>
@@ -3865,15 +2829,15 @@ function App() {
           <section className="breakdown-total-grid">
             <div>
               <span>Supplier Nett Total</span>
-              <strong>{formatAmount(String(internalTotal), lineItemsCurrency)}</strong>
+              <strong>{formatAmount(String(internalTotal))}</strong>
             </div>
             <div>
               <span>Client Total</span>
-              <strong>{formatAmount(String(clientTotal), lineItemsCurrency)}</strong>
+              <strong>{formatAmount(String(clientTotal))}</strong>
             </div>
             <div>
               <span>Estimated Profit</span>
-              <strong>{formatAmount(String(estimatedProfit), lineItemsCurrency)}</strong>
+              <strong>{formatAmount(String(estimatedProfit))}</strong>
             </div>
           </section>
 
@@ -3889,6 +2853,7 @@ function App() {
     )
   }
 
+  // Home / dashboard screen (default fallback)
   const activeProjects = bookings.length
   const inquiryCount = bookings.filter((booking) => booking.status === 'Inquiry').length
   const confirmedCount = bookings.filter((booking) => booking.status === 'Confirmed').length
@@ -3911,11 +2876,7 @@ function App() {
       : bookings.filter((booking) => booking.status === activeBookingFilter)
     ).filter((booking) => {
       const queryText = searchTerm.trim().toLowerCase()
-
-      if (!queryText) {
-        return true
-      }
-
+      if (!queryText) return true
       return [
         booking.clientName,
         booking.packageName,
