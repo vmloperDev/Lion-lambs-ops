@@ -22,6 +22,11 @@ import {
 import {
   ArrowRight,
   CalendarDays,
+  CheckCircle2,
+  ChevronRight,
+  CircleDollarSign,
+  ClipboardList,
+  Clock3,
   FileText,
   FolderKanban,
   ListChecks,
@@ -35,7 +40,6 @@ import {
   RefreshCw,
   Save,
   Search,
-  Sparkles,
   UserRound,
   X,
 } from 'lucide-react'
@@ -3398,10 +3402,21 @@ function App() {
   }
 
   const activeProjects = bookings.length
+  const inquiryCount = bookings.filter((booking) => booking.status === 'Inquiry').length
+  const confirmedCount = bookings.filter((booking) => booking.status === 'Confirmed').length
   const invoiceCount = bookings.filter((booking) => booking.status === 'Invoice').length
   const quotationCount = bookings.filter(
     (booking) => booking.status === 'Quotation' || booking.status === 'Inquiry',
   ).length
+  const totalBookingValue = bookings.reduce(
+    (total, booking) => total + getBookingClientTotal(booking),
+    0,
+  )
+  const currentDateLabel = new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  })
   const filteredBookings =
     (activeBookingFilter === 'All'
       ? bookings
@@ -3446,6 +3461,10 @@ function App() {
           </div>
         </div>
         <div className="nav-actions">
+          <div className="nav-date">
+            <CalendarDays size={16} />
+            <span>{currentDateLabel}</span>
+          </div>
           <button type="button" onClick={handleLogout} title="Log out">
             <LogOut size={18} />
           </button>
@@ -3454,18 +3473,19 @@ function App() {
 
       <div className="home-body">
         <section className="home-main">
-          <section className="home-hero">
-            <div className="hero-copy">
-              <p>
-                Welcome,{' '}
-                {authUser?.displayName ??
-                  (authUser?.email ? getDisplayName(authUser.email) : 'Team Member')}
-              </p>
-              <h1>Track inquiries and booking documents.</h1>
-              <span>
-                Start with data gathering, then prepare filtered documents from
-                the same booking record.
-              </span>
+          <section className="dashboard-banner">
+            <img src={travelBanner} alt="" />
+            <div className="dashboard-banner-overlay"></div>
+            <div className="dashboard-banner-content">
+              <div>
+                <p>Operations dashboard</p>
+                <h1>
+                  Good day,{' '}
+                  {authUser?.displayName ??
+                    (authUser?.email ? getDisplayName(authUser.email) : 'Team Member')}
+                </h1>
+                <span>{activeProjects} active booking records</span>
+              </div>
               <button
                 type="button"
                 className="create-project-btn"
@@ -3475,42 +3495,92 @@ function App() {
                 New Inquiry
               </button>
             </div>
-            <div className="hero-image">
-              <img src={travelBanner} alt="Lion and Lamb travel banner" />
-            </div>
           </section>
 
           <section className="dashboard-grid">
-            <article className="summary-card">
-              <div className="summary-icon blue">
-                <FolderKanban size={22} />
+            <article className="summary-card teal">
+              <div className="summary-card-top">
+                <div className="summary-icon blue">
+                  <ClipboardList size={20} />
+                </div>
+                <span>Inquiries</span>
               </div>
-              <span>Active Projects</span>
-              <strong>{activeProjects}</strong>
+              <strong>{inquiryCount}</strong>
+              <small>Awaiting preparation</small>
             </article>
-            <article className="summary-card">
-              <div className="summary-icon green">
-                <FileText size={22} />
+            <article className="summary-card gold">
+              <div className="summary-card-top">
+                <div className="summary-icon gold">
+                  <Clock3 size={20} />
+                </div>
+                <span>Open Quotes</span>
               </div>
-              <span>Invoices</span>
-              <strong>{invoiceCount}</strong>
-            </article>
-            <article className="summary-card">
-              <div className="summary-icon gold">
-                <Sparkles size={22} />
-              </div>
-              <span>Pending Quotations</span>
               <strong>{quotationCount}</strong>
+              <small>Inquiry and quotation</small>
             </article>
+            <article className="summary-card green">
+              <div className="summary-card-top">
+                <div className="summary-icon green">
+                  <CheckCircle2 size={20} />
+                </div>
+                <span>Confirmed</span>
+              </div>
+              <strong>{confirmedCount}</strong>
+              <small>Ready for travel</small>
+            </article>
+            <article className="summary-card navy">
+              <div className="summary-card-top">
+                <div className="summary-icon navy">
+                  <CircleDollarSign size={20} />
+                </div>
+                <span>Booking Value</span>
+              </div>
+              <strong className="summary-money">{formatAmount(String(totalBookingValue))}</strong>
+              <small>{invoiceCount} invoice records</small>
+            </article>
+          </section>
+
+          <section className="pipeline-panel">
+            <div className="pipeline-heading">
+              <div>
+                <p>Workflow</p>
+                <h2>Booking pipeline</h2>
+              </div>
+              <span>{activeProjects} total</span>
+            </div>
+            <div className="pipeline-list">
+              {bookingListFilters.slice(1).map((filter, index) => {
+                const count = statusCounts[filter.value]
+                const progress = activeProjects > 0 ? (count / activeProjects) * 100 : 0
+
+                return (
+                  <button
+                    type="button"
+                    key={filter.value}
+                    className={`pipeline-row pipeline-${index + 1}`}
+                    onClick={() => setActiveBookingFilter(filter.value)}
+                  >
+                    <span className="pipeline-dot"></span>
+                    <span className="pipeline-name">{filter.label}</span>
+                    <span className="pipeline-track">
+                      <span style={{ width: `${progress}%` }}></span>
+                    </span>
+                    <strong>{count}</strong>
+                    <ChevronRight size={16} />
+                  </button>
+                )
+              })}
+            </div>
           </section>
         </section>
 
         <section className="projects-panel">
           <div className="section-heading">
             <div>
-              <p>Filtered summaries</p>
-              <h2>{activeBookingFilter === 'All' ? 'All records' : activeBookingFilter}</h2>
+              <p>Booking workspace</p>
+              <h2>{activeBookingFilter === 'All' ? 'All bookings' : activeBookingFilter}</h2>
             </div>
+            <span className="record-count">{filteredBookings.length} records</span>
           </div>
 
           {dataError && <p className="data-alert error">{dataError}</p>}
@@ -3566,7 +3636,9 @@ function App() {
 
             {filteredBookings.map((booking) => (
               <button
-                className="project-card"
+                className={`project-card status-${booking.status
+                  .toLowerCase()
+                  .replaceAll(' ', '-')}`}
                 key={booking.id}
                 type="button"
                 onClick={() => openBookingDetail(booking.id)}
@@ -3590,6 +3662,7 @@ function App() {
                     <MapPin size={15} />
                     {formatAmount(String(getBookingClientTotal(booking)))}
                   </span>
+                  <ChevronRight className="project-chevron" size={18} />
                 </div>
               </button>
             ))}
