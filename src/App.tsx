@@ -24,7 +24,6 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronRight,
-  CircleDollarSign,
   ClipboardList,
   Clock3,
   FileText,
@@ -3084,49 +3083,34 @@ function App() {
 
   // Home / dashboard screen (default fallback)
   const activeProjects = bookings.length
-  const inquiryCount = bookings.filter((booking) => booking.status === 'Inquiry').length
-  const confirmedCount = bookings.filter((booking) => booking.status === 'Confirmed').length
-  const invoiceCount = bookings.filter((booking) => booking.status === 'Invoice').length
-  const quotationCount = bookings.filter(
-    (booking) => booking.status === 'Quotation' || booking.status === 'Inquiry',
-  ).length
-  const totalBookingValue = bookings.reduce(
-    (total, booking) => total + getBookingClientTotal(booking),
-    0,
-  )
-  const currentDateLabel = new Date().toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-  })
-  const filteredBookings =
-    (activeBookingFilter === 'All'
+  const inquiryCount = bookings.filter((b) => b.status === 'Inquiry').length
+  const confirmedCount = bookings.filter((b) => b.status === 'Confirmed').length
+  const invoiceCount = bookings.filter((b) => b.status === 'Invoice').length
+  const quotationCount = bookings.filter((b) => b.status === 'Quotation' || b.status === 'Inquiry').length
+  const totalBookingValue = bookings.reduce((sum, b) => sum + getBookingClientTotal(b), 0)
+
+  const filteredBookings = (
+    activeBookingFilter === 'All'
       ? bookings
-      : bookings.filter((booking) => booking.status === activeBookingFilter)
-    ).filter((booking) => {
-      const queryText = searchTerm.trim().toLowerCase()
-      if (!queryText) return true
-      return [
-        booking.clientName,
-        booking.packageName,
-        booking.destination,
-        booking.quotationNo,
-        booking.status,
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(queryText)
-    })
+      : bookings.filter((b) => b.status === activeBookingFilter)
+  ).filter((b) => {
+    const q = searchTerm.trim().toLowerCase()
+    if (!q) return true
+    return [b.clientName, b.packageName, b.destination, b.quotationNo, b.status]
+      .join(' ').toLowerCase().includes(q)
+  })
+
   const statusCounts = bookingListFilters.reduce(
-    (counts, filter) => ({
-      ...counts,
-      [filter.value]:
-        filter.value === 'All'
-          ? bookings.length
-          : bookings.filter((booking) => booking.status === filter.value).length,
+    (acc, f) => ({
+      ...acc,
+      [f.value]: f.value === 'All'
+        ? bookings.length
+        : bookings.filter((b) => b.status === f.value).length,
     }),
     {} as Record<BookingListFilter, number>,
   )
+
+  const displayName = authUser?.displayName ?? (authUser?.email ? getDisplayName(authUser.email) : 'Team Member')
 
   return (
     <main className="home-screen">
@@ -3139,10 +3123,6 @@ function App() {
           </div>
         </div>
         <div className="nav-actions">
-          <div className="nav-date">
-            <CalendarDays size={16} />
-            <span>{currentDateLabel}</span>
-          </div>
           <button type="button" onClick={handleLogout} title="Log out">
             <LogOut size={18} />
           </button>
@@ -3150,151 +3130,84 @@ function App() {
       </nav>
 
       <div className="home-body">
+        {/* LEFT — hero + stats */}
         <section className="home-main">
-          <section className="dashboard-banner">
-            <img src={travelBanner} alt="" />
-            <div className="dashboard-banner-overlay"></div>
-            <div className="dashboard-banner-content">
-              <div>
-                <p>Operations dashboard</p>
-                <h1>
-                  Good day,{' '}
-                  {authUser?.displayName ??
-                    (authUser?.email ? getDisplayName(authUser.email) : 'Team Member')}
-                </h1>
-                <span>{activeProjects} active booking records</span>
-              </div>
-              <button
-                type="button"
-                className="create-project-btn"
-                onClick={handleNewBooking}
-              >
-                <Plus size={20} />
-                New Inquiry
+          <div className="home-hero">
+            <div className="hero-copy">
+              <p>Operations dashboard</p>
+              <h1>Good day, {displayName}</h1>
+              <span>{activeProjects} active booking record{activeProjects !== 1 ? 's' : ''} across all stages.</span>
+              <button type="button" className="create-project-btn login-btn" onClick={handleNewBooking}>
+                <Plus size={18} /> New Inquiry
               </button>
             </div>
-          </section>
+            <div className="hero-image">
+              <img src={travelHero} alt="Travel destination" />
+            </div>
+          </div>
 
-          <section className="dashboard-grid">
-            <article className="summary-card teal">
-              <div className="summary-card-top">
-                <div className="summary-icon blue">
-                  <ClipboardList size={20} />
-                </div>
-                <span>Inquiries</span>
-              </div>
+          <div className="dashboard-grid">
+            <article className="summary-card" onClick={() => setActiveBookingFilter('Inquiry')} style={{ cursor: 'pointer' }}>
+              <div className="summary-icon blue"><ClipboardList size={20} /></div>
+              <span>Inquiries</span>
               <strong>{inquiryCount}</strong>
-              <small>Awaiting preparation</small>
             </article>
-            <article className="summary-card gold">
-              <div className="summary-card-top">
-                <div className="summary-icon gold">
-                  <Clock3 size={20} />
-                </div>
-                <span>Open Quotes</span>
-              </div>
+            <article className="summary-card" onClick={() => setActiveBookingFilter('Quotation')} style={{ cursor: 'pointer' }}>
+              <div className="summary-icon gold"><Clock3 size={20} /></div>
+              <span>Open Quotes</span>
               <strong>{quotationCount}</strong>
-              <small>Inquiry and quotation</small>
             </article>
-            <article className="summary-card green">
-              <div className="summary-card-top">
-                <div className="summary-icon green">
-                  <CheckCircle2 size={20} />
-                </div>
-                <span>Confirmed</span>
-              </div>
+            <article className="summary-card" onClick={() => setActiveBookingFilter('Confirmed')} style={{ cursor: 'pointer' }}>
+              <div className="summary-icon green"><CheckCircle2 size={20} /></div>
+              <span>Confirmed</span>
               <strong>{confirmedCount}</strong>
-              <small>Ready for travel</small>
             </article>
-            <article className="summary-card navy">
-              <div className="summary-card-top">
-                <div className="summary-icon navy">
-                  <CircleDollarSign size={20} />
-                </div>
-                <span>Booking Value</span>
-              </div>
-              <strong className="summary-money">{formatAmount(String(totalBookingValue))}</strong>
-              <small>{invoiceCount} invoice records</small>
-            </article>
-          </section>
-
-          <section className="pipeline-panel">
-            <div className="pipeline-heading">
-              <div>
-                <p>Workflow</p>
-                <h2>Booking pipeline</h2>
-              </div>
-              <span>{activeProjects} total</span>
-            </div>
-            <div className="pipeline-list">
-              {bookingListFilters.slice(1).map((filter, index) => {
-                const count = statusCounts[filter.value]
-                const progress = activeProjects > 0 ? (count / activeProjects) * 100 : 0
-
-                return (
-                  <button
-                    type="button"
-                    key={filter.value}
-                    className={`pipeline-row pipeline-${index + 1}`}
-                    onClick={() => setActiveBookingFilter(filter.value)}
-                  >
-                    <span className="pipeline-dot"></span>
-                    <span className="pipeline-name">{filter.label}</span>
-                    <span className="pipeline-track">
-                      <span style={{ width: `${progress}%` }}></span>
-                    </span>
-                    <strong>{count}</strong>
-                    <ChevronRight size={16} />
-                  </button>
-                )
-              })}
-            </div>
-          </section>
+          </div>
         </section>
 
+        {/* RIGHT — bookings list */}
         <section className="projects-panel">
           <div className="section-heading">
             <div>
-              <p>Booking workspace</p>
-              <h2>{activeBookingFilter === 'All' ? 'All bookings' : activeBookingFilter}</h2>
+              <p style={{ margin: '0 0 3px', color: 'var(--teal)', fontWeight: 800, fontSize: '.72rem', letterSpacing: '.12em', textTransform: 'uppercase' }}>
+                {activeBookingFilter === 'All' ? 'All records' : activeBookingFilter}
+              </p>
+              <h2>Booking workspace</h2>
             </div>
-            <span className="record-count">{filteredBookings.length} records</span>
+            <button type="button" className="login-btn create-project-btn" onClick={handleNewBooking} style={{ marginTop: 0 }}>
+              <Plus size={16} />
+            </button>
           </div>
 
           {dataError && <p className="data-alert error">{dataError}</p>}
           {dataMessage && <p className="data-alert info">{dataMessage}</p>}
 
           <label className="booking-search">
-            <Search size={17} />
+            <Search size={16} />
             <input
               value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Search client, package, destination, or quotation no."
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search client, package, destination…"
             />
             {searchTerm.trim() && (
-              <button
-                type="button"
-                className="clear-search-btn"
-                onClick={() => setSearchTerm('')}
-                title="Clear search"
-              >
-                <X size={15} />
+              <button type="button" className="clear-search-btn" onClick={() => setSearchTerm('')} title="Clear">
+                <X size={14} />
               </button>
             )}
           </label>
 
-          <div className="booking-tabs" role="tablist" aria-label="Booking lists">
-            {bookingListFilters.map((filter) => (
+          <div className="booking-tabs" role="tablist">
+            {bookingListFilters.map((f) => (
               <button
-                key={filter.value}
+                key={f.value}
                 type="button"
                 role="tab"
-                aria-selected={activeBookingFilter === filter.value}
-                className={activeBookingFilter === filter.value ? 'active' : ''}
-                onClick={() => setActiveBookingFilter(filter.value)}
+                aria-selected={activeBookingFilter === f.value}
+                className={activeBookingFilter === f.value ? 'active' : ''}
+                onClick={() => setActiveBookingFilter(f.value)}
               >
-                <span>{filter.label}</span>
-                <strong>{statusCounts[filter.value]}</strong>
+                <span>{f.label}</span>
+                <strong>{statusCounts[f.value]}</strong>
               </button>
             ))}
           </div>
@@ -3306,25 +3219,20 @@ function App() {
                 <strong>{searchTerm.trim() ? 'No matching records' : 'No records yet'}</strong>
                 <span>
                   {searchTerm.trim()
-                    ? 'Try another client, package, destination, or quotation number.'
-                    : 'Saved inquiries with this status will appear here after data gathering.'}
+                    ? 'Try a different client name, package, or quotation number.'
+                    : 'New inquiries saved here will appear after data gathering.'}
                 </span>
               </div>
             )}
-
             {filteredBookings.map((booking) => (
               <button
-                className={`project-card status-${booking.status
-                  .toLowerCase()
-                  .replaceAll(' ', '-')}`}
                 key={booking.id}
                 type="button"
+                className={`project-card status-${booking.status.toLowerCase().replaceAll(' ', '-')}`}
                 onClick={() => openBookingDetail(booking.id)}
               >
                 <div className="project-main">
-                  <div className="project-icon">
-                    <FileText size={20} />
-                  </div>
+                  <div className="project-icon"><FileText size={20} /></div>
                   <div>
                     <strong>{booking.packageName}</strong>
                     <span>{booking.clientName}</span>
@@ -3332,18 +3240,22 @@ function App() {
                 </div>
                 <div className="project-meta">
                   <span className="status-pill">{booking.status}</span>
-                  <span>
-                    <CalendarDays size={15} />
-                    {formatProjectDate(booking.createdAt)}
-                  </span>
-                  <span>
-                    <MapPin size={15} />
-                    {formatAmount(String(getBookingClientTotal(booking)))}
-                  </span>
-                  <ChevronRight className="project-chevron" size={18} />
+                  <span><CalendarDays size={14} />{formatProjectDate(booking.createdAt)}</span>
+                  <span><MapPin size={14} />{formatAmount(String(getBookingClientTotal(booking)))}</span>
+                  <ChevronRight size={17} />
                 </div>
               </button>
             ))}
+          </div>
+
+          <div style={{ marginTop: 'auto', paddingTop: '14px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: 'var(--muted)', fontSize: '.78rem', fontWeight: 700 }}>
+              {filteredBookings.length} record{filteredBookings.length !== 1 ? 's' : ''}
+              {activeBookingFilter !== 'All' ? ` · ${activeBookingFilter}` : ''}
+            </span>
+            <span style={{ color: 'var(--teal)', fontSize: '.78rem', fontWeight: 800 }}>
+              {formatAmount(String(totalBookingValue))} total
+            </span>
           </div>
         </section>
       </div>
