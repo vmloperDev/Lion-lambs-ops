@@ -3143,7 +3143,12 @@ function App() {
           <section className="voucher-party-grid">
             <div>
               <span>Package:</span>
-              <strong>{selectedBooking.packageName}</strong>
+              <strong>
+                {selectedBooking.packageName}
+                {getBookingBreakdownNettTotal(selectedBooking) > 0
+                  ? ` — ₱${getBookingBreakdownNettTotal(selectedBooking).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} nett`
+                  : ''}
+              </strong>
               <small>
                 Tour Date:{' '}
                 {selectedBooking.travelStart
@@ -3331,7 +3336,12 @@ function App() {
               </tr>
               <tr className="bq-info-row">
                 <td className="bq-label">NAME:</td>
-                <td className="bq-value">{selectedBooking.packageName}</td>
+                <td className="bq-value">
+                  {selectedBooking.packageName}
+                  {getBookingBreakdownNettTotal(selectedBooking) > 0
+                    ? ` — ₱${getBookingBreakdownNettTotal(selectedBooking).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} nett`
+                    : ''}
+                </td>
                 <td rowSpan={4} colSpan={4} className="bq-amount-cell"></td>
               </tr>
               <tr className="bq-info-row">
