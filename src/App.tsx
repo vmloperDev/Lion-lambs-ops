@@ -2008,38 +2008,57 @@ function App() {
             </div>
           </section>
 
-          {/* 08 · INCLUSIONS — auto-computed from invoice items */}
+          {/* 08 · INCLUSIONS */}
           <section className="form-section">
             <div className="form-section-heading">
               <p>08 · Inclusions &amp; Exclusions</p>
-              <h2>Auto-generated from invoice items</h2>
+              <h2>Edit manually, or auto-fill from invoice items</h2>
             </div>
             <div className="field-grid two">
-              <div className="textarea-field">
-                <span style={{fontWeight:600, fontSize:'0.8rem', color:'var(--text-secondary)', textTransform:'uppercase', letterSpacing:'0.05em'}}>Inclusions (preview)</span>
-                <div style={{padding:'0.75rem', background:'var(--surface-raised)', borderRadius:'0.5rem', minHeight:'5rem', fontSize:'0.875rem', lineHeight:'1.6', color:'var(--text-primary)', border:'1px solid var(--border)'}}>
-                  {(() => {
-                    const { inclusions } = computeInclusionsExclusions(bookingForm.invoiceLineItemsJson)
-                    const lines = inclusions.split('\n').filter(Boolean)
-                    return lines.length > 0
-                      ? lines.map((line, i) => <div key={i}>✓ {line}</div>)
-                      : <span style={{color:'var(--text-secondary)', fontStyle:'italic'}}>Add invoice items above to populate inclusions</span>
-                  })()}
-                </div>
-              </div>
-              <div className="textarea-field">
-                <span style={{fontWeight:600, fontSize:'0.8rem', color:'var(--text-secondary)', textTransform:'uppercase', letterSpacing:'0.05em'}}>Exclusions (preview)</span>
-                <div style={{padding:'0.75rem', background:'var(--surface-raised)', borderRadius:'0.5rem', minHeight:'5rem', fontSize:'0.875rem', lineHeight:'1.6', color:'var(--text-primary)', border:'1px solid var(--border)'}}>
-                  {(() => {
-                    const { exclusions } = computeInclusionsExclusions(bookingForm.invoiceLineItemsJson)
-                    const lines = exclusions.split('\n').filter(Boolean)
-                    return lines.length > 0
-                      ? lines.map((line, i) => <div key={i}>✗ {line}</div>)
-                      : <span style={{color:'var(--text-secondary)', fontStyle:'italic'}}>All invoice options are included</span>
-                  })()}
-                </div>
-              </div>
+              <label className="textarea-field">
+                <span style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px'}}>
+                  Inclusions
+                  <button
+                    type="button"
+                    className="incex-autofill-btn"
+                    onClick={() => {
+                      const { inclusions } = computeInclusionsExclusions(bookingForm.invoiceLineItemsJson)
+                      updateBookingField('inclusions', inclusions)
+                    }}
+                  >
+                    Auto-fill from invoice
+                  </button>
+                </span>
+                <textarea
+                  rows={5}
+                  value={bookingForm.inclusions}
+                  onChange={(e) => updateBookingField('inclusions', e.target.value)}
+                  placeholder={'One item per line, e.g.\nRound-trip airfare\nHotel accommodation\nAirport transfers'}
+                />
+              </label>
+              <label className="textarea-field">
+                <span style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px'}}>
+                  Exclusions
+                  <button
+                    type="button"
+                    className="incex-autofill-btn"
+                    onClick={() => {
+                      const { exclusions } = computeInclusionsExclusions(bookingForm.invoiceLineItemsJson)
+                      updateBookingField('exclusions', exclusions)
+                    }}
+                  >
+                    Auto-fill from invoice
+                  </button>
+                </span>
+                <textarea
+                  rows={5}
+                  value={bookingForm.exclusions}
+                  onChange={(e) => updateBookingField('exclusions', e.target.value)}
+                  placeholder={'One item per line, e.g.\nMeals not stated\nPersonal expenses\nTravel insurance'}
+                />
+              </label>
             </div>
+            <p className="field-help">Leave blank to auto-generate from invoice items on documents, or type your own list — one item per line.</p>
           </section>
 
           {/* 09 · SCHEDULE */}

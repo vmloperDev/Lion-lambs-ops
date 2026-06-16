@@ -894,6 +894,20 @@ input, select, textarea { font: inherit; }
   letter-spacing: .01em;
 }
 
+.incex-autofill-btn {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: .72rem; font-weight: 700;
+  padding: 4px 9px;
+  border: 1px solid var(--teal-mid);
+  border-radius: 5px;
+  background: var(--teal-light);
+  color: var(--teal-dark);
+  cursor: pointer;
+  transition: background var(--t);
+}
+.incex-autofill-btn:hover { background: var(--teal-mid); }
+
 /* Field inputs — base */
 .field-grid input,
 .field-grid select,
