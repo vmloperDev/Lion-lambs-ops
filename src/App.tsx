@@ -391,13 +391,13 @@ function mapInvoiceItemsToBookingLines(items: InvoiceLineItem[], packageName = '
   })
 }
 
-function mapBreakdownItemsToBookingLines(items: BreakdownLineItem[]): BookingLineItem[] {
+function mapBreakdownItemsToBookingLines(items: BreakdownLineItem[], packageName = 'Basic Package'): BookingLineItem[] {
   return items.map((it) => {
     const q = parseQuantity(it.quantity)
     const u = parseAmount(it.unitPrice)
     const n = parseAmount(it.nettCost)
     return {
-      description: it.description,
+      description: it.isPackageRow ? packageName || 'Basic Package' : it.description,
       quantity: q,
       unitPrice: u,
       nettCost: n,
@@ -3007,7 +3007,7 @@ function App() {
       )
     }
 
-    const lineItems = getBookingLineItems(selectedBooking)
+    const lineItems = mapBreakdownItemsToBookingLines(readBreakdownItems(selectedBooking), selectedBooking.packageName)
     const amount = sumLineItems(lineItems, 'nettTotal') || sumLineItems(lineItems, 'total')
     const poNumber = selectedBooking.id.replace('BK-', new Date().getFullYear().toString())
 
