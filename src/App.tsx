@@ -92,11 +92,17 @@ type InvoiceLineItem = {
 type BreakdownLineItem = {
   id?: string
   description: string // drop-down choices
+  details?: string    // free-text details column
   quantity: string
   unitPrice: string
   nettCost: string
   sendToInvoice: boolean
   isPackageRow?: boolean
+  // Pax-tier columns for the quotation breakdown template
+  price2Pax?: string
+  price5Pax?: string
+  priceGroup?: string
+  priceInfant?: string
 }
 
 type BookingFormData = {
@@ -114,6 +120,8 @@ type BookingFormData = {
   lineItems: string 
   invoiceLineItemsJson: string
   breakdownLineItemsJson: string
+  breakdownPaxTiers: string // JSON: [col1Pax, col2Pax, col3Pax, col4Pax]
+  breakdownColLabels: string // JSON: [col1Label, col2Label, col3Label, col4Label]
 
   itemDescription: string
   quantity: string
@@ -183,6 +191,8 @@ const emptyBookingForm: BookingFormData = {
   lineItems: '',
   invoiceLineItemsJson: '',
   breakdownLineItemsJson: '',
+  breakdownPaxTiers: '',
+  breakdownColLabels: '',
   itemDescription: '',
   quantity: '1',
   unitPrice: '',
@@ -535,6 +545,7 @@ function App() {
     'Visa',
     'Travel Kit',
     'LLTP',
+    'TA Comm',
     'Other'
   ]
 
@@ -1511,7 +1522,41 @@ function App() {
               <p>05 · Breakdown</p>
               <h2>Internal supplier costing</h2>
             </div>
-            <p className="field-help">For internal use only. Enable "Send to invoice" on any row to also push it to the client invoice.</p>
+            <p className="field-help">For internal use only. Enable "Send to invoice" on any row to also push it to the client invoice. The pax-tier prices populate the quotation breakdown template.</p>
+
+            {/* Pax-tier column labels + pax count configuration */}
+            {(() => {
+              let labels = ['2 PAX', '5 PAX', 'PAX AND ABOVE', 'INFANT']
+              try { const p = JSON.parse(bookingForm.breakdownColLabels); if (Array.isArray(p) && p.length === 4) labels = p } catch {}
+              let paxCounts = ['', '', '', '']
+              try { const p = JSON.parse(bookingForm.breakdownPaxTiers); if (Array.isArray(p) && p.length === 4) paxCounts = p } catch {}
+              const setLabel = (i: number, v: string) => { const next = [...labels]; next[i] = v; updateBookingField('breakdownColLabels', JSON.stringify(next)) }
+              const setPax = (i: number, v: string) => { const next = [...paxCounts]; next[i] = v; updateBookingField('breakdownPaxTiers', JSON.stringify(next)) }
+              return (
+                <div className="breakdown-tier-config">
+                  <p className="breakdown-tier-config-label">Pax-tier columns (labels &amp; counts)</p>
+                  <div className="breakdown-tier-grid">
+                    {labels.map((label, i) => (
+                      <div key={i} className="breakdown-tier-col">
+                        <input
+                          value={label}
+                          onChange={(e) => setLabel(i, e.target.value)}
+                          placeholder={`Column ${i + 1} label`}
+                          className="tier-label-input"
+                        />
+                        <input
+                          type="number" min="0"
+                          value={paxCounts[i]}
+                          onChange={(e) => setPax(i, e.target.value)}
+                          placeholder="# pax"
+                          className="tier-pax-input"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
 
             <div className="line-items-panel">
               <div className="line-items-heading">
@@ -1528,9 +1573,15 @@ function App() {
               <div className="line-items-table">
                 <div className="line-items-row breakdown-row header">
                   <span>Service / item</span>
+                  <span>Details</span>
                   <span>Qty</span>
                   <span>Client price</span>
                   <span>Supplier nett</span>
+                  {(() => {
+                    let labels = ['2 PAX', '5 PAX', 'PAX AND ABV', 'INFANT']
+                    try { const p = JSON.parse(bookingForm.breakdownColLabels); if (Array.isArray(p) && p.length === 4) labels = p } catch {}
+                    return labels.map((lbl, i) => <span key={i}>{lbl}</span>)
+                  })()}
                   <span>Send to invoice</span>
                   <span></span>
                 </div>
@@ -1545,6 +1596,14 @@ function App() {
                           {breakdownOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
                         </select>
                       )}
+                      <input
+                        type="text"
+                        value={item.details || ''}
+                        onChange={(e) => changeBreakdownItemField(index, 'details', e.target.value)}
+                        placeholder="Details / route"
+                        disabled={item.isPackageRow}
+                        className={item.isPackageRow ? 'disabled-field' : ''}
+                      />
                       <input
                         type="number" min="1"
                         disabled={item.isPackageRow}
@@ -1566,6 +1625,17 @@ function App() {
                         onChange={(e) => changeBreakdownItemField(index, 'nettCost', e.target.value)}
                         placeholder="0.00"
                       />
+                      {(['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant'] as const).map((field) => (
+                        <input
+                          key={field}
+                          type="text"
+                          value={(item[field] as string) || ''}
+                          onChange={(e) => changeBreakdownItemField(index, field, e.target.value)}
+                          placeholder="0.00"
+                          disabled={item.isPackageRow}
+                          className={item.isPackageRow ? 'disabled-field' : ''}
+                        />
+                      ))}
                       <button
                         type="button"
                         className={`send-to-invoice-btn ${item.sendToInvoice ? 'active' : ''}`}
@@ -3016,11 +3086,36 @@ function App() {
       )
     }
 
-    const lineItems = mapBreakdownItemsToBookingLines(readBreakdownItems(selectedBooking))
-    const quantity = parseQuantity(selectedBooking.quantity)
-    const internalTotal = sumLineItems(lineItems, 'nettTotal')
-    const clientTotal = sumLineItems(lineItems, 'total')
-    const estimatedProfit = sumLineItems(lineItems, 'profit')
+    const brkItems = readBreakdownItems(selectedBooking)
+
+    // Parse pax-tier column labels (default matches the reference image)
+    let colLabels = ['2 PAX', '5 PAX', 'PAX AND ABOVE', 'INFANT']
+    try {
+      const parsed = JSON.parse(selectedBooking.breakdownColLabels)
+      if (Array.isArray(parsed) && parsed.length === 4) colLabels = parsed
+    } catch {}
+
+    // Parse pax counts per column for the TOTAL row
+    let colPax = ['', '', '', '']
+    try {
+      const parsed = JSON.parse(selectedBooking.breakdownPaxTiers)
+      if (Array.isArray(parsed) && parsed.length === 4) colPax = parsed
+    } catch {}
+
+    const paxPriceFields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
+
+    // Subtotals per column (sum of all price cells in that column)
+    const subtotals = paxPriceFields.map((field) =>
+      brkItems
+        .filter((item) => !item.isPackageRow)
+        .reduce((sum, item) => sum + parseAmount(item[field] as string), 0)
+    )
+
+    // Totals per column (subtotal × pax count for that column)
+    const totals = subtotals.map((sub, i) => {
+      const pax = parseQuantity(colPax[i])
+      return sub * pax
+    })
 
     return (
       <main className="preview-screen">
@@ -3029,7 +3124,7 @@ function App() {
             <img src={logo} alt="Lion and Lamb Travel logo" />
             <div>
               <strong>Lion and Lamb Travel</strong>
-              <span>Internal Breakdown Preview</span>
+              <span>Breakdown Preview</span>
             </div>
           </div>
           <div className="nav-actions">
@@ -3054,75 +3149,86 @@ function App() {
         </nav>
 
         <section className="breakdown-preview print-document">
-          <header className="breakdown-header">
-            <h1>QUOTATION: {selectedBooking.quotationNo || selectedBooking.id}</h1>
-            <strong>INTERNAL BREAKDOWN</strong>
-          </header>
-
-          <section className="breakdown-info">
-            <div>
-              <span>Name</span>
-              <strong>{selectedBooking.packageName}</strong>
-            </div>
-            <div>
-              <span>Date of Travel</span>
-              <strong>
-                {selectedBooking.travelStart
-                  ? `${formatProjectDate(selectedBooking.travelStart)}${
-                      selectedBooking.travelEnd
-                        ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
-                        : ''
-                    }`
-                  : 'TBA'}
-              </strong>
-            </div>
-            <div>
-              <span>No. of Pax</span>
-              <strong>{selectedBooking.pax || quantity}</strong>
-            </div>
-            <div>
-              <span>Operator</span>
-              <strong>{selectedBooking.supplier || 'To be assigned'}</strong>
-            </div>
-          </section>
-
-          <table className="breakdown-table">
+          {/* Header row */}
+          <table className="breakdown-quotation-table">
             <thead>
-              <tr>
-                <th>Service</th>
-                <th>Qty</th>
-                <th>Supplier Nett</th>
-                <th>Client Price</th>
-                <th>Profit</th>
+              <tr className="bq-title-row">
+                <th colSpan={2}>QUOTATION: {selectedBooking.quotationNo || selectedBooking.id}</th>
+                <th colSpan={4} className="bq-amount-header">AMOUNT</th>
+              </tr>
+              <tr className="bq-info-row">
+                <td className="bq-label">NAME:</td>
+                <td className="bq-value">{selectedBooking.packageName}</td>
+                <td rowSpan={4} colSpan={4} className="bq-amount-cell"></td>
+              </tr>
+              <tr className="bq-info-row">
+                <td className="bq-label">DATE OF TRAVEL:</td>
+                <td className="bq-value">
+                  {selectedBooking.travelStart
+                    ? `${formatProjectDate(selectedBooking.travelStart)}${selectedBooking.travelEnd ? ` - ${formatProjectDate(selectedBooking.travelEnd)}` : ''}`
+                    : 'TBA'}
+                </td>
+              </tr>
+              <tr className="bq-info-row">
+                <td className="bq-label">NO OF PAX:</td>
+                <td className="bq-value">{selectedBooking.pax || '—'}</td>
+              </tr>
+              <tr className="bq-info-row">
+                <td className="bq-label">OPERATOR:</td>
+                <td className="bq-value">{selectedBooking.supplier || ''}</td>
+              </tr>
+              <tr className="bq-col-header">
+                <th>SERVICE</th>
+                <th>DETAILS</th>
+                {colLabels.map((label, i) => (
+                  <th key={i} className={i === 3 ? 'bq-infant-col' : ''}>{label}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {lineItems.map((item, index) => (
-                <tr key={`${item.description}-${index}`}>
-                  <td>{item.description}</td>
-                  <td>{item.quantity}</td>
-                  <td>{formatAmount(String(item.nettTotal))}</td>
-                  <td>{formatAmount(String(item.total))}</td>
-                  <td>{formatAmount(String(item.profit))}</td>
+              {brkItems.filter(item => !item.isPackageRow).map((item, index) => (
+                <tr key={index} className="bq-data-row">
+                  <td className="bq-service">{item.description.toUpperCase()}</td>
+                  <td className="bq-details">{item.details || ''}</td>
+                  {paxPriceFields.map((field, ci) => {
+                    const val = parseAmount(item[field] as string)
+                    return (
+                      <td key={ci} className={`bq-price${val > 0 ? ' bq-has-value' : ''}${ci === 3 ? ' bq-infant-col' : ''}`}>
+                        {val > 0 ? `₱${val.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                      </td>
+                    )
+                  })}
                 </tr>
               ))}
+              {/* SUBTOTAL row */}
+              <tr className="bq-subtotal-row">
+                <td colSpan={2}>SUBTOTAL:</td>
+                {subtotals.map((val, i) => (
+                  <td key={i} className={`bq-price${val > 0 ? ' bq-has-value' : ''}${i === 3 ? ' bq-infant-col' : ''}`}>
+                    {val > 0 ? `₱${val.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'}
+                  </td>
+                ))}
+              </tr>
+              {/* NO. OF PAX row */}
+              <tr className="bq-pax-row">
+                <td colSpan={2}>NO. OF PAX</td>
+                {colPax.map((pax, i) => (
+                  <td key={i} className={`bq-price${pax ? ' bq-has-value' : ''}${i === 3 ? ' bq-infant-col' : ''}`}>
+                    {pax || ''}
+                  </td>
+                ))}
+              </tr>
+              {/* TOTAL row */}
+              <tr className="bq-total-row">
+                <td colSpan={2}>TOTAL:</td>
+                {totals.map((val, i) => (
+                  <td key={i} className={`bq-price${val > 0 ? ' bq-has-value' : ''}${i === 3 ? ' bq-infant-col' : ''}`}>
+                    {val > 0 ? `₱${val.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'}
+                  </td>
+                ))}
+              </tr>
             </tbody>
           </table>
-
-          <section className="breakdown-total-grid">
-            <div>
-              <span>Supplier Nett Total</span>
-              <strong>{formatAmount(String(internalTotal))}</strong>
-            </div>
-            <div>
-              <span>Client Total</span>
-              <strong>{formatAmount(String(clientTotal))}</strong>
-            </div>
-            <div>
-              <span>Estimated Profit</span>
-              <strong>{formatAmount(String(estimatedProfit))}</strong>
-            </div>
-          </section>
 
           <section className="internal-warning">
             <ListChecks size={20} />
