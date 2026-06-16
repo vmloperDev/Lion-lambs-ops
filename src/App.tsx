@@ -1995,28 +1995,6 @@ function App() {
             </div>
           </section>
 
-          {/* 06 · SUPPLIER */}
-          <section className="form-section">
-            <div className="form-section-heading">
-              <p>06 · Supplier</p>
-              <h2>Operator details</h2>
-            </div>
-            <div className="field-grid two">
-              <label>
-                Supplier / operator
-                <input value={bookingForm.supplier} onChange={(e) => updateBookingField('supplier', e.target.value)} placeholder="Tour operator or hotel name" />
-              </label>
-              <label>
-                Supplier contact
-                <input value={bookingForm.supplierContact} onChange={(e) => updateBookingField('supplierContact', e.target.value)} placeholder="09xxxxxxxxx or email" />
-              </label>
-              <label>
-                Supplier payment method
-                <input value={bookingForm.supplierPaymentMethod} onChange={(e) => updateBookingField('supplierPaymentMethod', e.target.value)} placeholder="e.g. Bank Transfer, GCash" />
-              </label>
-            </div>
-          </section>
-
           {/* 07 · LOGISTICS */}
           <section className="form-section">
             <div className="form-section-heading">
@@ -2422,9 +2400,7 @@ function App() {
         description: 'Reservation instruction for supplier or operator.',
         requirement: 'Needs supplier/operator, package, pax, and travel date.',
         ready: Boolean(
-          selectedBooking.supplier &&
-            selectedBooking.packageName &&
-            selectedBooking.pax &&
+          selectedBooking.packageName &&
             selectedBooking.travelStart,
         ),
       },
@@ -3112,7 +3088,7 @@ function App() {
       : 'TBA'
     const optionDateStr = selectedBooking.optionDate ? formatProjectDate(selectedBooking.optionDate) : 'TBA'
     const supplierPayment = (item: BreakdownLineItem) =>
-      item.paymentMethod || selectedBooking.supplierPaymentMethod || selectedBooking.paymentMethod || 'Bank Transfer'
+      item.paymentMethod || selectedBooking.paymentMethod || 'Bank Transfer'
 
     const renderPODocument = (item: BreakdownLineItem, itemIndex: number, isLast: boolean) => {
       const paxLabel = formatPaxBreakdownLabel(readPaxBreakdown(item.paxBreakdown)) || item.quantity || '1'
@@ -3154,9 +3130,9 @@ function App() {
           <section className="po-party-grid">
             <div>
               <span>Vendor:</span>
-              <strong>{item.vendor || selectedBooking.supplier || 'To be assigned'}</strong>
+              <strong>{item.vendor || 'To be assigned'}</strong>
               <small>Agent: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}</small>
-              <small>Contact No.: {item.contactNumber || selectedBooking.supplierContact || 'N/A'}</small>
+              <small>Contact No.: {item.contactNumber || 'N/A'}</small>
             </div>
             <div>
               <span>Client Details:</span>
@@ -3605,10 +3581,6 @@ function App() {
               <tr className="bq-info-row">
                 <td className="bq-label">NO OF PAX:</td>
                 <td className="bq-value">{selectedBooking.pax || '—'}</td>
-              </tr>
-              <tr className="bq-info-row">
-                <td className="bq-label">OPERATOR:</td>
-                <td className="bq-value">{selectedBooking.supplier || ''}</td>
               </tr>
               <tr className="bq-col-header">
                 <th>SERVICE</th>
