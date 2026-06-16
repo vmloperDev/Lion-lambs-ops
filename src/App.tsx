@@ -1503,10 +1503,6 @@ function App() {
                 <input value={bookingForm.destination} onChange={(e) => updateBookingField('destination', e.target.value)} placeholder="Clark, Boracay, Hong Kong" />
               </label>
               <label>
-                No. of pax
-                <input value={bookingForm.pax} onChange={(e) => updateBookingField('pax', e.target.value)} placeholder="2 adults, 1 infant" />
-              </label>
-              <label>
                 Payment method
                 <input value={bookingForm.paymentMethod} onChange={(e) => updateBookingField('paymentMethod', e.target.value)} placeholder="Bank Transfer, GCash, Cash" />
               </label>
