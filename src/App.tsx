@@ -133,6 +133,7 @@ type BookingFormData = {
   unitPrice: string
   supplier: string
   supplierContact: string
+  supplierPaymentMethod: string
   nettCost: string
   sellingPrice: string
   paymentMethod: string
@@ -204,6 +205,7 @@ const emptyBookingForm: BookingFormData = {
   unitPrice: '',
   supplier: '',
   supplierContact: '',
+  supplierPaymentMethod: '',
   nettCost: '',
   sellingPrice: '',
   paymentMethod: '',
@@ -2037,6 +2039,10 @@ function App() {
                 Supplier contact
                 <input value={bookingForm.supplierContact} onChange={(e) => updateBookingField('supplierContact', e.target.value)} placeholder="09xxxxxxxxx or email" />
               </label>
+              <label>
+                Supplier payment method
+                <input value={bookingForm.supplierPaymentMethod} onChange={(e) => updateBookingField('supplierPaymentMethod', e.target.value)} placeholder="e.g. Bank Transfer, GCash" />
+              </label>
             </div>
           </section>
 
@@ -3098,9 +3104,131 @@ function App() {
     }
 
     const poBreakdownItems = readBreakdownItems(selectedBooking).filter((item) => item.sendToPO)
-    const lineItems = mapBreakdownItemsToBookingLines(poBreakdownItems, selectedBooking.packageName)
-    const amount = sumLineItems(lineItems, 'nettTotal') || sumLineItems(lineItems, 'total')
     const poNumber = selectedBooking.id.replace('BK-', new Date().getFullYear().toString())
+    const travelDateStr = selectedBooking.travelStart
+      ? `${formatProjectDate(selectedBooking.travelStart)}${selectedBooking.travelEnd ? ` - ${formatProjectDate(selectedBooking.travelEnd)}` : ''}`
+      : 'TBA'
+    const optionDateStr = selectedBooking.optionDate ? formatProjectDate(selectedBooking.optionDate) : 'TBA'
+    const supplierPayment = selectedBooking.supplierPaymentMethod || selectedBooking.paymentMethod || 'Bank Transfer'
+
+    const renderPODocument = (item: BreakdownLineItem, itemIndex: number, isLast: boolean) => {
+      const paxLabel = formatPaxBreakdownLabel(readPaxBreakdown(item.paxBreakdown)) || item.quantity || '1'
+      const itemDescription = item.isPackageRow ? (selectedBooking.packageName || 'Basic Package') : item.description
+      const poUnitPrice = parseAmount(item.nettCost) || parseAmount(item.unitPrice)
+      const poAmount = poUnitPrice * parseQuantity(item.quantity)
+
+      return (
+        <section key={itemIndex} className={`po-preview print-document${!isLast ? ' po-page-break' : ''}`}>
+          <header className="po-header">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>LION AND LAMB TRAVEL</strong>
+              <span>BLK #7-17 OLONGAPO CITY PUBLIC MARKET</span>
+              <span>Olongapo City, Philippines 2200</span>
+              <span>travel_lionlamb@yahoo.com</span>
+              <span>DOT No: R03 - TTA 013652023</span>
+            </div>
+            <img src={agencySeal} alt="DOT accreditation seal" />
+          </header>
+
+          <h1>Purchase Order</h1>
+
+          <section className="po-meta-grid">
+            <article>
+              <span>Date</span>
+              <strong>{formatProjectDate(new Date().toISOString())}</strong>
+            </article>
+            <article>
+              <span>Invoice</span>
+              <strong>{selectedBooking.quotationNo || selectedBooking.id}</strong>
+            </article>
+            <article>
+              <span>P.O. No.</span>
+              <strong>{poNumber}-{itemIndex + 1}</strong>
+            </article>
+          </section>
+
+          <section className="po-party-grid">
+            <div>
+              <span>Vendor:</span>
+              <strong>{item.vendor || selectedBooking.supplier || 'To be assigned'}</strong>
+              <small>Agent: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}</small>
+              <small>Contact No.: {selectedBooking.supplierContact || 'N/A'}</small>
+            </div>
+            <div>
+              <span>Client Details:</span>
+              <strong>{selectedBooking.clientName}</strong>
+              <small>No. of pax: {paxLabel}</small>
+              <small>Contact No.: {selectedBooking.contactNumber || 'N/A'}</small>
+            </div>
+          </section>
+
+          <table className="po-table">
+            <thead>
+              <tr>
+                <th>Payment Method</th>
+                <th>Type of Service</th>
+                <th>Travel Date</th>
+                <th>Option Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>{supplierPayment}</td>
+                <td>{itemDescription}</td>
+                <td>{travelDateStr}</td>
+                <td>{optionDateStr}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table className="po-table particulars">
+            <thead>
+              <tr>
+                <th>Qty</th>
+                <th># of Pax</th>
+                <th>Particular</th>
+                <th>Unit Price</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>{item.quantity}</td>
+                <td>{paxLabel}</td>
+                <td>{itemDescription}{item.details ? ` — ${item.details}` : ''}</td>
+                <td>{formatAmount(String(poUnitPrice))}</td>
+                <td>{formatAmount(String(poAmount))}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <section className="po-total">
+            <span>Total Amount:</span>
+            <strong>{formatAmount(String(poAmount))}</strong>
+          </section>
+
+          <section className="po-notes-grid">
+            <div>
+              <span>Hotel:</span>
+              <strong>{selectedBooking.accommodation || selectedBooking.packageName || 'N/A'}</strong>
+            </div>
+            <div>
+              <span>Flight Details:</span>
+              <strong>{selectedBooking.flightDetails || 'N/A'}</strong>
+            </div>
+            <div>
+              <span>Special Instructions:</span>
+              <strong>{selectedBooking.specialInstructions || selectedBooking.notes || 'N/A'}</strong>
+            </div>
+          </section>
+
+          <footer className="po-footer">
+            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
+          </footer>
+        </section>
+      )
+    }
 
     return (
       <main className="preview-screen">
@@ -3133,150 +3261,25 @@ function App() {
           </div>
         </nav>
 
-        <section className="po-preview print-document">
-          <header className="po-header">
-            <img src={logo} alt="Lion and Lamb Travel logo" />
-            <div>
-              <strong>LION AND LAMB TRAVEL</strong>
-              <span>BLK #7-17 OLONGAPO CITY PUBLIC MARKET</span>
-              <span>Olongapo City, Philippines 2200</span>
-              <span>travel_lionlamb@yahoo.com</span>
-              <span>DOT No: R03 - TTA 013652023</span>
-            </div>
-            <img src={agencySeal} alt="DOT accreditation seal" />
-          </header>
-
-          <h1>Purchase Order</h1>
-
-          <section className="po-meta-grid">
-            <article>
-              <span>Date</span>
-              <strong>{formatProjectDate(new Date().toISOString())}</strong>
-            </article>
-            <article>
-              <span>Invoice</span>
-              <strong>{selectedBooking.quotationNo || selectedBooking.id}</strong>
-            </article>
-            <article>
-              <span>P.O. No.</span>
-              <strong>{poNumber}</strong>
-            </article>
+        {poBreakdownItems.length === 0 ? (
+          <section className="po-preview print-document">
+            <header className="po-header">
+              <img src={logo} alt="Lion and Lamb Travel logo" />
+              <div>
+                <strong>LION AND LAMB TRAVEL</strong>
+                <span>BLK #7-17 OLONGAPO CITY PUBLIC MARKET</span>
+                <span>Olongapo City, Philippines 2200</span>
+                <span>travel_lionlamb@yahoo.com</span>
+                <span>DOT No: R03 - TTA 013652023</span>
+              </div>
+              <img src={agencySeal} alt="DOT accreditation seal" />
+            </header>
+            <h1>Purchase Order</h1>
+            <p className="po-empty-row">No items marked "Send to P.O." yet — toggle a row in section 05a to add it here.</p>
           </section>
-
-          <section className="po-party-grid">
-            <div>
-              <span>Vendor:</span>
-              <strong>{selectedBooking.supplier || 'To be assigned'}</strong>
-              <small>
-                Agent:{' '}
-                {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
-              </small>
-              <small>Contact No.: {selectedBooking.supplierContact || 'N/A'}</small>
-            </div>
-            <div>
-              <span>Client Details:</span>
-              <strong>
-                {selectedBooking.clientName}
-                {selectedBooking.pax ? ` x${selectedBooking.pax}` : ''}
-              </strong>
-              <small>No. of pax: {selectedBooking.pax || 'N/A'}</small>
-              <small>Contact No.: {selectedBooking.contactNumber || 'N/A'}</small>
-            </div>
-          </section>
-
-          <table className="po-table">
-            <thead>
-              <tr>
-                <th>Payment Method</th>
-                <th>Type of Service</th>
-                <th>Travel Date</th>
-                <th>Option Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>{selectedBooking.paymentMethod || 'Bank Transfer'}</td>
-                <td>{selectedBooking.packageName || 'Tours and Transfers'}</td>
-                <td>
-                  {selectedBooking.travelStart
-                    ? `${formatProjectDate(selectedBooking.travelStart)}${
-                        selectedBooking.travelEnd
-                          ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
-                          : ''
-                      }`
-                    : 'TBA'}
-                </td>
-                <td>
-                  {selectedBooking.optionDate
-                    ? formatProjectDate(selectedBooking.optionDate)
-                    : 'TBA'}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-
-          <table className="po-table particulars">
-            <thead>
-              <tr>
-                <th>Qty</th>
-                <th># of Pax</th>
-                <th>Particular</th>
-                <th>Unit Price</th>
-                <th>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lineItems.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="po-empty-row">
-                    No items marked "Send to P.O." yet — toggle a row in section 05a to add it here.
-                  </td>
-                </tr>
-              ) : (
-                lineItems.map((item, index) => {
-                  const poUnitPrice = item.nettCost || item.unitPrice
-                  const poAmount = item.nettTotal || item.total
-
-                  return (
-                    <tr key={`${item.description}-${index}`}>
-                      <td>{item.quantity}</td>
-                      <td>{selectedBooking.pax || item.quantity}</td>
-                      <td>{item.description}</td>
-                      <td>{formatAmount(String(poUnitPrice))}</td>
-                      <td>{formatAmount(String(poAmount))}</td>
-                    </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
-
-          <section className="po-total">
-            <span>Total Amount:</span>
-            <strong>{formatAmount(String(amount))}</strong>
-          </section>
-
-          <section className="po-notes-grid">
-            <div>
-              <span>Hotel:</span>
-              <strong>{selectedBooking.accommodation || selectedBooking.packageName || 'N/A'}</strong>
-            </div>
-            <div>
-              <span>Flight Details:</span>
-              <strong>{selectedBooking.flightDetails || 'N/A'}</strong>
-            </div>
-            <div>
-              <span>Special Instructions:</span>
-              <strong>
-                {selectedBooking.specialInstructions || selectedBooking.notes || 'N/A'}
-              </strong>
-            </div>
-          </section>
-
-          <footer className="po-footer">
-            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
-          </footer>
-        </section>
+        ) : (
+          poBreakdownItems.map((item, index) => renderPODocument(item, index, index === poBreakdownItems.length - 1))
+        )}
       </main>
     )
   }

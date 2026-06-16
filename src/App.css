@@ -1227,6 +1227,10 @@ input, select, textarea { font: inherit; }
   gap: 6px;
   min-width: 180px;
   padding: 10px;
+  top: auto !important;
+  bottom: calc(100% + 4px) !important;
+  left: 0 !important;
+  right: auto !important;
 }
 .pax-popover-field {
   display: flex;
@@ -1497,6 +1501,7 @@ input, select, textarea { font: inherit; }
 .transaction-banks > div { display: grid; gap: 1px; }
 .bank-name { font-weight: 700; text-transform: uppercase; }
 .po-preview { width: min(940px,100%); margin: 14px auto 0; padding: clamp(20px,4vw,34px); border: 1px solid #d7e3ea; background: #fff; box-shadow: 0 22px 70px rgba(34,63,95,.12); }
+.po-page-break { margin-top: 32px; border-top: 3px dashed #d7e3ea; padding-top: 32px; }
 .po-header { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 22px; align-items: start; }
 .po-header div { display: grid; gap: 4px; }
 .po-header strong { color: #061c30; }
@@ -1595,6 +1600,7 @@ input, select, textarea { font: inherit; }
     width: 100%; margin: 0; padding: 0; border-color: #d7e3ea; box-shadow: none;
   }
   .breakdown-preview { border-color: #1f2937; }
+  .po-page-break { page-break-before: always; margin-top: 0; }
 }
 
 /* ================================================================
