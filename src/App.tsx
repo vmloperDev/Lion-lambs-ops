@@ -144,6 +144,7 @@ type BookingFormData = {
   inclusions: string
   exclusions: string
   itinerary: string
+  voucherRowsJson: string
   specialInstructions: string
   preparedBy: string
   status: BookingStatus
@@ -214,6 +215,7 @@ const emptyBookingForm: BookingFormData = {
   inclusions: '',
   exclusions: '',
   itinerary: '',
+  voucherRowsJson: '',
   specialInstructions: '',
   preparedBy: '',
   status: 'Inquiry',
@@ -1853,12 +1855,56 @@ function App() {
           <section className="form-section">
             <div className="form-section-heading">
               <p>09 · Schedule</p>
-              <h2>Itinerary roadmap</h2>
+              <h2>Itinerary &amp; hotel per day</h2>
             </div>
-            <label className="textarea-field">
-              Daily routing schedule
-              <textarea rows={6} value={bookingForm.itinerary} onChange={(e) => updateBookingField('itinerary', e.target.value)} placeholder={'Day 1: Arrival at Caticlan Airport, Transfer to Resort, Free Time\nDay 2: Boracay Island Hopping Tour with Lunch\nDay 3: Breakfast, Free Time until checkout, Departure transfer'} />
-            </label>
+            {(() => {
+              const rows: { date: string; itinerary: string; hotel: string }[] = (() => {
+                try { return bookingForm.voucherRowsJson ? JSON.parse(bookingForm.voucherRowsJson) : [] } catch { return [] }
+              })()
+              const save = (updated: typeof rows) => updateBookingField('voucherRowsJson', JSON.stringify(updated))
+              const addRow = () => {
+                const prev = rows[rows.length - 1]
+                const nextDate = prev?.date
+                  ? (() => { const d = new Date(prev.date + 'T00:00:00'); d.setDate(d.getDate() + 1); return d.toISOString().slice(0,10) })()
+                  : (bookingForm.travelStart || '')
+                save([...rows, { date: nextDate, itinerary: '', hotel: prev?.hotel || bookingForm.accommodation || '' }])
+              }
+              const updateRow = (i: number, field: string, val: string) => {
+                const next = rows.map((r, idx) => idx === i ? { ...r, [field]: val } : r)
+                save(next)
+              }
+              const removeRow = (i: number) => save(rows.filter((_, idx) => idx !== i))
+              return (
+                <div className="voucher-day-builder">
+                  {rows.length === 0 && (
+                    <p className="voucher-day-empty">No days added yet. Click &ldquo;+ Add day&rdquo; to build the itinerary.</p>
+                  )}
+                  {rows.map((row, i) => (
+                    <div key={i} className="voucher-day-row">
+                      <div className="voucher-day-header">
+                        <span>Day {i + 1}</span>
+                        <button type="button" className="voucher-day-remove" onClick={() => removeRow(i)}>× Remove</button>
+                      </div>
+                      <div className="field-grid three">
+                        <label>
+                          Date
+                          <input type="date" value={row.date} onChange={(e) => updateRow(i, 'date', e.target.value)} />
+                        </label>
+                        <label style={{gridColumn:'span 2'}}>
+                          Hotel / Accommodation
+                          <input value={row.hotel} onChange={(e) => updateRow(i, 'hotel', e.target.value)} placeholder="e.g. Azalea Hotel Baguio" />
+                        </label>
+                      </div>
+                      <label className="textarea-field" style={{marginTop:'0.5rem'}}>
+                        Itinerary for this day
+                        <textarea rows={3} value={row.itinerary} onChange={(e) => updateRow(i, 'itinerary', e.target.value)} placeholder="e.g. Arrival at NAIA Terminal 3, Transfer to hotel, Check-in, Free time" />
+                      </label>
+                    </div>
+                  ))}
+                  <button type="button" className="voucher-add-day-btn" onClick={addRow}>+ Add day</button>
+                </div>
+              )
+            })()}
           </section>
 
           {/* 10 · REMARKS */}
@@ -3001,11 +3047,6 @@ function App() {
       )
     }
 
-    const itineraryLines = getLines(selectedBooking.itinerary, [
-      selectedBooking.itemDescription ||
-        `Arrival and start of ${selectedBooking.packageName}`,
-      'Free own leisure. Final reminders and departure arrangements.',
-    ])
     const autoIncEx3 = computeInclusionsExclusions(selectedBooking.invoiceLineItemsJson)
     const inclusions = getLines(selectedBooking.inclusions || autoIncEx3.inclusions, [
       'Travel arrangement based on confirmed package',
@@ -3017,22 +3058,30 @@ function App() {
       'Optional tours or personal expenses',
       'Other incidental charges not stated',
     ])
-    const itineraryRows = itineraryLines.map((line, index) => ({
-      date:
-        index === 0
-          ? selectedBooking.travelStart
-            ? formatProjectDate(selectedBooking.travelStart)
-            : `Day ${index + 1}`
-          : index === itineraryLines.length - 1 && selectedBooking.travelEnd
-            ? formatProjectDate(selectedBooking.travelEnd)
-            : `Day ${index + 1}`,
-      itinerary: line,
-      hotel:
-        selectedBooking.hotelAddress ||
-        selectedBooking.accommodation ||
-        selectedBooking.destination ||
-        'Accommodation to be advised',
-    }))
+    // Use structured voucher rows if available, otherwise fall back to itinerary textarea
+    const itineraryRows: { date: string; itinerary: string; hotel: string }[] = (() => {
+      if (selectedBooking.voucherRowsJson) {
+        try {
+          const parsed = JSON.parse(selectedBooking.voucherRowsJson)
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed.map((r) => ({
+            date: r.date ? formatProjectDate(r.date) : '',
+            itinerary: r.itinerary || '',
+            hotel: r.hotel || '',
+          }))
+        } catch { /* fall through */ }
+      }
+      const lines = getLines(selectedBooking.itinerary, [
+        selectedBooking.itemDescription || `Arrival and start of ${selectedBooking.packageName}`,
+        'Free own leisure. Final reminders and departure arrangements.',
+      ])
+      return lines.map((line, index) => ({
+        date: index === 0
+          ? selectedBooking.travelStart ? formatProjectDate(selectedBooking.travelStart) : `Day ${index + 1}`
+          : index === lines.length - 1 && selectedBooking.travelEnd ? formatProjectDate(selectedBooking.travelEnd) : `Day ${index + 1}`,
+        itinerary: line,
+        hotel: selectedBooking.hotelAddress || selectedBooking.accommodation || selectedBooking.destination || 'Accommodation to be advised',
+      }))
+    })()
 
     return (
       <main className="preview-screen">

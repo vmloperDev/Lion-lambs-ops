@@ -1354,6 +1354,15 @@ input, select, textarea { font: inherit; }
 .voucher-party-grid > div { padding: 9px; background: #d9e8f2; }
 .voucher-party-grid > div + div { border-left: 1px solid #8ba5b8; }
 .voucher-party-grid small { color: #52667f; font-weight: 800; }
+.voucher-day-builder { display: grid; gap: 12px; }
+.voucher-day-empty { color: var(--muted); font-style: italic; font-size: 0.875rem; margin: 0; }
+.voucher-day-row { border: 1.5px solid var(--border); border-radius: var(--r); padding: 14px; background: var(--surface); display: grid; gap: 10px; }
+.voucher-day-header { display: flex; align-items: center; justify-content: space-between; }
+.voucher-day-header span { font-weight: 700; font-size: 0.85rem; color: var(--teal); text-transform: uppercase; letter-spacing: 0.05em; }
+.voucher-day-remove { background: transparent; border: 1px solid var(--border); color: var(--muted); font-size: 0.75rem; padding: 2px 8px; border-radius: var(--r); cursor: pointer; transition: background .15s, color .15s; }
+.voucher-day-remove:hover { background: #ff4261; color: #fff; border-color: #ff4261; }
+.voucher-add-day-btn { justify-self: start; margin-top: 4px; padding: 0.55rem 1.2rem; background: var(--teal); color: #fff; border: none; border-radius: var(--r); font-size: 0.875rem; font-weight: 700; cursor: pointer; transition: background .15s; }
+.voucher-add-day-btn:hover { background: #1a6070; }
 .voucher-table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 0.86rem; }
 .voucher-table th, .voucher-table td { border: 1px solid #8ba5b8; padding: 10px; vertical-align: top; }
 .voucher-table th { background: #d9e8f2; color: #102a43; font-weight: 900; text-align: center; }
