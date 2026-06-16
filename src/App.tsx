@@ -1633,35 +1633,50 @@ function App() {
               try { const p = JSON.parse(bookingForm.breakdownPaxTiers); if (Array.isArray(p) && p.length === 4) paxCounts = p } catch {}
               const setLabel = (i: number, v: string) => { const next = [...labels]; next[i] = v; updateBookingField('breakdownColLabels', JSON.stringify(next)) }
               const setPax = (i: number, v: string) => { const next = [...paxCounts]; next[i] = v; updateBookingField('breakdownPaxTiers', JSON.stringify(next)) }
+              // Auto-detect pax count from label if it starts with a number (e.g. "2 PAX" → 2)
+              const getEffectivePax = (label: string, storedPax: string) => {
+                const match = label.match(/^(\d+)/)
+                return match ? match[1] : storedPax
+              }
               return (
                 <div className="breakdown-tier-config">
                   <div className="breakdown-tier-config-header">
                     <div>
                       <p className="breakdown-tier-config-label">STEP 1 — Set up your group size columns</p>
-                      <p className="breakdown-tier-config-hint">Each column = one group size scenario. Change the name if needed. Enter the actual number of people for each column — this is used to calculate the grand total.</p>
+                      <p className="breakdown-tier-config-hint">Each column = one group size scenario. You can rename the columns if needed. If the column name doesn't start with a number (e.g. "PAX AND ABOVE" or "INFANT"), enter how many people it represents so the total can be calculated.</p>
                     </div>
                   </div>
                   <div className="breakdown-tier-grid">
-                    {labels.map((label, i) => (
-                      <div key={i} className="breakdown-tier-col">
-                        <p className="tier-col-num">Column {i + 1}</p>
-                        <label className="tier-field-label">Column name</label>
-                        <input
-                          value={label}
-                          onChange={(e) => setLabel(i, e.target.value)}
-                          placeholder={`e.g. 2 PAX`}
-                          className="tier-label-input"
-                        />
-                        <label className="tier-field-label">How many people?</label>
-                        <input
-                          type="number" min="0"
-                          value={paxCounts[i]}
-                          onChange={(e) => setPax(i, e.target.value)}
-                          placeholder="e.g. 2"
-                          className="tier-pax-input"
-                        />
-                      </div>
-                    ))}
+                    {labels.map((label, i) => {
+                      const startsWithNumber = /^\d+/.test(label)
+                      const effectivePax = getEffectivePax(label, paxCounts[i])
+                      return (
+                        <div key={i} className="breakdown-tier-col">
+                          <p className="tier-col-num">Column {i + 1}</p>
+                          <label className="tier-field-label">Column name</label>
+                          <input
+                            value={label}
+                            onChange={(e) => setLabel(i, e.target.value)}
+                            placeholder="e.g. 2 PAX"
+                            className="tier-label-input"
+                          />
+                          {startsWithNumber ? (
+                            <p className="tier-autopax">✓ {effectivePax} people — auto detected from name</p>
+                          ) : (
+                            <>
+                              <label className="tier-field-label">How many people? <span style={{color:'var(--error,#dc2626)'}}>*</span></label>
+                              <input
+                                type="number" min="0"
+                                value={paxCounts[i]}
+                                onChange={(e) => setPax(i, e.target.value)}
+                                placeholder="e.g. 1"
+                                className="tier-pax-input"
+                              />
+                            </>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               )
@@ -3141,11 +3156,16 @@ function App() {
     } catch {}
 
     // Parse pax counts per column for the TOTAL row
-    let colPax = ['', '', '', '']
+    // Auto-detect from label if it starts with a number (e.g. "2 PAX" → 2)
+    let colPaxStored = ['', '', '', '']
     try {
       const parsed = JSON.parse(selectedBooking.breakdownPaxTiers)
-      if (Array.isArray(parsed) && parsed.length === 4) colPax = parsed
+      if (Array.isArray(parsed) && parsed.length === 4) colPaxStored = parsed
     } catch {}
+    const colPax = colLabels.map((label, i) => {
+      const match = label.match(/^(\d+)/)
+      return match ? match[1] : colPaxStored[i]
+    })
 
     const paxPriceFields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
 
