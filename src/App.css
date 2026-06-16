@@ -1507,3 +1507,12 @@ input, select, textarea { font: inherit; }
 .line-items-row.pax-tier-row { display: grid; grid-template-columns: 160px 1fr repeat(4, 100px); gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .line-items-row.pax-tier-row.header { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); padding-bottom: 6px; }
 .pax-tier-service-label { font-size: 0.82rem; font-weight: 700; color: var(--text-primary); padding: 0 4px; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── 05b clearer labels ── */
+.breakdown-tier-config-header { margin-bottom: 0.75rem; }
+.breakdown-tier-config-hint { font-size: 0.8rem; color: var(--text-secondary); margin: 2px 0 0; line-height: 1.5; }
+.tier-col-num { font-size: 0.7rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent, #2563eb); margin: 0 0 6px; }
+.tier-field-label { font-size: 0.72rem; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin: 6px 0 2px; display: block; }
+.breakdown-tier-prices-panel { margin-top: 1.25rem; }
+.breakdown-tier-prices-header { margin-bottom: 0.75rem; }
+.line-items-row.pax-tier-row span { line-height: 1.3; }

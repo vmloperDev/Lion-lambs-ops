@@ -1621,12 +1621,11 @@ function App() {
           {/* 05b · PAX-TIER BREAKDOWN (Quotation template) */}
           <section className="form-section">
             <div className="form-section-heading">
-              <p>05b · Pax-Tier Breakdown</p>
-              <h2>Quotation pricing by group size</h2>
+              <p>05b · Breakdown Template</p>
+              <h2>Price per person by group size</h2>
             </div>
-            <p className="field-help">Enter per-person prices for each group size tier. These populate the quotation breakdown template shown to the client.</p>
 
-            {/* Column label + pax count config */}
+            {/* Step 1 — Column setup */}
             {(() => {
               let labels = ['2 PAX', '5 PAX', 'PAX AND ABOVE', 'INFANT']
               try { const p = JSON.parse(bookingForm.breakdownColLabels); if (Array.isArray(p) && p.length === 4) labels = p } catch {}
@@ -1636,21 +1635,29 @@ function App() {
               const setPax = (i: number, v: string) => { const next = [...paxCounts]; next[i] = v; updateBookingField('breakdownPaxTiers', JSON.stringify(next)) }
               return (
                 <div className="breakdown-tier-config">
-                  <p className="breakdown-tier-config-label">Column setup — label (top) · pax count (bottom)</p>
+                  <div className="breakdown-tier-config-header">
+                    <div>
+                      <p className="breakdown-tier-config-label">STEP 1 — Set up your group size columns</p>
+                      <p className="breakdown-tier-config-hint">Each column = one group size scenario. Change the name if needed. Enter the actual number of people for each column — this is used to calculate the grand total.</p>
+                    </div>
+                  </div>
                   <div className="breakdown-tier-grid">
                     {labels.map((label, i) => (
                       <div key={i} className="breakdown-tier-col">
+                        <p className="tier-col-num">Column {i + 1}</p>
+                        <label className="tier-field-label">Column name</label>
                         <input
                           value={label}
                           onChange={(e) => setLabel(i, e.target.value)}
-                          placeholder={`Column ${i + 1} label`}
+                          placeholder={`e.g. 2 PAX`}
                           className="tier-label-input"
                         />
+                        <label className="tier-field-label">How many people?</label>
                         <input
                           type="number" min="0"
                           value={paxCounts[i]}
                           onChange={(e) => setPax(i, e.target.value)}
-                          placeholder="# pax"
+                          placeholder="e.g. 2"
                           className="tier-pax-input"
                         />
                       </div>
@@ -1660,21 +1667,27 @@ function App() {
               )
             })()}
 
-            {/* Per-service pax-tier price inputs */}
-            <div className="line-items-panel">
+            {/* Step 2 — Per-service prices */}
+            <div className="breakdown-tier-prices-panel">
+              <div className="breakdown-tier-prices-header">
+                <div>
+                  <p className="breakdown-tier-config-label">STEP 2 — Enter the price per person for each service</p>
+                  <p className="breakdown-tier-config-hint">For each service below, type the price per person under the correct group size column. Leave blank if that service doesn't apply to that group size.</p>
+                </div>
+              </div>
+
               <div className="line-items-table">
                 <div className="line-items-row pax-tier-row header">
-                  <span>Service / item</span>
-                  <span>Details</span>
+                  <span>Service</span>
+                  <span>Details (optional)</span>
                   {(() => {
-                    let labels = ['2 PAX', '5 PAX', 'PAX AND ABV', 'INFANT']
+                    let labels = ['2 PAX', '5 PAX', 'PAX AND ABOVE', 'INFANT']
                     try { const p = JSON.parse(bookingForm.breakdownColLabels); if (Array.isArray(p) && p.length === 4) labels = p } catch {}
-                    return labels.map((lbl, i) => <span key={i}>{lbl}</span>)
+                    return labels.map((lbl, i) => <span key={i}>Price per person<br/>({lbl})</span>)
                   })()}
                 </div>
 
                 {currentBreakdownItems.filter(item => !item.isPackageRow).map((item, index) => {
-                  // Find real index in full array for field updates
                   const realIndex = currentBreakdownItems.indexOf(item)
                   return (
                     <div key={index} className="line-item-data-row">
@@ -1701,8 +1714,8 @@ function App() {
                 })}
 
                 {currentBreakdownItems.filter(i => !i.isPackageRow).length === 0 && (
-                  <div style={{padding:'1rem', textAlign:'center', color:'var(--text-secondary)', fontSize:'0.85rem'}}>
-                    Add rows in Section 05a above — they will appear here for pax-tier pricing.
+                  <div style={{padding:'1.25rem', textAlign:'center', color:'var(--text-secondary)', fontSize:'0.85rem', fontStyle:'italic'}}>
+                    No services yet — add rows in Section 05a above first, then come back here to fill in the prices.
                   </div>
                 )}
               </div>
