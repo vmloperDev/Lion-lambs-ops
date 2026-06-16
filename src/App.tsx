@@ -2309,19 +2309,17 @@ function App() {
             </thead>
             <tbody>
               {lineItems.map((item, index) => (
-                <>
-                  <tr key={`${item.description}-${index}`}>
-                    <td>{item.description}</td>
-                    <td>{item.quantity}</td>
-                    <td>{formatAmount(String(item.unitPrice))}</td>
-                    <td>{formatAmount(String(item.total))}</td>
-                  </tr>
-                  {index === 0 && selectedBooking.itemDescription && (
-                    <tr key="item-desc-row" className="item-description-row">
-                      <td colSpan={4}>{selectedBooking.itemDescription}</td>
-                    </tr>
-                  )}
-                </>
+                <tr key={`${item.description}-${index}`}>
+                  <td>
+                    <span className="item-name">{item.description}</span>
+                    {index === 0 && selectedBooking.itemDescription && (
+                      <span className="item-sub-desc">{selectedBooking.itemDescription}</span>
+                    )}
+                  </td>
+                  <td>{item.quantity}</td>
+                  <td>{formatAmount(String(item.unitPrice))}</td>
+                  <td>{formatAmount(String(item.total))}</td>
+                </tr>
               ))}
             </tbody>
           </table>
@@ -2636,19 +2634,17 @@ function App() {
             </thead>
             <tbody>
               {lineItems.map((item, index) => (
-                <>
-                  <tr key={`${item.description}-${index}`}>
-                    <td>{item.description}</td>
-                    <td>{item.quantity}</td>
-                    <td>{formatAmount(String(item.unitPrice))}</td>
-                    <td>{formatAmount(String(item.total))}</td>
-                  </tr>
-                  {index === 0 && selectedBooking.itemDescription && (
-                    <tr key="item-desc-row" className="item-description-row">
-                      <td colSpan={4}>{selectedBooking.itemDescription}</td>
-                    </tr>
-                  )}
-                </>
+                <tr key={`${item.description}-${index}`}>
+                  <td>
+                    <span className="item-name">{item.description}</span>
+                    {index === 0 && selectedBooking.itemDescription && (
+                      <span className="item-sub-desc">{selectedBooking.itemDescription}</span>
+                    )}
+                  </td>
+                  <td>{item.quantity}</td>
+                  <td>{formatAmount(String(item.unitPrice))}</td>
+                  <td>{formatAmount(String(item.total))}</td>
+                </tr>
               ))}
             </tbody>
           </table>
@@ -2680,26 +2676,7 @@ function App() {
             </div>
           </section>
 
-          <section className="invoice-notes document-checklists">
-            <h2>Note to Customer</h2>
-            <div className="invoice-note-grid">
-              <div className="included-list">
-                <strong>Inclusions</strong>
-                <ul>
-                  {inclusions.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </div>
-              <div className="excluded-list">
-                <strong>Exclusions</strong>
-                <ul>
-                  {exclusions.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
+          <section className="invoice-notes">
             <p>
               Status: {selectedBooking.invoicePaymentStatus || 'Unpaid'}.
               Payment method: {selectedBooking.paymentMethod || 'To be advised'}.
