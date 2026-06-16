@@ -97,6 +97,7 @@ type BreakdownLineItem = {
   details?: string    // free-text details column
   vendor?: string      // name of vendor/supplier for this row
   contactNumber?: string // per-PO supplier contact number
+  paymentMethod?: string // per-PO payment method
   quantity: string
   paxBreakdown?: string // JSON: {adult, senior, child, infant} — sums into quantity
   unitPrice: string
@@ -1784,6 +1785,7 @@ function App() {
                 <div className="line-items-row breakdown-row header">
                   <span>Vendor</span>
                   <span>Contact No.</span>
+                  <span>Payment Method</span>
                   <span>Service / item</span>
                   <span>Description</span>
                   <span>Pax</span>
@@ -1808,6 +1810,12 @@ function App() {
                         value={item.contactNumber || ''}
                         onChange={(e) => changeBreakdownItemField(index, 'contactNumber', e.target.value)}
                         placeholder="Contact no."
+                      />
+                      <input
+                        type="text"
+                        value={item.paymentMethod || ''}
+                        onChange={(e) => changeBreakdownItemField(index, 'paymentMethod', e.target.value)}
+                        placeholder="GCash, Bank Transfer…"
                       />
                       {item.isPackageRow ? (
                         <input disabled className="disabled-field" value={`Auto: ${bookingForm.packageName || 'Basic Package'}`} />
@@ -3103,7 +3111,8 @@ function App() {
       ? `${formatProjectDate(selectedBooking.travelStart)}${selectedBooking.travelEnd ? ` - ${formatProjectDate(selectedBooking.travelEnd)}` : ''}`
       : 'TBA'
     const optionDateStr = selectedBooking.optionDate ? formatProjectDate(selectedBooking.optionDate) : 'TBA'
-    const supplierPayment = selectedBooking.supplierPaymentMethod || selectedBooking.paymentMethod || 'Bank Transfer'
+    const supplierPayment = (item: BreakdownLineItem) =>
+      item.paymentMethod || selectedBooking.supplierPaymentMethod || selectedBooking.paymentMethod || 'Bank Transfer'
 
     const renderPODocument = (item: BreakdownLineItem, itemIndex: number, isLast: boolean) => {
       const paxLabel = formatPaxBreakdownLabel(readPaxBreakdown(item.paxBreakdown)) || item.quantity || '1'
@@ -3168,7 +3177,7 @@ function App() {
             </thead>
             <tbody>
               <tr>
-                <td>{supplierPayment}</td>
+                <td>{supplierPayment(item)}</td>
                 <td>{itemDescription}</td>
                 <td>{travelDateStr}</td>
                 <td>{optionDateStr}</td>
