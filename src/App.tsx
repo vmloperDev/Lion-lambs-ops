@@ -1043,8 +1043,7 @@ function App() {
     const prevPaid = parseAmount(invoiceForm.invoiceAmountPaid)
     const newPaid = prevPaid + amount
     const prevRecords = invoiceForm.paymentRecords.trim()
-    const newRecords = prevRecords ? `${prevRecords}
-${record}` : record
+    const newRecords = prevRecords ? `${prevRecords}\n${record}` : record
     setInvoiceForm((f) => ({
       ...f,
       invoiceAmountPaid: String(newPaid),
@@ -2524,8 +2523,7 @@ ${record}` : record
             </div>
             <div className="payment-log-list">
               {invoiceForm.paymentRecords
-                ? invoiceForm.paymentRecords.split('
-').filter(Boolean).map((rec, i) => (
+                ? invoiceForm.paymentRecords.split('\n').filter(Boolean).map((rec, i) => (
                     <div key={i} className="payment-log-entry">
                       <span>{rec}</span>
                       <button
@@ -2533,11 +2531,9 @@ ${record}` : record
                         className="payment-log-remove"
                         title="Remove this record"
                         onClick={() => {
-                          const lines = invoiceForm.paymentRecords.split('
-').filter(Boolean)
+                          const lines = invoiceForm.paymentRecords.split('\n').filter(Boolean)
                           lines.splice(i, 1)
-                          updateInvoiceField('paymentRecords', lines.join('
-'))
+                          updateInvoiceField('paymentRecords', lines.join('\n'))
                         }}
                       >×</button>
                     </div>
