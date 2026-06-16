@@ -2724,7 +2724,7 @@ function App() {
           </section>
 
           <section className="invoice-notes">
-            <p>
+            <p style={{fontSize:'0.7rem', lineHeight:'1.35', color:'#52667f'}}>
               Status: {selectedBooking.invoicePaymentStatus || 'Unpaid'}.
               Payment method: {selectedBooking.paymentMethod || 'To be advised'}.
               Payment date:{' '}
@@ -2758,9 +2758,25 @@ function App() {
               </p>
             </section>
             <div className="transaction-box">
-              <strong>For faster transactions</strong>
-              <span>Send deposit or payment proof with your booking reference.</span>
-              <span>BDO - OLONGAPO / SHARON R MORINE</span>
+              <strong>For faster transactions:</strong>
+              <span>You may deposit your payment below:</span>
+              <div className="transaction-banks">
+                <div>
+                  <span className="bank-name">BDO - OLONGAPO</span>
+                  <span>Sharon R. Morine</span>
+                  <span>PESO SA: 007700076844</span>
+                </div>
+                <div>
+                  <span className="bank-name">CHINA BANK - OLONGAPO</span>
+                  <span>Sharon R. Morine</span>
+                  <span>USD SA: 167352000868</span>
+                </div>
+                <div>
+                  <span className="bank-name">GCASH</span>
+                  <span>Sharon R.</span>
+                  <span>9613495114</span>
+                </div>
+              </div>
             </div>
           </section>
 

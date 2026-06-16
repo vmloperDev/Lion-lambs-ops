@@ -1299,17 +1299,21 @@ input, select, textarea { font: inherit; }
 .invoice-total-panel > div:nth-child(2) { padding: 8px 0; border-top: 2px solid #102a43; border-bottom: 2px solid #102a43; }
 .payment-placeholder { max-width: 330px; margin-top: 6px; padding: 10px; background: transparent; color: #4f7b17; font-size: 0.95rem; font-style: italic; font-weight: 900; text-align: right; }
 .payment-placeholder p, .payment-placeholder li { margin: 0; line-height: 1.4; }
-.invoice-notes { margin-top: 22px; }
-.invoice-notes h2 { margin: 0 0 8px; color: #102a43; font-size: 1rem; text-transform: uppercase; }
-.invoice-notes p { margin: 12px 0 0; color: #52667f; line-height: 1.5; }
-.invoice-policy { display: grid; gap: 4px; margin-top: 14px; color: #102a43; font-size: 0.78rem; line-height: 1.35; }
-.invoice-policy h3 { margin: 6px 0 0; font-size: 0.82rem; text-transform: uppercase; }
+.invoice-notes { margin-top: 14px; }
+.invoice-notes h2 { margin: 0 0 6px; color: #102a43; font-size: 0.88rem; text-transform: uppercase; }
+.invoice-notes > p { margin: 6px 0 0; color: #52667f; font-size: 0.7rem; line-height: 1.35; }
+.invoice-policy { display: grid; gap: 2px; margin-top: 8px; color: #102a43; font-size: 0.66rem; line-height: 1.25; }
+.invoice-policy h3 { margin: 4px 0 0; font-size: 0.68rem; text-transform: uppercase; }
 .invoice-policy p { margin: 0; color: #102a43; }
 .invoice-note-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 12px; }
 .invoice-note-grid > div { min-width: 0; }
 .invoice-note-grid strong { display: block; margin-bottom: 6px; color: #102a43; }
-.transaction-box { display: grid; gap: 4px; margin-top: 14px; padding: 10px; border: 1px solid #1f2937; color: #102a43; font-size: 0.84rem; }
-.transaction-box strong { text-transform: uppercase; }
+.transaction-box { display: grid; gap: 3px; margin-top: 10px; padding: 7px 10px; border: 1px solid #1f2937; color: #102a43; font-size: 0.66rem; }
+.transaction-box strong { text-transform: uppercase; font-size: 0.68rem; }
+.transaction-box > span { color: #52667f; }
+.transaction-banks { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-top: 4px; }
+.transaction-banks > div { display: grid; gap: 1px; }
+.bank-name { font-weight: 700; text-transform: uppercase; }
 .po-preview { width: min(940px,100%); margin: 14px auto 0; padding: clamp(20px,4vw,34px); border: 1px solid #d7e3ea; background: #fff; box-shadow: 0 22px 70px rgba(34,63,95,.12); }
 .po-header { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 22px; align-items: start; }
 .po-header div { display: grid; gap: 4px; }
