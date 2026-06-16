@@ -1914,56 +1914,33 @@ function App() {
 
             {/* Step 1 — Column setup */}
             {(() => {
-              let labels = ['2 PAX', '5 PAX', 'PAX AND ABOVE', 'INFANT']
-              try { const p = JSON.parse(bookingForm.breakdownColLabels); if (Array.isArray(p) && p.length === 4) labels = p } catch {}
+              const fixedLabels = ['Adult', 'Child', 'Senior', 'Infant']
+              const fixedFields = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant'] as const
               let paxCounts = ['', '', '', '']
               try { const p = JSON.parse(bookingForm.breakdownPaxTiers); if (Array.isArray(p) && p.length === 4) paxCounts = p } catch {}
-              const setLabel = (i: number, v: string) => { const next = [...labels]; next[i] = v; updateBookingField('breakdownColLabels', JSON.stringify(next)) }
               const setPax = (i: number, v: string) => { const next = [...paxCounts]; next[i] = v; updateBookingField('breakdownPaxTiers', JSON.stringify(next)) }
-              // Auto-detect pax count from label if it starts with a number (e.g. "2 PAX" → 2)
-              const getEffectivePax = (label: string, storedPax: string) => {
-                const match = label.match(/^(\d+)/)
-                return match ? match[1] : storedPax
-              }
               return (
                 <div className="breakdown-tier-config">
                   <div className="breakdown-tier-config-header">
                     <div>
                       <p className="breakdown-tier-config-label">STEP 1 — Set up your group size columns</p>
-                      <p className="breakdown-tier-config-hint">Each column = one group size scenario. You can rename the columns if needed. If the column name doesn't start with a number (e.g. "PAX AND ABOVE" or "INFANT"), enter how many people it represents so the total can be calculated.</p>
+                      <p className="breakdown-tier-config-hint">Enter how many people are in each category so the total can be calculated correctly.</p>
                     </div>
                   </div>
                   <div className="breakdown-tier-grid">
-                    {labels.map((label, i) => {
-                      const startsWithNumber = /^\d+/.test(label)
-                      const effectivePax = getEffectivePax(label, paxCounts[i])
-                      return (
-                        <div key={i} className="breakdown-tier-col">
-                          <p className="tier-col-num">Column {i + 1}</p>
-                          <label className="tier-field-label">Column name</label>
-                          <input
-                            value={label}
-                            onChange={(e) => setLabel(i, e.target.value)}
-                            placeholder="e.g. 2 PAX"
-                            className="tier-label-input"
-                          />
-                          {startsWithNumber ? (
-                            <p className="tier-autopax">✓ {effectivePax} people — auto detected from name</p>
-                          ) : (
-                            <>
-                              <label className="tier-field-label">How many people? <span style={{color:'var(--error,#dc2626)'}}>*</span></label>
-                              <input
-                                type="number" min="0"
-                                value={paxCounts[i]}
-                                onChange={(e) => setPax(i, e.target.value)}
-                                placeholder="e.g. 1"
-                                className="tier-pax-input"
-                              />
-                            </>
-                          )}
-                        </div>
-                      )
-                    })}
+                    {fixedLabels.map((label, i) => (
+                      <div key={i} className="breakdown-tier-col">
+                        <p className="tier-col-num">{label}</p>
+                        <label className="tier-field-label">How many people?</label>
+                        <input
+                          type="number" min="0"
+                          value={paxCounts[i]}
+                          onChange={(e) => setPax(i, e.target.value)}
+                          placeholder="0"
+                          className="tier-pax-input"
+                        />
+                      </div>
+                    ))}
                   </div>
                 </div>
               )
@@ -1974,7 +1951,7 @@ function App() {
               <div className="breakdown-tier-prices-header">
                 <div>
                   <p className="breakdown-tier-config-label">STEP 2 — Enter the price per person for each service</p>
-                  <p className="breakdown-tier-config-hint">For each service below, type the price per person under the correct group size column. Leave blank if that service doesn't apply to that group size.</p>
+                  <p className="breakdown-tier-config-hint">For each service below, type the price per person under the correct category. Leave blank if that service doesn't apply.</p>
                 </div>
               </div>
 
@@ -1982,11 +1959,10 @@ function App() {
                 <div className="line-items-row pax-tier-row header">
                   <span>Service</span>
                   <span>Details (optional)</span>
-                  {(() => {
-                    let labels = ['2 PAX', '5 PAX', 'PAX AND ABOVE', 'INFANT']
-                    try { const p = JSON.parse(bookingForm.breakdownColLabels); if (Array.isArray(p) && p.length === 4) labels = p } catch {}
-                    return labels.map((lbl, i) => <span key={i}>Price per person<br/>({lbl})</span>)
-                  })()}
+                  <span>Price per person<br/>(Adult)</span>
+                  <span>Price per person<br/>(Child)</span>
+                  <span>Price per person<br/>(Senior)</span>
+                  <span>Price per person<br/>(Infant)</span>
                 </div>
 
                 {currentBreakdownItems.filter(item => !item.isPackageRow).map((item, index) => {
