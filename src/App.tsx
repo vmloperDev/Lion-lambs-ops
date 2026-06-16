@@ -2724,7 +2724,7 @@ function App() {
           </section>
 
           <section className="invoice-notes">
-            <p style={{fontSize:'0.7rem', lineHeight:'1.35', color:'#52667f'}}>
+            <p>
               Status: {selectedBooking.invoicePaymentStatus || 'Unpaid'}.
               Payment method: {selectedBooking.paymentMethod || 'To be advised'}.
               Payment date:{' '}
