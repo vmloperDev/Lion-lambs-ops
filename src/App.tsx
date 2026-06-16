@@ -3047,7 +3047,7 @@ function App() {
                     <td>{selectedBooking.pax || item.quantity}</td>
                     <td>
                       {item.description}
-                      {item.isPackageRow && getBookingBreakdownNettTotal(selectedBooking) > 0
+                      {index === 0 && item.description === selectedBooking.packageName && getBookingBreakdownNettTotal(selectedBooking) > 0
                         ? ` — ₱${getBookingBreakdownNettTotal(selectedBooking).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} nett`
                         : ''}
                     </td>
