@@ -1227,14 +1227,14 @@ input, select, textarea { font: inherit; }
 .quote-meta-grid article { display: grid; gap: 7px; }
 .quote-meta-grid span { color: #173a6a; font-size: 0.82rem; font-weight: 900; }
 .quote-meta-grid strong { color: #3c4d61; font-size: 0.9rem; overflow-wrap: anywhere; }
-.quote-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.92rem; }
+.quote-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.92rem; table-layout: fixed; }
 .quote-table th { border-bottom: 2px solid #257588; color: #257588; text-align: left; }
-.quote-table th, .quote-table td { padding: 7px 8px; }
+.quote-table th, .quote-table td { padding: 7px 8px; vertical-align: top; }
 .quote-table tbody tr:nth-child(odd) { background: #f5f7f8; }
-.quote-table th:not(:first-child), .quote-table td:not(:first-child) { text-align: right; }
-.quote-table .item-description-row td { background: #f0f8fa; color: #4a6572; font-size: 0.82rem; font-style: italic; padding: 4px 8px 8px 18px; border-bottom: 1px solid #d7e8ec; }
-.item-name { display: block; font-weight: 600; }
-.item-sub-desc { display: block; font-size: 0.8em; color: #5a7080; font-style: italic; margin-top: 3px; line-height: 1.4; }
+.quote-table th:not(:first-child):not(.desc-col), .quote-table td:not(:first-child):not(.desc-col) { text-align: right; }
+.quote-table .item-col { width: 18%; font-weight: 600; word-break: break-word; }
+.quote-table .desc-col { width: 38%; color: #3a5060; line-height: 1.5; word-break: break-word; white-space: pre-wrap; }
+.invoice-table .item-description-row td { background: #f0f8fa; color: #4a6572; font-size: 0.82rem; font-style: italic; padding: 4px 8px 8px 18px; border-bottom: 1px solid #d7e8ec; }
 .quote-notes { display: grid; gap: 8px; margin-top: 18px; color: #52667f; font-size: 0.88rem; }
 .quote-notes p { margin: 0; }
 .quote-notes strong { color: #173a6a; }
@@ -1262,10 +1262,12 @@ input, select, textarea { font: inherit; }
 .amount-due-box { align-content: center; min-height: 58px; padding: 8px 12px; border: 2px solid #102a43; background: #fff; text-align: right; }
 .amount-due-box strong { color: #d94235; font-size: 1.45rem; }
 .bill-to-row { display: flex; gap: 8px; margin: 16px 0 0; padding: 8px 10px; border: 2px solid #102a43; font-size: 0.9rem; }
-.invoice-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9rem; }
+.invoice-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9rem; table-layout: fixed; }
 .invoice-table th { border-bottom: 2px solid #102a43; color: #102a43; text-align: left; }
-.invoice-table th, .invoice-table td { padding: 10px 8px; }
-.invoice-table th:not(:first-child), .invoice-table td:not(:first-child) { text-align: right; }
+.invoice-table th, .invoice-table td { padding: 10px 8px; vertical-align: top; }
+.invoice-table th:not(:first-child):not(.desc-col), .invoice-table td:not(:first-child):not(.desc-col) { text-align: right; }
+.invoice-table .item-col { width: 18%; font-weight: 600; word-break: break-word; }
+.invoice-table .desc-col { width: 38%; color: #3a4f60; line-height: 1.5; word-break: break-word; white-space: pre-wrap; }
 .invoice-table .item-description-row td { background: #f4f6f8; color: #4a5a6a; font-size: 0.82rem; font-style: italic; padding: 4px 8px 10px 18px; border-bottom: 1px solid #d0dae3; }
 .invoice-total-panel { display: grid; justify-content: end; gap: 8px; margin-top: 14px; }
 .invoice-total-panel > div:not(.payment-placeholder) { display: grid; grid-template-columns: 110px 150px; align-items: center; gap: 12px; text-align: right; }

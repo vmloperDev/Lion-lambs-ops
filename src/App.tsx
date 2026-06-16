@@ -1361,7 +1361,7 @@ function App() {
             </div>
             <label className="textarea-field">
               Item description
-              <textarea rows={3} value={bookingForm.itemDescription} onChange={(e) => updateBookingField('itemDescription', e.target.value)} placeholder="e.g. Round trip airfare, 3 nights accommodation, airport transfers, tour guide services" />
+              <textarea rows={6} value={bookingForm.itemDescription} onChange={(e) => updateBookingField('itemDescription', e.target.value)} placeholder="e.g. This package includes round trip airfare, 3 nights accommodation, daily breakfast, airport transfers, island hopping with snorkeling equipment, and a certified tour guide for the entire stay." />
               <span className="field-help">Appears as a sub-row under the package name in the quotation and invoice.</span>
             </label>
           </section>
@@ -2301,7 +2301,8 @@ function App() {
           <table className="quote-table">
             <thead>
               <tr>
-                <th>Item Description</th>
+                <th>Item</th>
+                <th className="desc-col">Description</th>
                 <th>Qty</th>
                 <th>Unit Price</th>
                 <th>Amount</th>
@@ -2310,12 +2311,8 @@ function App() {
             <tbody>
               {lineItems.map((item, index) => (
                 <tr key={`${item.description}-${index}`}>
-                  <td>
-                    <span className="item-name">{item.description}</span>
-                    {index === 0 && selectedBooking.itemDescription && (
-                      <span className="item-sub-desc">{selectedBooking.itemDescription}</span>
-                    )}
-                  </td>
+                  <td className="item-col">{item.description}</td>
+                  <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
                   <td>{item.quantity}</td>
                   <td>{formatAmount(String(item.unitPrice))}</td>
                   <td>{formatAmount(String(item.total))}</td>
@@ -2626,7 +2623,8 @@ function App() {
           <table className="invoice-table">
             <thead>
               <tr>
-                <th>Item Description</th>
+                <th>Item</th>
+                <th className="desc-col">Description</th>
                 <th>Qty</th>
                 <th>Unit Price</th>
                 <th>Amount</th>
@@ -2635,12 +2633,8 @@ function App() {
             <tbody>
               {lineItems.map((item, index) => (
                 <tr key={`${item.description}-${index}`}>
-                  <td>
-                    <span className="item-name">{item.description}</span>
-                    {index === 0 && selectedBooking.itemDescription && (
-                      <span className="item-sub-desc">{selectedBooking.itemDescription}</span>
-                    )}
-                  </td>
+                  <td className="item-col">{item.description}</td>
+                  <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
                   <td>{item.quantity}</td>
                   <td>{formatAmount(String(item.unitPrice))}</td>
                   <td>{formatAmount(String(item.total))}</td>
