@@ -339,39 +339,6 @@ function getLines(value: string | undefined, fallback: string[]) {
   return lines.length > 0 ? lines : fallback
 }
 
-const ALL_INVOICE_OPTIONS = [
-  'Add-on Luggage - One Way',
-  'Add-on Luggage - Round Trip',
-  'Fuel Surcharge',
-  'Travel Insurance',
-  'Airport Transport (Manila/Clark)',
-  'Tipping',
-  'Visa',
-  'Other'
-]
-
-function computeInclusionsExclusions(invoiceLineItemsJson: string): { inclusions: string; exclusions: string } {
-  let items: InvoiceLineItem[] = []
-  try {
-    if (invoiceLineItemsJson) items = JSON.parse(invoiceLineItemsJson)
-  } catch {}
-
-  // Inclusions: non-package, non-"Other" items that were added
-  const addedDescriptions = items
-    .filter((item) => !item.isPackageRow && item.description !== 'Other')
-    .map((item) => item.description)
-
-  // Exclusions: options from the full list that were NOT added (and not "Other")
-  const addedSet = new Set(addedDescriptions)
-  const excludedDescriptions = ALL_INVOICE_OPTIONS
-    .filter((opt) => opt !== 'Other' && !addedSet.has(opt))
-
-  return {
-    inclusions: addedDescriptions.join('\n'),
-    exclusions: excludedDescriptions.join('\n'),
-  }
-}
-
 function readInvoiceItems(booking: BookingFormData): InvoiceLineItem[] {
   try {
     if (booking.invoiceLineItemsJson) {
@@ -1025,11 +992,8 @@ function App() {
     const baseInvRow = finalInvoiceList.find(i => i.isPackageRow)
     const calculatedUnitPrice = baseInvRow ? parseAmount(baseInvRow.unitPrice) : parseAmount(bookingForm.unitPrice)
     
-    const autoIncEx = computeInclusionsExclusions(bookingForm.invoiceLineItemsJson)
     const booking: BookingRecord = {
       ...bookingForm,
-      inclusions: autoIncEx.inclusions,
-      exclusions: autoIncEx.exclusions,
       unitPrice: String(calculatedUnitPrice),
       sellingPrice: String(getBookingClientTotal(bookingForm)),
       id: editingBookingId || `BK-${Date.now()}`,
@@ -2012,23 +1976,11 @@ function App() {
           <section className="form-section">
             <div className="form-section-heading">
               <p>08 · Inclusions &amp; Exclusions</p>
-              <h2>Edit manually, or auto-fill from invoice items</h2>
+              <h2>Manual entry</h2>
             </div>
             <div className="field-grid two">
               <label className="textarea-field">
-                <span style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px'}}>
-                  Inclusions
-                  <button
-                    type="button"
-                    className="incex-autofill-btn"
-                    onClick={() => {
-                      const { inclusions } = computeInclusionsExclusions(bookingForm.invoiceLineItemsJson)
-                      updateBookingField('inclusions', inclusions)
-                    }}
-                  >
-                    Auto-fill from invoice
-                  </button>
-                </span>
+                Inclusions
                 <textarea
                   rows={5}
                   value={bookingForm.inclusions}
@@ -2037,19 +1989,7 @@ function App() {
                 />
               </label>
               <label className="textarea-field">
-                <span style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px'}}>
-                  Exclusions
-                  <button
-                    type="button"
-                    className="incex-autofill-btn"
-                    onClick={() => {
-                      const { exclusions } = computeInclusionsExclusions(bookingForm.invoiceLineItemsJson)
-                      updateBookingField('exclusions', exclusions)
-                    }}
-                  >
-                    Auto-fill from invoice
-                  </button>
-                </span>
+                Exclusions
                 <textarea
                   rows={5}
                   value={bookingForm.exclusions}
@@ -2058,7 +1998,7 @@ function App() {
                 />
               </label>
             </div>
-            <p className="field-help">Leave blank to auto-generate from invoice items on documents, or type your own list — one item per line.</p>
+            <p className="field-help">One item per line. These show exactly as typed on the quotation, invoice, and voucher.</p>
           </section>
 
           {/* 09 · SCHEDULE */}
@@ -2495,11 +2435,10 @@ function App() {
     }
 
     const lineItems = getBookingLineItems(selectedBooking)
-    const autoIncEx1 = computeInclusionsExclusions(selectedBooking.invoiceLineItemsJson)
-    const inclusions = getLines(selectedBooking.inclusions || autoIncEx1.inclusions, [
+    const inclusions = getLines(selectedBooking.inclusions, [
       'Travel arrangement based on selected package',
     ])
-    const exclusions = getLines(selectedBooking.exclusions || autoIncEx1.exclusions, [
+    const exclusions = getLines(selectedBooking.exclusions, [
       'Meals not stated',
       'Other incidental charges not stated',
     ])
@@ -2849,11 +2788,10 @@ function App() {
     const paymentRecords = getLines(selectedBooking.paymentRecords, [
       'No payment updates yet.',
     ])
-    const autoIncEx2 = computeInclusionsExclusions(selectedBooking.invoiceLineItemsJson)
-    const inclusions = getLines(selectedBooking.inclusions || autoIncEx2.inclusions, [
+    const inclusions = getLines(selectedBooking.inclusions, [
       'Travel arrangement based on confirmed package',
     ])
-    const exclusions = getLines(selectedBooking.exclusions || autoIncEx2.exclusions, [
+    const exclusions = getLines(selectedBooking.exclusions, [
       'Meals not stated',
       'Other services not mentioned above',
     ])
@@ -3262,13 +3200,12 @@ function App() {
       )
     }
 
-    const autoIncEx3 = computeInclusionsExclusions(selectedBooking.invoiceLineItemsJson)
-    const inclusions = getLines(selectedBooking.inclusions || autoIncEx3.inclusions, [
+    const inclusions = getLines(selectedBooking.inclusions, [
       'Travel arrangement based on confirmed package',
       'Accommodation / service details as stated above',
       'Assistance from Lion and Lamb Travel',
     ])
-    const exclusions = getLines(selectedBooking.exclusions || autoIncEx3.exclusions, [
+    const exclusions = getLines(selectedBooking.exclusions, [
       'Meals not stated',
       'Optional tours or personal expenses',
       'Other incidental charges not stated',
