@@ -1068,10 +1068,10 @@ input, select, textarea { font: inherit; }
 .line-items-summary .profit-total    { color: var(--green); }
 .line-items-summary .profit-negative { color: var(--red); }
 
-/* Breakdown row — wider to fit vendor, description, pax popover, and send-to-invoice toggle */
+/* Breakdown row — wider to fit vendor, description, pax popover, and send-to-invoice/PO toggles */
 .line-items-row.breakdown-row {
-  grid-template-columns: minmax(140px,1fr) minmax(160px,1.3fr) minmax(140px,1fr) minmax(110px,.8fr) minmax(110px,.8fr) minmax(110px,.8fr) 110px 48px;
-  min-width: 1080px;
+  grid-template-columns: minmax(140px,1fr) minmax(160px,1.3fr) minmax(140px,1fr) minmax(110px,.8fr) minmax(110px,.8fr) minmax(110px,.8fr) 110px 110px 48px;
+  min-width: 1190px;
 }
 
 /* Send-to-invoice toggle button */
@@ -1517,6 +1517,7 @@ input, select, textarea { font: inherit; }
 .po-table td:not(:nth-child(3)), .po-table th:not(:nth-child(3)) { text-align: center; }
 .po-table.particulars td:nth-child(4), .po-table.particulars td:nth-child(5) { text-align: right; }
 .po-total { display: flex; justify-content: flex-end; gap: 20px; padding: 10px 8px; border-right: 1px solid #8ba5b8; border-bottom: 1px solid #8ba5b8; border-left: 1px solid #8ba5b8; color: #102a43; font-weight: 900; }
+.po-empty-row { text-align: center !important; color: #5a7184; font-style: italic; padding: 16px 8px; }
 .po-notes-grid { display: grid; border: 1px solid #8ba5b8; border-top: 0; }
 .po-notes-grid div { display: grid; grid-template-columns: 130px minmax(0,1fr); gap: 8px; padding: 8px; }
 .po-notes-grid div + div { border-top: 1px solid #8ba5b8; }

@@ -101,6 +101,7 @@ type BreakdownLineItem = {
   unitPrice: string
   nettCost: string
   sendToInvoice: boolean
+  sendToPO?: boolean
   isPackageRow?: boolean
   // Pax-tier columns for the quotation breakdown template
   price2Pax?: string
@@ -403,6 +404,7 @@ function readBreakdownItems(booking: BookingFormData): BreakdownLineItem[] {
       unitPrice: booking.unitPrice || booking.sellingPrice,
       nettCost: booking.nettCost,
       sendToInvoice: false,
+      sendToPO: false,
       isPackageRow: true,
     },
   ]
@@ -763,7 +765,7 @@ function App() {
       { id: createLineItemId(), description: '', quantity: '1', unitPrice: '', nettCost: '', isPackageRow: true }
     ]
     const initialBreakdown: BreakdownLineItem[] = [
-      { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false, isPackageRow: true }
+      { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false, sendToPO: false, isPackageRow: true }
     ]
     freshForm.invoiceLineItemsJson = JSON.stringify(initialInvoice)
     freshForm.breakdownLineItemsJson = JSON.stringify(initialBreakdown)
@@ -790,7 +792,7 @@ function App() {
     }
     if (!normalized.breakdownLineItemsJson) {
       const fallbackBrk: BreakdownLineItem[] = [
-        { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: normalized.unitPrice || normalized.sellingPrice, nettCost: normalized.nettCost || '0', sendToInvoice: false, isPackageRow: true }
+        { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: normalized.unitPrice || normalized.sellingPrice, nettCost: normalized.nettCost || '0', sendToInvoice: false, sendToPO: false, isPackageRow: true }
       ]
       normalized.breakdownLineItemsJson = JSON.stringify(fallbackBrk)
     }
@@ -989,7 +991,7 @@ function App() {
 
   function addBreakdownItemRow() {
     const current = getBreakdownItemsList()
-    current.push({ id: createLineItemId(), description: breakdownOptions[0], details: '', vendor: '', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false })
+    current.push({ id: createLineItemId(), description: breakdownOptions[0], details: '', vendor: '', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false, sendToPO: false })
     saveBreakdownItemsList(current)
   }
 
@@ -1788,6 +1790,7 @@ function App() {
                   <span>Client price</span>
                   <span>Supplier nett</span>
                   <span>Send to invoice</span>
+                  <span>Send to P.O.</span>
                   <span></span>
                 </div>
 
@@ -1862,6 +1865,14 @@ function App() {
                       >
                         {item.sendToInvoice ? <Eye size={14} /> : <EyeOff size={14} />}
                         <span>{item.sendToInvoice ? 'Showing' : 'Hidden'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`send-to-invoice-btn ${item.sendToPO ? 'active' : ''}`}
+                        onClick={() => changeBreakdownItemField(index, 'sendToPO', !item.sendToPO)}
+                      >
+                        {item.sendToPO ? <Eye size={14} /> : <EyeOff size={14} />}
+                        <span>{item.sendToPO ? 'Showing' : 'Hidden'}</span>
                       </button>
                       <button
                         type="button"
@@ -3090,7 +3101,8 @@ function App() {
       )
     }
 
-    const lineItems = mapBreakdownItemsToBookingLines(readBreakdownItems(selectedBooking), selectedBooking.packageName)
+    const poBreakdownItems = readBreakdownItems(selectedBooking).filter((item) => item.sendToPO)
+    const lineItems = mapBreakdownItemsToBookingLines(poBreakdownItems, selectedBooking.packageName)
     const amount = sumLineItems(lineItems, 'nettTotal') || sumLineItems(lineItems, 'total')
     const poNumber = selectedBooking.id.replace('BK-', new Date().getFullYear().toString())
 
@@ -3218,20 +3230,28 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {lineItems.map((item, index) => {
-                const poUnitPrice = item.nettCost || item.unitPrice
-                const poAmount = item.nettTotal || item.total
+              {lineItems.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="po-empty-row">
+                    No items marked "Send to P.O." yet — toggle a row in section 05a to add it here.
+                  </td>
+                </tr>
+              ) : (
+                lineItems.map((item, index) => {
+                  const poUnitPrice = item.nettCost || item.unitPrice
+                  const poAmount = item.nettTotal || item.total
 
-                return (
-                  <tr key={`${item.description}-${index}`}>
-                    <td>{item.quantity}</td>
-                    <td>{selectedBooking.pax || item.quantity}</td>
-                    <td>{item.description}</td>
-                    <td>{formatAmount(String(poUnitPrice))}</td>
-                    <td>{formatAmount(String(poAmount))}</td>
-                  </tr>
-                )
-              })}
+                  return (
+                    <tr key={`${item.description}-${index}`}>
+                      <td>{item.quantity}</td>
+                      <td>{selectedBooking.pax || item.quantity}</td>
+                      <td>{item.description}</td>
+                      <td>{formatAmount(String(poUnitPrice))}</td>
+                      <td>{formatAmount(String(poAmount))}</td>
+                    </tr>
+                  )
+                })
+              )}
             </tbody>
           </table>
 
