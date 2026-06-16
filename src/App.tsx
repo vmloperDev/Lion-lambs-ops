@@ -1359,6 +1359,11 @@ function App() {
                 </select>
               </label>
             </div>
+            <label className="textarea-field">
+              Item description
+              <textarea rows={3} value={bookingForm.itemDescription} onChange={(e) => updateBookingField('itemDescription', e.target.value)} placeholder="e.g. Round trip airfare, 3 nights accommodation, airport transfers, tour guide services" />
+              <span className="field-help">Appears as a sub-row under the package name in the quotation and invoice.</span>
+            </label>
           </section>
 
           {/* 03 · QUOTATION */}
@@ -2296,20 +2301,27 @@ function App() {
           <table className="quote-table">
             <thead>
               <tr>
-                <th>Description</th>
+                <th>Item Description</th>
                 <th>Qty</th>
-                <th>Unit price</th>
-                <th>Total price</th>
+                <th>Unit Price</th>
+                <th>Amount</th>
               </tr>
             </thead>
             <tbody>
               {lineItems.map((item, index) => (
-                <tr key={`${item.description}-${index}`}>
-                  <td>{item.description}</td>
-                  <td>{item.quantity}</td>
-                  <td>{formatAmount(String(item.unitPrice))}</td>
-                  <td>{formatAmount(String(item.total))}</td>
-                </tr>
+                <>
+                  <tr key={`${item.description}-${index}`}>
+                    <td>{item.description}</td>
+                    <td>{item.quantity}</td>
+                    <td>{formatAmount(String(item.unitPrice))}</td>
+                    <td>{formatAmount(String(item.total))}</td>
+                  </tr>
+                  {index === 0 && selectedBooking.itemDescription && (
+                    <tr key="item-desc-row" className="item-description-row">
+                      <td colSpan={4}>{selectedBooking.itemDescription}</td>
+                    </tr>
+                  )}
+                </>
               ))}
             </tbody>
           </table>
@@ -2616,7 +2628,7 @@ function App() {
           <table className="invoice-table">
             <thead>
               <tr>
-                <th>Description</th>
+                <th>Item Description</th>
                 <th>Qty</th>
                 <th>Unit Price</th>
                 <th>Amount</th>
@@ -2624,12 +2636,19 @@ function App() {
             </thead>
             <tbody>
               {lineItems.map((item, index) => (
-                <tr key={`${item.description}-${index}`}>
-                  <td>{item.description}</td>
-                  <td>{item.quantity}</td>
-                  <td>{formatAmount(String(item.unitPrice))}</td>
-                  <td>{formatAmount(String(item.total))}</td>
-                </tr>
+                <>
+                  <tr key={`${item.description}-${index}`}>
+                    <td>{item.description}</td>
+                    <td>{item.quantity}</td>
+                    <td>{formatAmount(String(item.unitPrice))}</td>
+                    <td>{formatAmount(String(item.total))}</td>
+                  </tr>
+                  {index === 0 && selectedBooking.itemDescription && (
+                    <tr key="item-desc-row" className="item-description-row">
+                      <td colSpan={4}>{selectedBooking.itemDescription}</td>
+                    </tr>
+                  )}
+                </>
               ))}
             </tbody>
           </table>

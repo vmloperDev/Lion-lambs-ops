@@ -1232,6 +1232,7 @@ input, select, textarea { font: inherit; }
 .quote-table th, .quote-table td { padding: 7px 8px; }
 .quote-table tbody tr:nth-child(odd) { background: #f5f7f8; }
 .quote-table th:not(:first-child), .quote-table td:not(:first-child) { text-align: right; }
+.quote-table .item-description-row td { background: #f0f8fa; color: #4a6572; font-size: 0.82rem; font-style: italic; padding: 4px 8px 8px 18px; border-bottom: 1px solid #d7e8ec; }
 .quote-notes { display: grid; gap: 8px; margin-top: 18px; color: #52667f; font-size: 0.88rem; }
 .quote-notes p { margin: 0; }
 .quote-notes strong { color: #173a6a; }
@@ -1263,6 +1264,7 @@ input, select, textarea { font: inherit; }
 .invoice-table th { border-bottom: 2px solid #102a43; color: #102a43; text-align: left; }
 .invoice-table th, .invoice-table td { padding: 10px 8px; }
 .invoice-table th:not(:first-child), .invoice-table td:not(:first-child) { text-align: right; }
+.invoice-table .item-description-row td { background: #f4f6f8; color: #4a5a6a; font-size: 0.82rem; font-style: italic; padding: 4px 8px 10px 18px; border-bottom: 1px solid #d0dae3; }
 .invoice-total-panel { display: grid; justify-content: end; gap: 8px; margin-top: 14px; }
 .invoice-total-panel > div:not(.payment-placeholder) { display: grid; grid-template-columns: 110px 150px; align-items: center; gap: 12px; text-align: right; }
 .invoice-total-panel > div:nth-child(2) { padding: 8px 0; border-top: 2px solid #102a43; border-bottom: 2px solid #102a43; }
