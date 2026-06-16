@@ -1076,6 +1076,31 @@ input, select, textarea { font: inherit; }
 .invoice-edit-summary span { color: var(--muted); font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
 .invoice-edit-summary strong { color: var(--teal); font-size: 1.3rem; font-weight: 800; overflow-wrap: anywhere; }
 
+.log-payment-btn {
+  margin-top: 0.75rem; padding: 0.65rem 1.4rem;
+  background: var(--teal); color: #fff; border: none; border-radius: var(--r);
+  font-size: 0.9rem; font-weight: 700; cursor: pointer; transition: background .15s;
+}
+.log-payment-btn:hover:not(:disabled) { background: #1a6070; }
+.log-payment-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.payment-log-list { display: grid; gap: 8px; }
+.payment-log-entry {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 14px; border-radius: var(--r);
+  background: var(--surface-raised); border: 1px solid var(--border);
+  font-size: 0.875rem; line-height: 1.4;
+}
+.payment-log-entry span { flex: 1; }
+.payment-log-remove {
+  flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--muted); font-size: 1rem; line-height: 1; cursor: pointer;
+  display: grid; place-items: center; transition: background .15s, color .15s;
+}
+.payment-log-remove:hover { background: #ff4261; color: #fff; border-color: #ff4261; }
+.payment-log-empty { color: var(--muted); font-style: italic; font-size: 0.875rem; margin: 0; }
+
 /* ================================================================
    BOOKING DETAIL
    ================================================================ */

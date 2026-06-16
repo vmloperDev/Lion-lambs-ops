@@ -510,6 +510,12 @@ function App() {
     invoicePaymentStatus: 'Unpaid',
     invoiceReference: '',
   })
+  const [paymentEntry, setPaymentEntry] = useState({
+    amount: '',
+    method: '',
+    reference: '',
+    date: new Date().toISOString().slice(0, 10),
+  })
   const [activeBookingFilter, setActiveBookingFilter] = useState<BookingListFilter>('All')
   const [selectedBookingId, setSelectedBookingId] = useState('')
   const [editingBookingId, setEditingBookingId] = useState('')
@@ -1023,6 +1029,30 @@ function App() {
     value: (typeof invoiceForm)[Field],
   ) {
     setInvoiceForm((currentForm) => ({ ...currentForm, [field]: value }))
+  }
+
+  function handleLogPayment() {
+    const amount = parseFloat(paymentEntry.amount)
+    if (!amount || amount <= 0) return
+    const dateLabel = paymentEntry.date
+      ? new Date(paymentEntry.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+      : new Date().toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+    const methodPart = paymentEntry.method ? ` via ${paymentEntry.method}` : ''
+    const refPart = paymentEntry.reference ? ` (Ref: ${paymentEntry.reference})` : ''
+    const record = `${dateLabel}${methodPart}${refPart} — PHP ${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+    const prevPaid = parseAmount(invoiceForm.invoiceAmountPaid)
+    const newPaid = prevPaid + amount
+    const prevRecords = invoiceForm.paymentRecords.trim()
+    const newRecords = prevRecords ? `${prevRecords}
+${record}` : record
+    setInvoiceForm((f) => ({
+      ...f,
+      invoiceAmountPaid: String(newPaid),
+      paymentRecords: newRecords,
+      paymentMethod: paymentEntry.method || f.paymentMethod,
+      invoicePaymentDate: paymentEntry.date || f.invoicePaymentDate,
+    }))
+    setPaymentEntry({ amount: '', method: '', reference: '', date: new Date().toISOString().slice(0, 10) })
   }
 
   async function handleSaveInvoiceUpdate(event: React.FormEvent<HTMLFormElement>) {
@@ -2437,17 +2467,90 @@ function App() {
 
           <section className="form-section">
             <div className="form-section-heading">
-              <p>Editable invoice</p>
-              <h2>Payment update before PDF</h2>
+              <p>Log a payment</p>
+              <h2>Add customer payment</h2>
             </div>
-            <div className="field-grid three">
+            <div className="field-grid two">
+              <label>
+                Amount received (PHP)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={paymentEntry.amount}
+                  onChange={(e) => setPaymentEntry((p) => ({ ...p, amount: e.target.value }))}
+                  placeholder="e.g. 5000"
+                />
+              </label>
+              <label>
+                Payment date
+                <input
+                  type="date"
+                  value={paymentEntry.date}
+                  onChange={(e) => setPaymentEntry((p) => ({ ...p, date: e.target.value }))}
+                />
+              </label>
+              <label>
+                Payment method
+                <input
+                  value={paymentEntry.method}
+                  onChange={(e) => setPaymentEntry((p) => ({ ...p, method: e.target.value }))}
+                  placeholder="GCash, BDO, cash, etc."
+                />
+              </label>
+              <label>
+                Reference / OR no.
+                <input
+                  value={paymentEntry.reference}
+                  onChange={(e) => setPaymentEntry((p) => ({ ...p, reference: e.target.value }))}
+                  placeholder="GCash ref, OR no., bank ref"
+                />
+              </label>
+            </div>
+            <button
+              type="button"
+              className="log-payment-btn"
+              onClick={handleLogPayment}
+              disabled={!paymentEntry.amount || Number(paymentEntry.amount) <= 0}
+            >
+              + Log payment
+            </button>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>Payment records</p>
+              <h2>History &amp; status</h2>
+            </div>
+            <div className="payment-log-list">
+              {invoiceForm.paymentRecords
+                ? invoiceForm.paymentRecords.split('
+').filter(Boolean).map((rec, i) => (
+                    <div key={i} className="payment-log-entry">
+                      <span>{rec}</span>
+                      <button
+                        type="button"
+                        className="payment-log-remove"
+                        title="Remove this record"
+                        onClick={() => {
+                          const lines = invoiceForm.paymentRecords.split('
+').filter(Boolean)
+                          lines.splice(i, 1)
+                          updateInvoiceField('paymentRecords', lines.join('
+'))
+                        }}
+                      >×</button>
+                    </div>
+                  ))
+                : <p className="payment-log-empty">No payments logged yet.</p>
+              }
+            </div>
+            <div className="field-grid two" style={{marginTop:'1rem'}}>
               <label>
                 Payment status
                 <select
                   value={invoiceForm.invoicePaymentStatus}
-                  onChange={(event) =>
-                    updateInvoiceField('invoicePaymentStatus', event.target.value)
-                  }
+                  onChange={(event) => updateInvoiceField('invoicePaymentStatus', event.target.value)}
                 >
                   <option>Unpaid</option>
                   <option>Partially Paid</option>
@@ -2455,61 +2558,15 @@ function App() {
                 </select>
               </label>
               <label>
-                Amount paid
+                Total paid so far (auto-summed)
                 <input
                   type="number"
-                  min="0"
-                  step="0.01"
                   value={invoiceForm.invoiceAmountPaid}
-                  onChange={(event) =>
-                    updateInvoiceField('invoiceAmountPaid', event.target.value)
-                  }
-                  placeholder="PHP 0.00"
-                />
-              </label>
-              <label>
-                Payment date
-                <input
-                  type="date"
-                  value={invoiceForm.invoicePaymentDate}
-                  onChange={(event) =>
-                    updateInvoiceField('invoicePaymentDate', event.target.value)
-                  }
+                  onChange={(event) => updateInvoiceField('invoiceAmountPaid', event.target.value)}
+                  placeholder="0"
                 />
               </label>
             </div>
-            <div className="field-grid two">
-              <label>
-                Payment method
-                <input
-                  value={invoiceForm.paymentMethod}
-                  onChange={(event) =>
-                    updateInvoiceField('paymentMethod', event.target.value)
-                  }
-                  placeholder="Bank transfer, cash, GCash"
-                />
-              </label>
-              <label>
-                Payment reference
-                <input
-                  value={invoiceForm.invoiceReference}
-                  onChange={(event) =>
-                    updateInvoiceField('invoiceReference', event.target.value)
-                  }
-                  placeholder="OR / bank ref / GCash ref"
-                />
-              </label>
-            </div>
-            <label className="textarea-field">
-              Payment records
-              <textarea
-                value={invoiceForm.paymentRecords}
-                onChange={(event) =>
-                  updateInvoiceField('paymentRecords', event.target.value)
-                }
-                placeholder="One payment update per line, e.g. DP MAR 3 PAID - PHP 40,000"
-              />
-            </label>
           </section>
         </form>
       </main>
