@@ -3188,6 +3188,7 @@ function App() {
                 <th>Qty</th>
                 <th># of Pax</th>
                 <th>Particular</th>
+                <th>Description</th>
                 <th>Unit Price</th>
                 <th>Amount</th>
               </tr>
@@ -3196,7 +3197,8 @@ function App() {
               <tr>
                 <td>{item.quantity}</td>
                 <td>{paxLabel}</td>
-                <td>{itemDescription}{item.details ? ` — ${item.details}` : ''}</td>
+                <td>{itemDescription}</td>
+                <td>{item.details || '—'}</td>
                 <td>{formatAmount(String(poUnitPrice))}</td>
                 <td>{formatAmount(String(poAmount))}</td>
               </tr>
