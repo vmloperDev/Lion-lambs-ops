@@ -95,7 +95,9 @@ type BreakdownLineItem = {
   id?: string
   description: string // drop-down choices
   details?: string    // free-text details column
+  vendor?: string      // name of vendor/supplier for this row
   quantity: string
+  paxBreakdown?: string // JSON: {adult, senior, child, infant} — sums into quantity
   unitPrice: string
   nettCost: string
   sendToInvoice: boolean
@@ -327,6 +329,38 @@ function parseQuantity(value?: string) {
   return Number.isFinite(quantity) && quantity > 0 ? quantity : 1
 }
 
+type PaxBreakdown = { adult: string; senior: string; child: string; infant: string }
+
+function readPaxBreakdown(value?: string): PaxBreakdown {
+  try {
+    if (value) {
+      const parsed = JSON.parse(value)
+      return {
+        adult: parsed.adult || '',
+        senior: parsed.senior || '',
+        child: parsed.child || '',
+        infant: parsed.infant || '',
+      }
+    }
+  } catch {}
+  return { adult: '', senior: '', child: '', infant: '' }
+}
+
+function sumPaxBreakdown(pax: PaxBreakdown) {
+  return (
+    parseAmount(pax.adult) + parseAmount(pax.senior) + parseAmount(pax.child) + parseAmount(pax.infant)
+  )
+}
+
+function formatPaxBreakdownLabel(pax: PaxBreakdown) {
+  const parts: string[] = []
+  if (parseAmount(pax.adult) > 0) parts.push(`${pax.adult} Adult`)
+  if (parseAmount(pax.senior) > 0) parts.push(`${pax.senior} Senior`)
+  if (parseAmount(pax.child) > 0) parts.push(`${pax.child} Child`)
+  if (parseAmount(pax.infant) > 0) parts.push(`${pax.infant} Infant`)
+  return parts.join(', ')
+}
+
 function createLineItemId() {
   return `LI-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -513,6 +547,7 @@ function App() {
   const [customInvoiceItemRowIndex, setCustomInvoiceItemRowIndex] = useState(-1)
   const [customInvoiceItemDraft, setCustomInvoiceItemDraft] = useState('')
   const [openInvoiceDropdownIndex, setOpenInvoiceDropdownIndex] = useState(-1)
+  const [openPaxPopoverIndex, setOpenPaxPopoverIndex] = useState(-1)
 
   const breakdownOptions = [
     'Group Package',
@@ -954,7 +989,7 @@ function App() {
 
   function addBreakdownItemRow() {
     const current = getBreakdownItemsList()
-    current.push({ id: createLineItemId(), description: breakdownOptions[0], quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false })
+    current.push({ id: createLineItemId(), description: breakdownOptions[0], details: '', vendor: '', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false })
     saveBreakdownItemsList(current)
   }
 
@@ -968,6 +1003,19 @@ function App() {
   function changeBreakdownItemField(index: number, field: keyof BreakdownLineItem, value: any) {
     const current = getBreakdownItemsList()
     current[index] = { ...current[index], [field]: value }
+    saveBreakdownItemsList(current)
+  }
+
+  function changeBreakdownPaxField(index: number, category: keyof PaxBreakdown, value: string) {
+    const current = getBreakdownItemsList()
+    const pax = readPaxBreakdown(current[index].paxBreakdown)
+    pax[category] = value
+    const total = sumPaxBreakdown(pax)
+    current[index] = {
+      ...current[index],
+      paxBreakdown: JSON.stringify(pax),
+      quantity: total > 0 ? String(total) : current[index].quantity,
+    }
     saveBreakdownItemsList(current)
   }
 
@@ -1733,8 +1781,10 @@ function App() {
 
               <div className="line-items-table">
                 <div className="line-items-row breakdown-row header">
+                  <span>Vendor</span>
                   <span>Service / item</span>
-                  <span>Qty</span>
+                  <span>Description</span>
+                  <span>Pax</span>
                   <span>Client price</span>
                   <span>Supplier nett</span>
                   <span>Send to invoice</span>
@@ -1744,6 +1794,12 @@ function App() {
                 {currentBreakdownItems.map((item, index) => (
                   <div key={index} className="line-item-data-row">
                     <div className="line-items-row breakdown-row">
+                      <input
+                        type="text"
+                        value={item.vendor || ''}
+                        onChange={(e) => changeBreakdownItemField(index, 'vendor', e.target.value)}
+                        placeholder="Vendor / supplier name"
+                      />
                       {item.isPackageRow ? (
                         <input disabled className="disabled-field" value={`Auto: ${bookingForm.packageName || 'Basic Package'}`} />
                       ) : (
@@ -1752,12 +1808,39 @@ function App() {
                         </select>
                       )}
                       <input
-                        type="number" min="1"
-                        disabled={item.isPackageRow}
-                        className={item.isPackageRow ? 'disabled-field' : ''}
-                        value={item.quantity}
-                        onChange={(e) => changeBreakdownItemField(index, 'quantity', e.target.value)}
+                        type="text"
+                        value={item.details || ''}
+                        onChange={(e) => changeBreakdownItemField(index, 'details', e.target.value)}
+                        placeholder="Notes / details"
                       />
+                      <div className="custom-select pax-popover-wrap" onBlur={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpenPaxPopoverIndex(-1)
+                      }}>
+                        <button
+                          type="button"
+                          className="custom-select-trigger"
+                          disabled={item.isPackageRow}
+                          onClick={() => setOpenPaxPopoverIndex(openPaxPopoverIndex === index ? -1 : index)}
+                        >
+                          <span>{formatPaxBreakdownLabel(readPaxBreakdown(item.paxBreakdown)) || item.quantity || '1'}</span>
+                          <ChevronDown size={15} />
+                        </button>
+                        {openPaxPopoverIndex === index && (
+                          <div className="custom-select-menu pax-popover-menu">
+                            {(['adult', 'senior', 'child', 'infant'] as const).map((category) => (
+                              <label key={category} className="pax-popover-field">
+                                <span>{category.charAt(0).toUpperCase() + category.slice(1)}</span>
+                                <input
+                                  type="number" min="0"
+                                  value={readPaxBreakdown(item.paxBreakdown)[category]}
+                                  onChange={(e) => changeBreakdownPaxField(index, category, e.target.value)}
+                                  placeholder="0"
+                                />
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                       <input
                         type="text"
                         disabled={item.isPackageRow}

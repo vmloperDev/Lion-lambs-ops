@@ -1068,9 +1068,10 @@ input, select, textarea { font: inherit; }
 .line-items-summary .profit-total    { color: var(--green); }
 .line-items-summary .profit-negative { color: var(--red); }
 
-/* Breakdown row — wider to fit send-to-invoice toggle */
+/* Breakdown row — wider to fit vendor, description, pax popover, and send-to-invoice toggle */
 .line-items-row.breakdown-row {
-  grid-template-columns: minmax(200px,1.6fr) 68px minmax(110px,.8fr) minmax(110px,.8fr) 110px 48px;
+  grid-template-columns: minmax(140px,1fr) minmax(160px,1.3fr) minmax(140px,1fr) minmax(110px,.8fr) minmax(110px,.8fr) minmax(110px,.8fr) 110px 48px;
+  min-width: 1080px;
 }
 
 /* Send-to-invoice toggle button */
@@ -1219,6 +1220,33 @@ input, select, textarea { font: inherit; }
   cursor: pointer;
 }
 .custom-select-add:hover { background: var(--teal-light); }
+
+.pax-popover-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+  padding: 10px;
+}
+.pax-popover-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.pax-popover-field span {
+  font-size: .82rem;
+  color: var(--subtle);
+}
+.pax-popover-field input {
+  width: 64px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: .85rem;
+  text-align: right;
+}
 
 /* Invoice edit summary */
 .invoice-edit-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
