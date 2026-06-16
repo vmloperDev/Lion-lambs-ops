@@ -1502,3 +1502,8 @@ input, select, textarea { font: inherit; }
 .breakdown-tier-col { display: flex; flex-direction: column; gap: 4px; }
 .tier-label-input { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; text-align: center; }
 .tier-pax-input { font-size: 0.78rem; text-align: center; }
+
+/* ── Pax-tier row in data gathering form ── */
+.line-items-row.pax-tier-row { display: grid; grid-template-columns: 160px 1fr repeat(4, 100px); gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.line-items-row.pax-tier-row.header { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); padding-bottom: 6px; }
+.pax-tier-service-label { font-size: 0.82rem; font-weight: 700; color: var(--text-primary); padding: 0 4px; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

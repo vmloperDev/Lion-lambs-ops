@@ -1516,54 +1516,20 @@ function App() {
             </div>
           </section>
 
-          {/* 05 · INTERNAL BREAKDOWN */}
+          {/* 05a · INTERNAL COSTING */}
           <section className="form-section internal-section">
             <div className="form-section-heading">
-              <p>05 · Breakdown</p>
-              <h2>Internal supplier costing</h2>
+              <p>05a · Internal Costing</p>
+              <h2>Supplier nett vs client price</h2>
             </div>
-            <p className="field-help">For internal use only. Enable "Send to invoice" on any row to also push it to the client invoice. The pax-tier prices populate the quotation breakdown template.</p>
-
-            {/* Pax-tier column labels + pax count configuration */}
-            {(() => {
-              let labels = ['2 PAX', '5 PAX', 'PAX AND ABOVE', 'INFANT']
-              try { const p = JSON.parse(bookingForm.breakdownColLabels); if (Array.isArray(p) && p.length === 4) labels = p } catch {}
-              let paxCounts = ['', '', '', '']
-              try { const p = JSON.parse(bookingForm.breakdownPaxTiers); if (Array.isArray(p) && p.length === 4) paxCounts = p } catch {}
-              const setLabel = (i: number, v: string) => { const next = [...labels]; next[i] = v; updateBookingField('breakdownColLabels', JSON.stringify(next)) }
-              const setPax = (i: number, v: string) => { const next = [...paxCounts]; next[i] = v; updateBookingField('breakdownPaxTiers', JSON.stringify(next)) }
-              return (
-                <div className="breakdown-tier-config">
-                  <p className="breakdown-tier-config-label">Pax-tier columns (labels &amp; counts)</p>
-                  <div className="breakdown-tier-grid">
-                    {labels.map((label, i) => (
-                      <div key={i} className="breakdown-tier-col">
-                        <input
-                          value={label}
-                          onChange={(e) => setLabel(i, e.target.value)}
-                          placeholder={`Column ${i + 1} label`}
-                          className="tier-label-input"
-                        />
-                        <input
-                          type="number" min="0"
-                          value={paxCounts[i]}
-                          onChange={(e) => setPax(i, e.target.value)}
-                          placeholder="# pax"
-                          className="tier-pax-input"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )
-            })()}
+            <p className="field-help">For internal use only. Track what you pay the supplier vs what you charge the client. Toggle "Send to invoice" to push a row to the client invoice.</p>
 
             <div className="line-items-panel">
               <div className="line-items-heading">
                 <div>
                   <p>Costing sheet</p>
-                  <h3>Supplier nett vs client price</h3>
-                  <span>These rows are hidden from the client. Toggle visibility per row.</span>
+                  <h3>Per-service profit tracking</h3>
+                  <span>These rows are hidden from the client.</span>
                 </div>
                 <button type="button" onClick={addBreakdownItemRow}>
                   <Plus size={15} /> Add row
@@ -1573,15 +1539,9 @@ function App() {
               <div className="line-items-table">
                 <div className="line-items-row breakdown-row header">
                   <span>Service / item</span>
-                  <span>Details</span>
                   <span>Qty</span>
                   <span>Client price</span>
                   <span>Supplier nett</span>
-                  {(() => {
-                    let labels = ['2 PAX', '5 PAX', 'PAX AND ABV', 'INFANT']
-                    try { const p = JSON.parse(bookingForm.breakdownColLabels); if (Array.isArray(p) && p.length === 4) labels = p } catch {}
-                    return labels.map((lbl, i) => <span key={i}>{lbl}</span>)
-                  })()}
                   <span>Send to invoice</span>
                   <span></span>
                 </div>
@@ -1596,14 +1556,6 @@ function App() {
                           {breakdownOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
                         </select>
                       )}
-                      <input
-                        type="text"
-                        value={item.details || ''}
-                        onChange={(e) => changeBreakdownItemField(index, 'details', e.target.value)}
-                        placeholder="Details / route"
-                        disabled={item.isPackageRow}
-                        className={item.isPackageRow ? 'disabled-field' : ''}
-                      />
                       <input
                         type="number" min="1"
                         disabled={item.isPackageRow}
@@ -1625,17 +1577,6 @@ function App() {
                         onChange={(e) => changeBreakdownItemField(index, 'nettCost', e.target.value)}
                         placeholder="0.00"
                       />
-                      {(['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant'] as const).map((field) => (
-                        <input
-                          key={field}
-                          type="text"
-                          value={(item[field] as string) || ''}
-                          onChange={(e) => changeBreakdownItemField(index, field, e.target.value)}
-                          placeholder="0.00"
-                          disabled={item.isPackageRow}
-                          className={item.isPackageRow ? 'disabled-field' : ''}
-                        />
-                      ))}
                       <button
                         type="button"
                         className={`send-to-invoice-btn ${item.sendToInvoice ? 'active' : ''}`}
@@ -1673,6 +1614,97 @@ function App() {
                     {formatAmount(String(displayTotalProfit))}
                   </strong>
                 </article>
+              </div>
+            </div>
+          </section>
+
+          {/* 05b · PAX-TIER BREAKDOWN (Quotation template) */}
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>05b · Pax-Tier Breakdown</p>
+              <h2>Quotation pricing by group size</h2>
+            </div>
+            <p className="field-help">Enter per-person prices for each group size tier. These populate the quotation breakdown template shown to the client.</p>
+
+            {/* Column label + pax count config */}
+            {(() => {
+              let labels = ['2 PAX', '5 PAX', 'PAX AND ABOVE', 'INFANT']
+              try { const p = JSON.parse(bookingForm.breakdownColLabels); if (Array.isArray(p) && p.length === 4) labels = p } catch {}
+              let paxCounts = ['', '', '', '']
+              try { const p = JSON.parse(bookingForm.breakdownPaxTiers); if (Array.isArray(p) && p.length === 4) paxCounts = p } catch {}
+              const setLabel = (i: number, v: string) => { const next = [...labels]; next[i] = v; updateBookingField('breakdownColLabels', JSON.stringify(next)) }
+              const setPax = (i: number, v: string) => { const next = [...paxCounts]; next[i] = v; updateBookingField('breakdownPaxTiers', JSON.stringify(next)) }
+              return (
+                <div className="breakdown-tier-config">
+                  <p className="breakdown-tier-config-label">Column setup — label (top) · pax count (bottom)</p>
+                  <div className="breakdown-tier-grid">
+                    {labels.map((label, i) => (
+                      <div key={i} className="breakdown-tier-col">
+                        <input
+                          value={label}
+                          onChange={(e) => setLabel(i, e.target.value)}
+                          placeholder={`Column ${i + 1} label`}
+                          className="tier-label-input"
+                        />
+                        <input
+                          type="number" min="0"
+                          value={paxCounts[i]}
+                          onChange={(e) => setPax(i, e.target.value)}
+                          placeholder="# pax"
+                          className="tier-pax-input"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Per-service pax-tier price inputs */}
+            <div className="line-items-panel">
+              <div className="line-items-table">
+                <div className="line-items-row pax-tier-row header">
+                  <span>Service / item</span>
+                  <span>Details</span>
+                  {(() => {
+                    let labels = ['2 PAX', '5 PAX', 'PAX AND ABV', 'INFANT']
+                    try { const p = JSON.parse(bookingForm.breakdownColLabels); if (Array.isArray(p) && p.length === 4) labels = p } catch {}
+                    return labels.map((lbl, i) => <span key={i}>{lbl}</span>)
+                  })()}
+                </div>
+
+                {currentBreakdownItems.filter(item => !item.isPackageRow).map((item, index) => {
+                  // Find real index in full array for field updates
+                  const realIndex = currentBreakdownItems.indexOf(item)
+                  return (
+                    <div key={index} className="line-item-data-row">
+                      <div className="line-items-row pax-tier-row">
+                        <div className="pax-tier-service-label">{item.description}</div>
+                        <input
+                          type="text"
+                          value={item.details || ''}
+                          onChange={(e) => changeBreakdownItemField(realIndex, 'details', e.target.value)}
+                          placeholder="e.g. CRK - MPH"
+                        />
+                        {(['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant'] as const).map((field) => (
+                          <input
+                            key={field}
+                            type="text"
+                            value={(item[field] as string) || ''}
+                            onChange={(e) => changeBreakdownItemField(realIndex, field, e.target.value)}
+                            placeholder="0.00"
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {currentBreakdownItems.filter(i => !i.isPackageRow).length === 0 && (
+                  <div style={{padding:'1rem', textAlign:'center', color:'var(--text-secondary)', fontSize:'0.85rem'}}>
+                    Add rows in Section 05a above — they will appear here for pax-tier pricing.
+                  </div>
+                )}
               </div>
             </div>
           </section>
