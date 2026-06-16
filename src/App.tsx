@@ -525,7 +525,7 @@ function App() {
   const passwordStrength = getPasswordStrength(password)
 
   // Options lists
-  const invoiceOptions = [
+  const [invoiceOptions, setInvoiceOptions] = useState([
     'Add-on Luggage - One Way',
     'Add-on Luggage - Round Trip',
     'Fuel Surcharge',
@@ -534,7 +534,9 @@ function App() {
     'Tipping',
     'Visa',
     'Other'
-  ]
+  ])
+  const [customInvoiceItemRowIndex, setCustomInvoiceItemRowIndex] = useState(-1)
+  const [customInvoiceItemDraft, setCustomInvoiceItemDraft] = useState('')
 
   const breakdownOptions = [
     'Group Package',
@@ -900,6 +902,29 @@ function App() {
     const current = getInvoiceItemsList()
     current[index] = { ...current[index], [field]: value }
     saveInvoiceItemsList(current)
+  }
+
+  function startCustomInvoiceItem(index: number) {
+    setCustomInvoiceItemDraft('')
+    setCustomInvoiceItemRowIndex(index)
+  }
+
+  function cancelCustomInvoiceItem() {
+    setCustomInvoiceItemRowIndex(-1)
+    setCustomInvoiceItemDraft('')
+  }
+
+  function confirmCustomInvoiceItem(index: number) {
+    const name = customInvoiceItemDraft.trim()
+    if (!name) {
+      cancelCustomInvoiceItem()
+      return
+    }
+    if (!invoiceOptions.includes(name)) {
+      setInvoiceOptions((prev) => [...prev, name])
+    }
+    changeInvoiceItemField(index, 'description', name)
+    cancelCustomInvoiceItem()
   }
 
   function addBreakdownItemRow() {
@@ -1491,9 +1516,38 @@ function App() {
                       <div className="line-items-row">
                         {item.isPackageRow ? (
                           <input disabled className="disabled-field" value={bookingForm.packageName || 'Basic Package'} />
+                        ) : customInvoiceItemRowIndex === index ? (
+                          <input
+                            autoFocus
+                            type="text"
+                            className="custom-item-input"
+                            placeholder="Type new item name..."
+                            value={customInvoiceItemDraft}
+                            onChange={(e) => setCustomInvoiceItemDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                confirmCustomInvoiceItem(index)
+                              } else if (e.key === 'Escape') {
+                                e.preventDefault()
+                                cancelCustomInvoiceItem()
+                              }
+                            }}
+                            onBlur={() => confirmCustomInvoiceItem(index)}
+                          />
                         ) : (
-                          <select value={item.description} onChange={(e) => changeInvoiceItemField(index, 'description', e.target.value)}>
+                          <select
+                            value={item.description}
+                            onChange={(e) => {
+                              if (e.target.value === '__add_custom__') {
+                                startCustomInvoiceItem(index)
+                                return
+                              }
+                              changeInvoiceItemField(index, 'description', e.target.value)
+                            }}
+                          >
                             {invoiceOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                            <option value="__add_custom__">+ Add custom item</option>
                           </select>
                         )}
                         <input
