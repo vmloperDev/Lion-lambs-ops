@@ -2991,7 +2991,12 @@ function App() {
                   <tr key={`${item.description}-${index}`}>
                     <td>{item.quantity}</td>
                     <td>{selectedBooking.pax || item.quantity}</td>
-                    <td>{item.description}</td>
+                    <td>
+                      {item.description}
+                      {item.isPackageRow && getBookingBreakdownNettTotal(selectedBooking) > 0
+                        ? ` — ₱${getBookingBreakdownNettTotal(selectedBooking).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} nett`
+                        : ''}
+                    </td>
                     <td>{formatAmount(String(poUnitPrice))}</td>
                     <td>{formatAmount(String(poAmount))}</td>
                   </tr>
@@ -3143,12 +3148,7 @@ function App() {
           <section className="voucher-party-grid">
             <div>
               <span>Package:</span>
-              <strong>
-                {selectedBooking.packageName}
-                {getBookingBreakdownNettTotal(selectedBooking) > 0
-                  ? ` — ₱${getBookingBreakdownNettTotal(selectedBooking).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} nett`
-                  : ''}
-              </strong>
+              <strong>{selectedBooking.packageName}</strong>
               <small>
                 Tour Date:{' '}
                 {selectedBooking.travelStart
