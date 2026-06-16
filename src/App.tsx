@@ -96,6 +96,7 @@ type BreakdownLineItem = {
   description: string // drop-down choices
   details?: string    // free-text details column
   vendor?: string      // name of vendor/supplier for this row
+  contactNumber?: string // per-PO supplier contact number
   quantity: string
   paxBreakdown?: string // JSON: {adult, senior, child, infant} — sums into quantity
   unitPrice: string
@@ -1782,6 +1783,7 @@ function App() {
               <div className="line-items-table">
                 <div className="line-items-row breakdown-row header">
                   <span>Vendor</span>
+                  <span>Contact No.</span>
                   <span>Service / item</span>
                   <span>Description</span>
                   <span>Pax</span>
@@ -1800,6 +1802,12 @@ function App() {
                         value={item.vendor || ''}
                         onChange={(e) => changeBreakdownItemField(index, 'vendor', e.target.value)}
                         placeholder="Vendor / supplier name"
+                      />
+                      <input
+                        type="text"
+                        value={item.contactNumber || ''}
+                        onChange={(e) => changeBreakdownItemField(index, 'contactNumber', e.target.value)}
+                        placeholder="Contact no."
                       />
                       {item.isPackageRow ? (
                         <input disabled className="disabled-field" value={`Auto: ${bookingForm.packageName || 'Basic Package'}`} />
@@ -3129,7 +3137,7 @@ function App() {
               <span>Vendor:</span>
               <strong>{item.vendor || selectedBooking.supplier || 'To be assigned'}</strong>
               <small>Agent: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}</small>
-              <small>Contact No.: {selectedBooking.supplierContact || 'N/A'}</small>
+              <small>Contact No.: {item.contactNumber || selectedBooking.supplierContact || 'N/A'}</small>
             </div>
             <div>
               <span>Client Details:</span>
