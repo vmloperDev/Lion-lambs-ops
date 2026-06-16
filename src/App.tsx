@@ -552,7 +552,7 @@ function App() {
   const [customInvoiceItemRowIndex, setCustomInvoiceItemRowIndex] = useState(-1)
   const [customInvoiceItemDraft, setCustomInvoiceItemDraft] = useState('')
   const [openInvoiceDropdownIndex, setOpenInvoiceDropdownIndex] = useState(-1)
-  const [openPaxPopoverIndex, setOpenPaxPopoverIndex] = useState(-1)
+  const [paxModalIndex, setPaxModalIndex] = useState(-1)
 
   const breakdownOptions = [
     'Group Package',
@@ -1822,34 +1822,13 @@ function App() {
                         onChange={(e) => changeBreakdownItemField(index, 'details', e.target.value)}
                         placeholder="Notes / details"
                       />
-                      <div className="custom-select pax-popover-wrap" onBlur={(e) => {
-                        if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpenPaxPopoverIndex(-1)
-                      }}>
-                        <button
-                          type="button"
-                          className="custom-select-trigger"
-                          disabled={item.isPackageRow}
-                          onClick={() => setOpenPaxPopoverIndex(openPaxPopoverIndex === index ? -1 : index)}
-                        >
-                          <span>{formatPaxBreakdownLabel(readPaxBreakdown(item.paxBreakdown)) || item.quantity || '1'}</span>
-                          <ChevronDown size={15} />
-                        </button>
-                        {openPaxPopoverIndex === index && (
-                          <div className="custom-select-menu pax-popover-menu">
-                            {(['adult', 'senior', 'child', 'infant'] as const).map((category) => (
-                              <label key={category} className="pax-popover-field">
-                                <span>{category.charAt(0).toUpperCase() + category.slice(1)}</span>
-                                <input
-                                  type="number" min="0"
-                                  value={readPaxBreakdown(item.paxBreakdown)[category]}
-                                  onChange={(e) => changeBreakdownPaxField(index, category, e.target.value)}
-                                  placeholder="0"
-                                />
-                              </label>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+                      <button
+                        type="button"
+                        className="pax-modal-trigger"
+                        onClick={() => setPaxModalIndex(index)}
+                      >
+                        <span>{formatPaxBreakdownLabel(readPaxBreakdown(item.paxBreakdown)) || item.quantity || '1'}</span>
+                      </button>
                       <input
                         type="text"
                         disabled={item.isPackageRow}
@@ -2173,6 +2152,37 @@ function App() {
             </button>
           </footer>
         </form>
+
+        {/* PAX MODAL */}
+        {paxModalIndex >= 0 && (() => {
+          const item = currentBreakdownItems[paxModalIndex]
+          const label = item?.isPackageRow ? (bookingForm.packageName || 'Package') : item?.description
+          return (
+            <div className="pax-modal-overlay" onClick={() => setPaxModalIndex(-1)}>
+              <div className="pax-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="pax-modal-header">
+                  <span>No. of Pax — <strong>{label}</strong></span>
+                  <button type="button" className="pax-modal-close" onClick={() => setPaxModalIndex(-1)}>
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className="pax-modal-body">
+                  {(['adult', 'child', 'senior', 'infant'] as const).map((category) => (
+                    <label key={category} className="pax-modal-field">
+                      <span>{category.charAt(0).toUpperCase() + category.slice(1)}</span>
+                      <input
+                        type="number" min="0"
+                        value={readPaxBreakdown(item?.paxBreakdown)[category]}
+                        onChange={(e) => changeBreakdownPaxField(paxModalIndex, category, e.target.value)}
+                        placeholder="0"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )
+        })()}
       </main>
     )
   }
