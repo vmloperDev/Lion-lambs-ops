@@ -1457,6 +1457,10 @@ function App() {
                 <input value={bookingForm.pax} onChange={(e) => updateBookingField('pax', e.target.value)} placeholder="2 adults, 1 infant" />
               </label>
               <label>
+                Payment method
+                <input value={bookingForm.paymentMethod} onChange={(e) => updateBookingField('paymentMethod', e.target.value)} placeholder="Bank Transfer, GCash, Cash" />
+              </label>
+              <label>
                 Travel start
                 <input type="date" value={bookingForm.travelStart} onChange={(e) => updateBookingField('travelStart', e.target.value)} />
               </label>
@@ -3101,7 +3105,7 @@ function App() {
             <tbody>
               <tr>
                 <td>{selectedBooking.paymentMethod || 'Bank Transfer'}</td>
-                <td>{selectedBooking.destination || 'Tours and Transfers'}</td>
+                <td>{selectedBooking.packageName || 'Tours and Transfers'}</td>
                 <td>
                   {selectedBooking.travelStart
                     ? `${formatProjectDate(selectedBooking.travelStart)}${
@@ -3139,12 +3143,7 @@ function App() {
                   <tr key={`${item.description}-${index}`}>
                     <td>{item.quantity}</td>
                     <td>{selectedBooking.pax || item.quantity}</td>
-                    <td>
-                      {item.description}
-                      {index === 0 && item.description === selectedBooking.packageName && getBookingBreakdownNettTotal(selectedBooking) > 0
-                        ? ` — ₱${getBookingBreakdownNettTotal(selectedBooking).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} nett`
-                        : ''}
-                    </td>
+                    <td>{item.description}</td>
                     <td>{formatAmount(String(poUnitPrice))}</td>
                     <td>{formatAmount(String(poAmount))}</td>
                   </tr>
