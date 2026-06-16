@@ -1,3 +1,4 @@
+import { extractBookingFieldsFromText, GeminiExtractError, type ExtractedBookingFields } from './geminiExtract'
 import { useEffect, useState } from 'react'
 import {
   createUserWithEmailAndPassword,
@@ -23,6 +24,7 @@ import {
   ArrowRight,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   ClipboardList,
   Clock3,
@@ -501,6 +503,11 @@ function App() {
   const [isAuthLoading, setIsAuthLoading] = useState(true)
   const [dataError, setDataError] = useState('')
   const [dataMessage, setDataMessage] = useState('')
+  const [aiPasteOpen, setAiPasteOpen] = useState(false)
+  const [aiPasteText, setAiPasteText] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [aiFilledFields, setAiFilledFields] = useState<string[]>([])
   const [isPdfExporting, setIsPdfExporting] = useState(false)
   const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
@@ -525,7 +532,7 @@ function App() {
   const passwordStrength = getPasswordStrength(password)
 
   // Options lists
-  const [invoiceOptions, setInvoiceOptions] = useState([
+  const defaultInvoiceOptions = [
     'Add-on Luggage - One Way',
     'Add-on Luggage - Round Trip',
     'Fuel Surcharge',
@@ -534,9 +541,11 @@ function App() {
     'Tipping',
     'Visa',
     'Other'
-  ])
+  ]
+  const [invoiceOptions, setInvoiceOptions] = useState(defaultInvoiceOptions)
   const [customInvoiceItemRowIndex, setCustomInvoiceItemRowIndex] = useState(-1)
   const [customInvoiceItemDraft, setCustomInvoiceItemDraft] = useState('')
+  const [openInvoiceDropdownIndex, setOpenInvoiceDropdownIndex] = useState(-1)
 
   const breakdownOptions = [
     'Group Package',
@@ -815,6 +824,39 @@ function App() {
     })
   }
 
+  async function handleAiAutoFill() {
+    setAiError('')
+    setAiFilledFields([])
+    setAiLoading(true)
+    try {
+      const { fields, rawFieldCount } = await extractBookingFieldsFromText(aiPasteText)
+      if (rawFieldCount === 0) {
+        setAiError('Could not find any recognizable booking details in that text. Try pasting more context.')
+        return
+      }
+      const filledKeys: string[] = []
+      setBookingForm((current) => {
+        const updated = { ...current }
+        ;(Object.keys(fields) as Array<keyof ExtractedBookingFields>).forEach((key) => {
+          const value = fields[key]
+          if (value && key in updated) {
+            ;(updated as Record<string, string>)[key] = value
+            filledKeys.push(key)
+          }
+        })
+        return updated
+      })
+      setAiFilledFields(filledKeys)
+      setDataMessage(`Auto-filled ${filledKeys.length} field${filledKeys.length === 1 ? '' : 's'} from pasted text. Review before saving.`)
+      setAiPasteOpen(false)
+      setAiPasteText('')
+    } catch (err) {
+      setAiError(err instanceof GeminiExtractError ? err.message : 'Something went wrong while contacting Gemini. Please try again.')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
   // Functional parsing helpers for the dynamic interface tables
   function getInvoiceItemsList(): InvoiceLineItem[] {
     return readInvoiceItems(bookingForm).map((item) => ({
@@ -925,6 +967,22 @@ function App() {
     }
     changeInvoiceItemField(index, 'description', name)
     cancelCustomInvoiceItem()
+  }
+
+  function removeCustomInvoiceOption(option: string) {
+    if (defaultInvoiceOptions.includes(option)) return // protect built-in options
+    setInvoiceOptions((prev) => prev.filter((opt) => opt !== option))
+    // if any row currently uses the removed option, reset it back to the first option
+    const current = getInvoiceItemsList()
+    let changed = false
+    const next = current.map((item) => {
+      if (!item.isPackageRow && item.description === option) {
+        changed = true
+        return { ...item, description: defaultInvoiceOptions[0] }
+      }
+      return item
+    })
+    if (changed) saveInvoiceItemsList(next)
   }
 
   function addBreakdownItemRow() {
@@ -1351,6 +1409,45 @@ function App() {
             </button>
           </header>
 
+          <section className="ai-autofill-panel">
+            {!aiPasteOpen ? (
+              <button type="button" className="ai-autofill-trigger" onClick={() => { setAiPasteOpen(true); setAiError('') }}>
+                <Sparkles size={16} />
+                Paste & auto-fill with AI
+              </button>
+            ) : (
+              <div className="ai-autofill-box">
+                <div className="ai-autofill-box-heading">
+                  <Sparkles size={16} />
+                  <span>Paste a chat, email, or any client conversation — AI will fill in what it finds</span>
+                  <button type="button" className="ai-autofill-close" onClick={() => { setAiPasteOpen(false); setAiPasteText(''); setAiError('') }}>
+                    <X size={16} />
+                  </button>
+                </div>
+                <textarea
+                  className="ai-autofill-textarea"
+                  rows={6}
+                  placeholder="Paste the client's message, email thread, or notes here..."
+                  value={aiPasteText}
+                  onChange={(e) => setAiPasteText(e.target.value)}
+                  disabled={aiLoading}
+                />
+                {aiError && <p className="data-alert error">{aiError}</p>}
+                <div className="ai-autofill-actions">
+                  <span className="ai-autofill-hint">Only fields it can confidently find will be filled — review before saving.</span>
+                  <button
+                    type="button"
+                    className="ai-autofill-submit"
+                    onClick={handleAiAutoFill}
+                    disabled={aiLoading || !aiPasteText.trim()}
+                  >
+                    {aiLoading ? 'Reading...' : 'Auto-fill form'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+
           {dataError && <p className="data-alert error">{dataError}</p>}
           {dataMessage && <p className="data-alert info">{dataMessage}</p>}
 
@@ -1536,19 +1633,59 @@ function App() {
                             onBlur={() => confirmCustomInvoiceItem(index)}
                           />
                         ) : (
-                          <select
-                            value={item.description}
-                            onChange={(e) => {
-                              if (e.target.value === '__add_custom__') {
-                                startCustomInvoiceItem(index)
-                                return
-                              }
-                              changeInvoiceItemField(index, 'description', e.target.value)
-                            }}
-                          >
-                            {invoiceOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-                            <option value="__add_custom__">+ Add custom item</option>
-                          </select>
+                          <div className="custom-select" onBlur={(e) => {
+                            if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpenInvoiceDropdownIndex(-1)
+                          }}>
+                            <button
+                              type="button"
+                              className="custom-select-trigger"
+                              onClick={() => setOpenInvoiceDropdownIndex(openInvoiceDropdownIndex === index ? -1 : index)}
+                            >
+                              <span>{item.description || 'Select item'}</span>
+                              <ChevronDown size={15} />
+                            </button>
+                            {openInvoiceDropdownIndex === index && (
+                              <div className="custom-select-menu">
+                                {invoiceOptions.map((opt) => (
+                                  <div key={opt} className="custom-select-option">
+                                    <button
+                                      type="button"
+                                      className={`custom-select-option-label ${item.description === opt ? 'active' : ''}`}
+                                      onClick={() => {
+                                        changeInvoiceItemField(index, 'description', opt)
+                                        setOpenInvoiceDropdownIndex(-1)
+                                      }}
+                                    >
+                                      {opt}
+                                    </button>
+                                    {!defaultInvoiceOptions.includes(opt) && (
+                                      <button
+                                        type="button"
+                                        className="custom-select-option-delete"
+                                        title="Remove this item"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          removeCustomInvoiceOption(opt)
+                                        }}
+                                      >
+                                        <X size={13} />
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                                <button
+                                  type="button"
+                                  className="custom-select-add"
+                                  onClick={() => {
+                                    setOpenInvoiceDropdownIndex(-1)
+                                    startCustomInvoiceItem(index)
+                                  }}
+                                >
+                                  <Plus size={14} /> Add custom item
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         )}
                         <input
                           type="number" min="1"
