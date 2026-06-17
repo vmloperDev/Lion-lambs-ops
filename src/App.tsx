@@ -630,6 +630,7 @@ function App() {
   const [isMigrating, setIsMigrating] = useState(false)
   const [migrationDone, setMigrationDone] = useState(false)
   const [isChatOpen, setIsChatOpen] = useState(false)
+  const isChatOpenRef = useRef(false)
   const [chatMessages, setChatMessages] = useState<Array<{id: string, text: string, senderName: string, senderEmail: string, createdAt: any}>>([])
   const [chatInput, setChatInput] = useState('')
   const [unreadCount, setUnreadCount] = useState(0)
@@ -779,12 +780,12 @@ function App() {
     return onSnapshot(chatQuery, (snap) => {
       const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() as any }))
       setChatMessages(msgs)
-      if (!isChatOpen && msgs.length > 0) {
+      if (!isChatOpenRef.current && msgs.length > 0) {
         setUnreadCount(prev => prev + snap.docChanges().filter(c => c.type === 'added').length)
       }
       setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
     })
-  }, [authUser, isChatOpen])
+  }, [authUser])
 
   async function sendChatMessage() {
     if (!chatInput.trim() || !authUser) return
@@ -3993,7 +3994,7 @@ function App() {
           <button
             type="button"
             className={`chat-nav-btn ${isChatOpen ? 'chat-active' : ''}`}
-            onClick={() => { setIsChatOpen(o => !o); setUnreadCount(0) }}
+            onClick={() => { setIsChatOpen(o => { isChatOpenRef.current = !o; return !o }); setUnreadCount(0) }}
             title="Team chat"
           >
             <MessageSquare size={18} />
