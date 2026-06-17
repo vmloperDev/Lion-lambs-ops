@@ -4134,7 +4134,11 @@ function App() {
                   <span className="status-pill">{booking.status}</span>
                   <span><CalendarDays size={14} />{formatProjectDate(booking.createdAt)}</span>
                   <span><MapPin size={14} />{formatAmount(String(getBookingClientTotal(booking)))}</span>
-                  {booking.createdByName && <span className="booking-by-tag">By: {booking.createdByName}</span>}
+                  {(booking.createdByName || (booking as any).createdByEmail) && (
+                    <span className="booking-by-tag">
+                      By: {booking.createdByName || getDisplayName((booking as any).createdByEmail)}
+                    </span>
+                  )}
                   <ChevronRight size={17} />
                 </div>
               </button>
