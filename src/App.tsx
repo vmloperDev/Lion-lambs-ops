@@ -3142,10 +3142,13 @@ function App() {
       item.paymentMethod || selectedBooking.paymentMethod || 'Bank Transfer'
 
     const renderPODocument = (item: BreakdownLineItem, itemIndex: number, isLast: boolean) => {
-      const paxLabel = formatPaxBreakdownLabel(readPaxBreakdown(item.paxBreakdown)) || item.quantity || '1'
+      const paxBreakdown = readPaxBreakdown(item.paxBreakdown)
+      const paxTotal = sumPaxBreakdown(paxBreakdown)
+      const paxLabel = formatPaxBreakdownLabel(paxBreakdown) || item.quantity || '1'
+      const quantity = paxTotal > 0 ? paxTotal : parseQuantity(item.quantity)
       const itemDescription = item.description || (item.isPackageRow ? selectedBooking.packageName || 'Basic Package' : 'Item')
       const poUnitPrice = parseAmount(item.nettCost) || parseAmount(item.unitPrice)
-      const poAmount = poUnitPrice * parseQuantity(item.quantity)
+      const poAmount = poUnitPrice * quantity
 
       return (
         <section key={itemIndex} className={`po-preview print-document${!isLast ? ' po-page-break' : ''}`}>
@@ -3225,7 +3228,7 @@ function App() {
             </thead>
             <tbody>
               <tr>
-                <td>{item.quantity}</td>
+                <td>{quantity}</td>
                 <td>{paxLabel}</td>
                 <td>{itemDescription}</td>
                 <td>{item.details || '—'}</td>
@@ -3340,8 +3343,6 @@ function App() {
         </main>
       )
     }
-
-    const voucherPaxLabel = formatPaxBreakdownLabel(readPaxBreakdown(readBreakdownItems(selectedBooking).find(i => i.isPackageRow)?.paxBreakdown)) || selectedBooking.pax || ''
 
     const inclusions = getLines(selectedBooking.inclusions, [
       'Travel arrangement based on confirmed package',
@@ -3461,7 +3462,6 @@ function App() {
               <small>
                 Emergency Contact #: {selectedBooking.emergencyContact || 'TBA'}
               </small>
-              {voucherPaxLabel && <small>No. of Pax: <strong>{voucherPaxLabel}</strong></small>}
             </div>
             <div>
               <span>Client Details:</span>
