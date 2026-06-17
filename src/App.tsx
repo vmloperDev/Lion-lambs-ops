@@ -905,9 +905,29 @@ function App() {
     }
     if (!normalized.breakdownLineItemsJson) {
       const fallbackBrk: BreakdownLineItem[] = [
-        { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: normalized.unitPrice || normalized.sellingPrice, nettCost: normalized.nettCost || '0', sendToInvoice: true, sendToPO: false, isPackageRow: true }
+        { id: createLineItemId(), description: normalized.packageName || 'Group Package', quantity: '1', unitPrice: normalized.unitPrice || normalized.sellingPrice, nettCost: normalized.nettCost || '0', sendToInvoice: true, sendToPO: false, isPackageRow: true }
       ]
       normalized.breakdownLineItemsJson = JSON.stringify(fallbackBrk)
+    }
+
+    // Migrate: if breakdown package row still has default description, replace with actual package name
+    if (normalized.packageName) {
+      try {
+        const brkItems: BreakdownLineItem[] = JSON.parse(normalized.breakdownLineItemsJson)
+        const migrated = brkItems.map(item =>
+          item.isPackageRow && (!item.description || item.description === 'Group Package')
+            ? { ...item, description: normalized.packageName, sendToInvoice: true }
+            : item
+        )
+        normalized.breakdownLineItemsJson = JSON.stringify(migrated)
+        const invItems: InvoiceLineItem[] = JSON.parse(normalized.invoiceLineItemsJson)
+        const migratedInv = invItems.map(item =>
+          item.isPackageRow && (!item.description || item.description === 'Group Package')
+            ? { ...item, description: normalized.packageName }
+            : item
+        )
+        normalized.invoiceLineItemsJson = JSON.stringify(migratedInv)
+      } catch(e) {}
     }
 
     setBookingForm(normalized)
@@ -1006,7 +1026,7 @@ function App() {
         const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(normalizedItems, updated.packageName), 'total')
         const brkItems = readBreakdownItems(updated)
         const nextBrk = brkItems.map((item) =>
-          item.isPackageRow ? { ...item, id: item.id || createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: true } : { ...item, id: item.id || createLineItemId() },
+          item.isPackageRow ? { ...item, id: item.id || createLineItemId(), description: item.description || 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: true } : { ...item, id: item.id || createLineItemId() },
         )
         updated.breakdownLineItemsJson = JSON.stringify(nextBrk)
       } catch(e){}
