@@ -836,6 +836,48 @@ function App() {
       })
 
       try {
+        // Build conversation history from the last 20 messages (excluding thinking placeholders)
+        // Gemini uses alternating user/model roles, so we map:
+        //   - Nexus messages  → role: 'model'
+        //   - Human messages  → role: 'user'
+        const historyMessages = chatMessages
+          .filter(m => !m.isNexusThinking && !m.fileUrl)
+          .slice(-20)
+
+        // Gemini requires strictly alternating user/model turns.
+        // We collapse consecutive same-role messages into one and ensure it starts with 'user'.
+        const rawTurns: Array<{ role: 'user' | 'model'; text: string }> = historyMessages.map(m => ({
+          role: (m.isNexus ? 'model' : 'user') as 'user' | 'model',
+          text: m.isNexus ? m.text : `[${m.senderName}]: ${m.text}`,
+        }))
+
+        const collapsedTurns: Array<{ role: 'user' | 'model'; text: string }> = []
+        for (const turn of rawTurns) {
+          if (collapsedTurns.length > 0 && collapsedTurns[collapsedTurns.length - 1].role === turn.role) {
+            collapsedTurns[collapsedTurns.length - 1].text += '\n' + turn.text
+          } else {
+            collapsedTurns.push({ ...turn })
+          }
+        }
+
+        // Must start with 'user' role for Gemini
+        const startsWithUser = collapsedTurns.length > 0 && collapsedTurns[0].role === 'user'
+        const trimmedTurns = startsWithUser ? collapsedTurns : collapsedTurns.slice(1)
+
+        // Drop the last turn if it's the current question (already the user's new message)
+        // Build contents array: history turns + current question
+        const historyContents = trimmedTurns.map(t => ({
+          role: t.role,
+          parts: [{ text: t.text }],
+        }))
+
+        // Append the current question as the final user turn
+        const senderLabel = authUser.displayName || getDisplayName(authUser.email || '')
+        const contents = [
+          ...historyContents,
+          { role: 'user' as const, parts: [{ text: `[${senderLabel}]: ${question}` }] },
+        ]
+
         const res = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
           {
@@ -843,9 +885,9 @@ function App() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               system_instruction: {
-                parts: [{ text: `You are Nexus, an AI assistant embedded in the team chat of Lion and Lamb Travel — a travel agency in Olongapo City, Philippines. You help the team with travel queries, package ideas, pricing suggestions, visa info, destination knowledge, and internal ops questions. Keep your answers concise, friendly, and helpful. Today's date is ${new Date().toISOString().slice(0, 10)}.` }]
+                parts: [{ text: `You are Nexus, an AI assistant embedded in the team chat of Lion and Lamb Travel — a travel agency in Olongapo City, Philippines. You help the team with travel queries, package ideas, pricing suggestions, visa info, destination knowledge, and internal ops questions. Keep your answers concise, friendly, and helpful. You have access to the recent conversation history so you can follow context across multiple messages. Today's date is ${new Date().toISOString().slice(0, 10)}.` }]
               },
-              contents: [{ parts: [{ text: question }] }],
+              contents,
               generationConfig: { temperature: 0.7 },
             }),
           }
