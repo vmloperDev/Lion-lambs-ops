@@ -386,7 +386,9 @@ function getLines(value: string | undefined, fallback: string[]) {
 function readInvoiceItems(booking: BookingFormData): InvoiceLineItem[] {
   try {
     if (booking.invoiceLineItemsJson) {
-      return JSON.parse(booking.invoiceLineItemsJson)
+      const items: InvoiceLineItem[] = JSON.parse(booking.invoiceLineItemsJson)
+      // Drop stale items from removed sections — only keep package row and breakdown-sourced rows
+      return items.filter(item => item.isPackageRow || item.source === 'breakdown')
     }
   } catch {}
   return [
@@ -1043,7 +1045,7 @@ function App() {
         id: item.id || createLineItemId(),
         ...(item.isPackageRow ? { quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: true } : {}),
       }))
-      const manualInvoiceItems = invoiceItems.filter((item) => item.source !== 'breakdown')
+      const manualInvoiceItems = invoiceItems.filter((item) => item.source === 'breakdown' && !item.isPackageRow)
       const breakdownInvoiceItems: InvoiceLineItem[] = normalizedBreakdown
         .filter((item) => item.isPackageRow || item.sendToInvoice)
         .map((item) => {
@@ -1062,7 +1064,7 @@ function App() {
 
       return {
         ...prev,
-        invoiceLineItemsJson: JSON.stringify([...manualInvoiceItems, ...breakdownInvoiceItems]),
+        invoiceLineItemsJson: JSON.stringify([...breakdownInvoiceItems.filter(i => i.isPackageRow), ...manualInvoiceItems, ...breakdownInvoiceItems.filter(i => !i.isPackageRow)]),
         breakdownLineItemsJson: JSON.stringify(normalizedBreakdown),
       }
     })
