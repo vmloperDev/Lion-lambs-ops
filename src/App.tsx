@@ -1018,15 +1018,18 @@ function App() {
       const manualInvoiceItems = invoiceItems.filter((item) => item.source !== 'breakdown')
       const breakdownInvoiceItems: InvoiceLineItem[] = normalizedBreakdown
         .filter((item) => item.sendToInvoice && !item.isPackageRow)
-        .map((item) => ({
-          id: `INV-${item.id}`,
-          source: 'breakdown',
-          sourceKey: item.id,
-          description: item.description,
-          quantity: '1',
-          unitPrice: item.unitPrice,
-          nettCost: '',
-        }))
+        .map((item) => {
+          const paxTotal = sumPaxBreakdown(readPaxBreakdown(item.paxBreakdown))
+          return {
+            id: `INV-${item.id}`,
+            source: 'breakdown',
+            sourceKey: item.id,
+            description: item.description,
+            quantity: String(paxTotal > 0 ? paxTotal : parseQuantity(item.quantity) || 1),
+            unitPrice: item.unitPrice,
+            nettCost: '',
+          }
+        })
 
       return {
         ...prev,
