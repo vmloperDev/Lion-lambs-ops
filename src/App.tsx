@@ -92,6 +92,7 @@ type InvoiceLineItem = {
   isPackageRow?: boolean
   source?: 'manual' | 'breakdown'
   sourceKey?: string
+  mirrorId?: string // links this row to its auto-created counterpart in the other section
 }
 
 type BreakdownLineItem = {
@@ -113,6 +114,7 @@ type BreakdownLineItem = {
   price5Pax?: string
   priceGroup?: string
   priceInfant?: string
+  mirrorId?: string // links this row to its auto-created counterpart in the other section
 }
 
 type BookingFormData = {
@@ -1049,23 +1051,100 @@ function App() {
     })
   }
 
+  // Combined save: writes both lists in one go so a mirrored pair (one row in
+  // section 04, one row in section 05) always lands in the same booking-form
+  // update. Re-applies the same package-row + send-to-invoice reconciliation
+  // that the individual save functions do, so nothing else regresses.
+  function saveItemLists(invoiceItems: InvoiceLineItem[], breakdownItems: BreakdownLineItem[]) {
+    setBookingForm(prev => {
+      const normInv = invoiceItems.map((item) => ({ ...item, id: item.id || createLineItemId() }))
+      const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(normInv, prev.packageName), 'total')
+      const normBrk = breakdownItems.map((item) => ({
+        ...item,
+        id: item.id || createLineItemId(),
+        ...(item.isPackageRow ? { description: 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : {}),
+      }))
+
+      const manualInvoiceItems = normInv.filter((item) => item.source !== 'breakdown')
+      const breakdownInvoiceItems: InvoiceLineItem[] = normBrk
+        .filter((item) => item.sendToInvoice && !item.isPackageRow)
+        .map((item) => ({
+          id: `INV-${item.id}`,
+          source: 'breakdown',
+          sourceKey: item.id,
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          nettCost: item.nettCost,
+          mirrorId: item.mirrorId,
+        }))
+
+      const updated = {
+        ...prev,
+        invoiceLineItemsJson: JSON.stringify([...manualInvoiceItems, ...breakdownInvoiceItems]),
+        breakdownLineItemsJson: JSON.stringify(normBrk),
+      }
+      const packageInvRow = manualInvoiceItems.find((i) => i.isPackageRow)
+      if (packageInvRow) {
+        updated.quantity = packageInvRow.quantity
+        updated.unitPrice = packageInvRow.unitPrice
+      }
+      return updated
+    })
+  }
+
+  // Fields that should stay identical between a mirrored 04/05 pair.
+  const mirroredFields: (keyof InvoiceLineItem & keyof BreakdownLineItem)[] = ['description', 'quantity', 'unitPrice', 'nettCost']
+
   function addInvoiceItemRow() {
-    const current = getInvoiceItemsList()
-    current.push({ id: createLineItemId(), description: invoiceOptions[0], quantity: '1', unitPrice: '', nettCost: '', source: 'manual' })
-    saveInvoiceItemsList(current)
+    const invCurrent = getInvoiceItemsList()
+    const brkCurrent = getBreakdownItemsList()
+    const linkId = createLineItemId()
+    const description = invoiceOptions[0]
+
+    invCurrent.push({ id: linkId, description, quantity: '1', unitPrice: '', nettCost: '', source: 'manual', mirrorId: linkId })
+    // Auto-create the matching row in section 05 (internal costing) so the
+    // same item shows up there too, ready to take a vendor/nett cost.
+    brkCurrent.push({ id: createLineItemId(), description, details: '', vendor: '', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false, sendToPO: false, mirrorId: linkId })
+
+    if (!breakdownOptions.includes(description)) {
+      setBreakdownOptions((prev) => [...prev, description])
+    }
+    saveItemLists(invCurrent, brkCurrent)
   }
 
   function removeInvoiceItemRow(index: number) {
-    const current = getInvoiceItemsList()
-    if (current[index]?.isPackageRow) return // lock baseline row protection
-    current.splice(index, 1)
-    saveInvoiceItemsList(current)
+    const invCurrent = getInvoiceItemsList()
+    const item = invCurrent[index]
+    if (item?.isPackageRow) return // lock baseline row protection
+    invCurrent.splice(index, 1)
+
+    if (item?.mirrorId) {
+      const brkCurrent = getBreakdownItemsList().filter((b) => b.mirrorId !== item.mirrorId)
+      saveItemLists(invCurrent, brkCurrent)
+      return
+    }
+    saveInvoiceItemsList(invCurrent)
   }
 
   function changeInvoiceItemField(index: number, field: keyof InvoiceLineItem, value: string) {
-    const current = getInvoiceItemsList()
-    current[index] = { ...current[index], [field]: value }
-    saveInvoiceItemsList(current)
+    const invCurrent = getInvoiceItemsList()
+    const item = invCurrent[index]
+    invCurrent[index] = { ...item, [field]: value }
+
+    if (item?.mirrorId && (mirroredFields as string[]).includes(field)) {
+      const brkCurrent = getBreakdownItemsList()
+      const brkIndex = brkCurrent.findIndex((b) => b.mirrorId === item.mirrorId)
+      if (brkIndex !== -1) {
+        brkCurrent[brkIndex] = { ...brkCurrent[brkIndex], [field]: value }
+        if (field === 'description' && value && !breakdownOptions.includes(value)) {
+          setBreakdownOptions((prev) => [...prev, value])
+        }
+        saveItemLists(invCurrent, brkCurrent)
+        return
+      }
+    }
+    saveInvoiceItemsList(invCurrent)
   }
 
   function startCustomInvoiceItem(index: number) {
@@ -1095,16 +1174,21 @@ function App() {
     if (defaultInvoiceOptions.includes(option)) return // protect built-in options
     setInvoiceOptions((prev) => prev.filter((opt) => opt !== option))
     // if any row currently uses the removed option, reset it back to the first option
-    const current = getInvoiceItemsList()
+    const invCurrent = getInvoiceItemsList()
+    const brkCurrent = getBreakdownItemsList()
     let changed = false
-    const next = current.map((item) => {
+    const nextInv = invCurrent.map((item) => {
       if (!item.isPackageRow && item.description === option) {
         changed = true
+        if (item.mirrorId) {
+          const brkIndex = brkCurrent.findIndex((b) => b.mirrorId === item.mirrorId)
+          if (brkIndex !== -1) brkCurrent[brkIndex] = { ...brkCurrent[brkIndex], description: defaultInvoiceOptions[0] }
+        }
         return { ...item, description: defaultInvoiceOptions[0] }
       }
       return item
     })
-    if (changed) saveInvoiceItemsList(next)
+    if (changed) saveItemLists(nextInv, brkCurrent)
   }
 
   function startCustomBreakdownItem(index: number) {
@@ -1130,16 +1214,21 @@ function App() {
   function removeCustomBreakdownOption(option: string) {
     if (defaultBreakdownOptions.includes(option)) return
     setBreakdownOptions((prev) => prev.filter((opt) => opt !== option))
-    const current = getBreakdownItemsList()
+    const brkCurrent = getBreakdownItemsList()
+    const invCurrent = getInvoiceItemsList()
     let changed = false
-    const next = current.map((item) => {
+    const nextBrk = brkCurrent.map((item) => {
       if (!item.isPackageRow && item.description === option) {
         changed = true
+        if (item.mirrorId) {
+          const invIndex = invCurrent.findIndex((i) => i.mirrorId === item.mirrorId)
+          if (invIndex !== -1) invCurrent[invIndex] = { ...invCurrent[invIndex], description: defaultBreakdownOptions[0] }
+        }
         return { ...item, description: defaultBreakdownOptions[0] }
       }
       return item
     })
-    if (changed) saveBreakdownItemsList(next)
+    if (changed) saveItemLists(invCurrent, nextBrk)
   }
 
   function addBreakdownItemRow() {
@@ -1149,29 +1238,58 @@ function App() {
   }
 
   function removeBreakdownItemRow(index: number) {
-    const current = getBreakdownItemsList()
-    if (current[index]?.isPackageRow) return
-    current.splice(index, 1)
-    saveBreakdownItemsList(current)
+    const brkCurrent = getBreakdownItemsList()
+    const item = brkCurrent[index]
+    if (item?.isPackageRow) return
+    brkCurrent.splice(index, 1)
+
+    if (item?.mirrorId) {
+      const invCurrent = getInvoiceItemsList().filter((i) => i.mirrorId !== item.mirrorId)
+      saveItemLists(invCurrent, brkCurrent)
+      return
+    }
+    saveBreakdownItemsList(brkCurrent)
   }
 
   function changeBreakdownItemField(index: number, field: keyof BreakdownLineItem, value: any) {
-    const current = getBreakdownItemsList()
-    current[index] = { ...current[index], [field]: value }
-    saveBreakdownItemsList(current)
+    const brkCurrent = getBreakdownItemsList()
+    const item = brkCurrent[index]
+    brkCurrent[index] = { ...item, [field]: value }
+
+    if (item?.mirrorId && (mirroredFields as string[]).includes(field)) {
+      const invCurrent = getInvoiceItemsList()
+      const invIndex = invCurrent.findIndex((i) => i.mirrorId === item.mirrorId)
+      if (invIndex !== -1) {
+        invCurrent[invIndex] = { ...invCurrent[invIndex], [field]: value }
+        if (field === 'description' && value && !invoiceOptions.includes(value)) {
+          setInvoiceOptions((prev) => [...prev, value])
+        }
+        saveItemLists(invCurrent, brkCurrent)
+        return
+      }
+    }
+    saveBreakdownItemsList(brkCurrent)
   }
 
   function changeBreakdownPaxField(index: number, category: keyof PaxBreakdown, value: string) {
-    const current = getBreakdownItemsList()
-    const pax = readPaxBreakdown(current[index].paxBreakdown)
+    const brkCurrent = getBreakdownItemsList()
+    const item = brkCurrent[index]
+    const pax = readPaxBreakdown(item.paxBreakdown)
     pax[category] = value
     const total = sumPaxBreakdown(pax)
-    current[index] = {
-      ...current[index],
-      paxBreakdown: JSON.stringify(pax),
-      quantity: total > 0 ? String(total) : current[index].quantity,
+    const nextQuantity = total > 0 ? String(total) : item.quantity
+    brkCurrent[index] = { ...item, paxBreakdown: JSON.stringify(pax), quantity: nextQuantity }
+
+    if (item?.mirrorId) {
+      const invCurrent = getInvoiceItemsList()
+      const invIndex = invCurrent.findIndex((i) => i.mirrorId === item.mirrorId)
+      if (invIndex !== -1) {
+        invCurrent[invIndex] = { ...invCurrent[invIndex], quantity: nextQuantity }
+        saveItemLists(invCurrent, brkCurrent)
+        return
+      }
     }
-    saveBreakdownItemsList(current)
+    saveBreakdownItemsList(brkCurrent)
   }
 
   function validateBookingForm() {
