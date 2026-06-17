@@ -1673,6 +1673,11 @@ function App() {
               </div>
 
               <div className="line-items-table no-overflow">
+                <div className="line-items-row header">
+                  <span>Service / item</span>
+                  <span>Qty</span>
+                  <span>Unit price</span>
+                  <span>Nett cost</span>
                   <span>Total</span>
                   <span></span>
                 </div>
