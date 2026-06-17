@@ -43,6 +43,7 @@ import {
   MapPin,
   MessageSquare,
   Moon,
+  Paperclip,
   Plane,
   Plus,
   Printer,
@@ -52,13 +53,15 @@ import {
   Send,
   Sparkles,
   Sun,
+  Bot,
   UserRound,
   X,
   Check,
   EyeOff,
   Eye
 } from 'lucide-react'
-import { auth, db } from './firebase'
+import { auth, db, storage } from './firebase'
+import { ref as storageRef, uploadBytesResumable, getDownloadURL } from 'firebase/storage'
 import agencySeal from './assets/brand/agency-seal.png'
 import logo from './assets/brand/logo.png'
 import travelHero from './assets/brand/travel-hero.jpg'
@@ -631,9 +634,23 @@ function App() {
   const [migrationDone, setMigrationDone] = useState(false)
   const [isChatOpen, setIsChatOpen] = useState(false)
   const isChatOpenRef = useRef(false)
-  const [chatMessages, setChatMessages] = useState<Array<{id: string, text: string, senderName: string, senderEmail: string, createdAt: any}>>([])
+  const [chatMessages, setChatMessages] = useState<Array<{
+    id: string
+    text: string
+    senderName: string
+    senderEmail: string
+    createdAt: any
+    fileUrl?: string
+    fileType?: 'image' | 'pdf'
+    fileName?: string
+    isNexus?: boolean
+    isNexusThinking?: boolean
+  }>>([])
   const [chatInput, setChatInput] = useState('')
   const [unreadCount, setUnreadCount] = useState(0)
+  const [chatFileUploading, setChatFileUploading] = useState(false)
+  const [chatUploadProgress, setChatUploadProgress] = useState(0)
+  const chatFileInputRef = useRef<HTMLInputElement>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
   const [invoiceEditorReturnScreen, setInvoiceEditorReturnScreen] = useState<Screen>('booking-detail')
   const [name, setName] = useState('')
@@ -791,12 +808,117 @@ function App() {
     if (!chatInput.trim() || !authUser) return
     const text = chatInput.trim()
     setChatInput('')
+
+    const senderName = authUser.displayName || getDisplayName(authUser.email || '')
     await addDoc(collection(db, 'team_chat'), {
       text,
-      senderName: authUser.displayName || getDisplayName(authUser.email || ''),
+      senderName,
       senderEmail: authUser.email || '',
       createdAt: serverTimestamp(),
     })
+
+    // Nexus AI response — triggered when message starts with @Nexus
+    if (text.toLowerCase().startsWith('@nexus')) {
+      const question = text.replace(/^@nexus\s*/i, '').trim()
+      if (!question) return
+
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined
+      if (!apiKey) return
+
+      // Post a "thinking" placeholder
+      const thinkingRef = await addDoc(collection(db, 'team_chat'), {
+        text: '...',
+        senderName: 'Nexus',
+        senderEmail: 'nexus@lionlamb.ai',
+        isNexus: true,
+        isNexusThinking: true,
+        createdAt: serverTimestamp(),
+      })
+
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              system_instruction: {
+                parts: [{ text: `You are Nexus, an AI assistant embedded in the team chat of Lion and Lamb Travel — a travel agency in Olongapo City, Philippines. You help the team with travel queries, package ideas, pricing suggestions, visa info, destination knowledge, and internal ops questions. Keep your answers concise, friendly, and helpful. Today's date is ${new Date().toISOString().slice(0, 10)}.` }]
+              },
+              contents: [{ parts: [{ text: question }] }],
+              generationConfig: { temperature: 0.7 },
+            }),
+          }
+        )
+        const data = await res.json()
+        const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not generate a response.'
+
+        // Replace the thinking placeholder with the real answer
+        await setDoc(doc(db, 'team_chat', thinkingRef.id), {
+          text: reply,
+          senderName: 'Nexus',
+          senderEmail: 'nexus@lionlamb.ai',
+          isNexus: true,
+          isNexusThinking: false,
+          createdAt: serverTimestamp(),
+        })
+      } catch {
+        await setDoc(doc(db, 'team_chat', thinkingRef.id), {
+          text: 'Sorry, I ran into an error. Please try again.',
+          senderName: 'Nexus',
+          senderEmail: 'nexus@lionlamb.ai',
+          isNexus: true,
+          isNexusThinking: false,
+          createdAt: serverTimestamp(),
+        })
+      }
+    }
+  }
+
+  async function handleChatFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file || !authUser) return
+    e.target.value = ''
+
+    const isImage = file.type.startsWith('image/')
+    const isPdf = file.type === 'application/pdf'
+    if (!isImage && !isPdf) return
+
+    setChatFileUploading(true)
+    setChatUploadProgress(0)
+
+    try {
+      const path = `chat_files/${Date.now()}_${file.name}`
+      const fileRef = storageRef(storage, path)
+      const uploadTask = uploadBytesResumable(fileRef, file)
+
+      await new Promise<void>((resolve, reject) => {
+        uploadTask.on(
+          'state_changed',
+          (snap) => setChatUploadProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)),
+          reject,
+          resolve,
+        )
+      })
+
+      const downloadUrl = await getDownloadURL(fileRef)
+      const senderName = authUser.displayName || getDisplayName(authUser.email || '')
+
+      await addDoc(collection(db, 'team_chat'), {
+        text: file.name,
+        senderName,
+        senderEmail: authUser.email || '',
+        fileUrl: downloadUrl,
+        fileType: isImage ? 'image' : 'pdf',
+        fileName: file.name,
+        createdAt: serverTimestamp(),
+      })
+    } catch {
+      // silent fail — could show a toast here
+    } finally {
+      setChatFileUploading(false)
+      setChatUploadProgress(0)
+    }
   }
 
   function getAuthErrorMessage(error: unknown) {
@@ -4208,36 +4330,98 @@ function App() {
           <div className="chat-panel-header">
             <MessageSquare size={16} />
             <strong>Team Chat</strong>
+            <div className="chat-header-nexus-badge">
+              <Bot size={12} /> Nexus ready
+            </div>
             <button type="button" onClick={() => setIsChatOpen(false)}><X size={16} /></button>
           </div>
           <div className="chat-messages">
             {chatMessages.length === 0 && (
-              <div className="chat-empty">No messages yet. Say hi! 👋</div>
+              <div className="chat-empty">
+                <span>No messages yet. Say hi! 👋</span>
+                <span className="chat-nexus-hint">Tap <Bot size={11} /> to ask Nexus AI</span>
+              </div>
             )}
             {chatMessages.map((msg) => {
               const isMe = msg.senderEmail === authUser?.email
+              const isNexus = msg.isNexus
               const time = msg.createdAt?.toDate
                 ? msg.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                 : ''
               return (
-                <div key={msg.id} className={`chat-bubble ${isMe ? 'chat-mine' : 'chat-theirs'}`}>
-                  {!isMe && <span className="chat-sender">{msg.senderName}</span>}
-                  <div className="chat-text">{msg.text}</div>
+                <div key={msg.id} className={`chat-bubble ${isNexus ? 'chat-nexus' : isMe ? 'chat-mine' : 'chat-theirs'}`}>
+                  {(!isMe || isNexus) && (
+                    <span className={`chat-sender ${isNexus ? 'chat-sender-nexus' : ''}`}>
+                      {isNexus ? <><Bot size={11} /> Nexus</> : msg.senderName}
+                    </span>
+                  )}
+                  {msg.fileUrl && msg.fileType === 'image' ? (
+                    <div className="chat-image-bubble">
+                      <img src={msg.fileUrl} alt={msg.fileName || 'image'} className="chat-image" onClick={() => window.open(msg.fileUrl, '_blank')} />
+                    </div>
+                  ) : msg.fileUrl && msg.fileType === 'pdf' ? (
+                    <a href={msg.fileUrl} target="_blank" rel="noreferrer" className="chat-pdf-bubble">
+                      <FileText size={18} />
+                      <span>{msg.fileName || 'PDF file'}</span>
+                    </a>
+                  ) : (
+                    <div className={`chat-text ${isNexus ? 'chat-text-nexus' : ''} ${msg.isNexusThinking ? 'chat-thinking' : ''}`}>
+                      {msg.isNexusThinking ? (
+                        <span className="chat-thinking-dots"><span/><span/><span/></span>
+                      ) : msg.text}
+                    </div>
+                  )}
                   <span className="chat-time">{time}</span>
                 </div>
               )
             })}
             <div ref={chatBottomRef} />
           </div>
+
+          {chatFileUploading && (
+            <div className="chat-upload-progress">
+              <div className="chat-upload-bar" style={{ width: `${chatUploadProgress}%` }} />
+              <span>Uploading… {chatUploadProgress}%</span>
+            </div>
+          )}
+
           <div className="chat-input-row">
             <input
+              ref={chatFileInputRef}
+              type="file"
+              accept="image/*,application/pdf"
+              style={{ display: 'none' }}
+              onChange={handleChatFileUpload}
+            />
+            <button
+              type="button"
+              className="chat-attach-btn"
+              title="Send image or PDF"
+              disabled={chatFileUploading}
+              onClick={() => chatFileInputRef.current?.click()}
+            >
+              <Paperclip size={15} />
+            </button>
+            <button
+              type="button"
+              className="chat-nexus-btn"
+              title="Ask Nexus AI"
+              onClick={() => {
+                if (!chatInput.startsWith('@Nexus ')) {
+                  setChatInput(prev => '@Nexus ' + prev)
+                }
+              }}
+            >
+              <Bot size={15} />
+            </button>
+            <input
               className="chat-input"
-              placeholder="Message the team..."
+              placeholder="Message the team…"
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendChatMessage() } }}
             />
-            <button type="button" className="chat-send-btn" onClick={() => void sendChatMessage()} disabled={!chatInput.trim()}>
+            <button type="button" className="chat-send-btn" onClick={() => void sendChatMessage()} disabled={!chatInput.trim() || chatFileUploading}>
               <Send size={16} />
             </button>
           </div>
