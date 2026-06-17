@@ -14,6 +14,7 @@ import {
 } from 'firebase/auth'
 import {
   collection,
+  collectionGroup,
   deleteDoc,
   doc,
   getDocs,
@@ -510,8 +511,8 @@ function getBookingBreakdownNettTotal(booking: BookingFormData) {
   return sumLineItems(mapBreakdownItemsToBookingLines(readBreakdownItems(booking)), 'nettTotal')
 }
 
-function getSharedBookingsCollectionPath() {
-  return bookingsCollectionKey
+function getUserBookingsCollectionPath(userId: string) {
+  return `users/${userId}/bookings`
 }
 
 function formatProjectDate(value: string) {
@@ -728,7 +729,7 @@ function App() {
       return undefined
     }
     const bookingsQuery = query(
-      collection(db, getSharedBookingsCollectionPath()),
+      collectionGroup(db, 'bookings'),
       orderBy('createdAt', 'desc'),
     )
     return onSnapshot(
@@ -1220,7 +1221,7 @@ function App() {
 
     try {
       if (!authUser) throw new Error('Missing signed-in user')
-      await setDoc(doc(db, getSharedBookingsCollectionPath(), booking.id), {
+      await setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), booking.id), {
         ...booking,
         ownerId: authUser.uid,
         createdBy: authUser.uid,
@@ -1258,7 +1259,7 @@ function App() {
         setDataError('Log in again before updating cloud records.')
         return
       }
-      void setDoc(doc(db, getSharedBookingsCollectionPath(), selectedBookingId), {
+      void setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId), {
         status,
         updatedAt: new Date().toISOString(),
       }, { merge: true }).catch(() => {
@@ -1395,7 +1396,7 @@ function App() {
 
     try {
       if (!authUser) throw new Error('Missing signed-in user')
-      await setDoc(doc(db, getSharedBookingsCollectionPath(), selectedBookingId), {
+      await setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId), {
         ...invoiceForm,
         status: 'Invoice',
         updatedAt: new Date().toISOString(),
@@ -1420,7 +1421,7 @@ function App() {
     setBookings((currentBookings) => currentBookings.filter((booking) => booking.id !== selectedBookingId))
     try {
       if (!authUser) throw new Error('Missing signed-in user')
-      await deleteDoc(doc(db, getSharedBookingsCollectionPath(), selectedBookingId))
+      await deleteDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId))
       setDataError('')
       setDataMessage('Project deleted successfully.')
     } catch {
@@ -3991,22 +3992,7 @@ function App() {
             </div>
           </section>
 
-          {!migrationDone && (
-            <div className="migration-banner">
-              <div>
-                <strong>⚠️ One-time setup required</strong>
-                <span>Move your old bookings to the shared database so everyone can see them.</span>
-              </div>
-              <button
-                type="button"
-                className="migration-btn"
-                onClick={migrateMyBookings}
-                disabled={isMigrating}
-              >
-                {isMigrating ? 'Migrating...' : 'Migrate My Bookings'}
-              </button>
-            </div>
-          )}
+
 
           <section className="dashboard-grid">
             <article className="summary-card teal" onClick={() => setActiveBookingFilter('Inquiry')} style={{ cursor: 'pointer' }}>
