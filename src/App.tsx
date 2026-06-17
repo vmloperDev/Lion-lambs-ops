@@ -730,7 +730,6 @@ function App() {
     }
     const bookingsQuery = query(
       collectionGroup(db, 'bookings'),
-      orderBy('createdAt', 'desc'),
     )
     return onSnapshot(
       bookingsQuery,
@@ -740,12 +739,9 @@ function App() {
             ...(bookingDoc.data() as BookingRecord),
             id: bookingDoc.id,
           })
-          // If this doc was just saved locally, prefer the local version so
-          // the template screens always reflect the user's latest changes
-          // even if the Firestore snapshot arrives slightly behind.
           const saved = lastSavedBookingRef.current
           return (saved && saved.id === normalized.id) ? saved : normalized
-        })
+        }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         setBookings(firestoreBookings)
         setDataError('')
       },
