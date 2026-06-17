@@ -2276,7 +2276,7 @@ function App() {
               </article>
               <article>
                 <span>No. of pax</span>
-                <strong>{selectedBooking.pax || 'Not provided'}</strong>
+                <strong>{formatPaxBreakdownLabel(readPaxBreakdown(readBreakdownItems(selectedBooking).find(i => i.isPackageRow)?.paxBreakdown)) || selectedBooking.pax || 'Not provided'}</strong>
               </article>
               <article>
                 <span>Travel dates</span>
@@ -3341,6 +3341,8 @@ function App() {
       )
     }
 
+    const voucherPaxLabel = formatPaxBreakdownLabel(readPaxBreakdown(readBreakdownItems(selectedBooking).find(i => i.isPackageRow)?.paxBreakdown)) || selectedBooking.pax || ''
+
     const inclusions = getLines(selectedBooking.inclusions, [
       'Travel arrangement based on confirmed package',
       'Accommodation / service details as stated above',
@@ -3459,6 +3461,7 @@ function App() {
               <small>
                 Emergency Contact #: {selectedBooking.emergencyContact || 'TBA'}
               </small>
+              {voucherPaxLabel && <small>No. of Pax: <strong>{voucherPaxLabel}</strong></small>}
             </div>
             <div>
               <span>Client Details:</span>
@@ -3655,7 +3658,7 @@ function App() {
               </tr>
               <tr className="bq-info-row">
                 <td className="bq-label">NO OF PAX:</td>
-                <td className="bq-value">{selectedBooking.pax || '—'}</td>
+                <td className="bq-value">{formatPaxBreakdownLabel(readPaxBreakdown(readBreakdownItems(selectedBooking).find(i => i.isPackageRow)?.paxBreakdown)) || selectedBooking.pax || '—'}</td>
               </tr>
               <tr className="bq-col-header">
                 <th>SERVICE</th>
