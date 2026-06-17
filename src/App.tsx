@@ -1153,6 +1153,15 @@ function App() {
     saveBreakdownItemsList(brkCurrent)
   }
 
+  // Typing a plain qty directly should win over any old Adult/Child/Senior/Infant
+  // split, otherwise the stale pax total would silently override this value
+  // (and the invoice/P.O. rows) the next time the list is saved.
+  function changeBreakdownQuantity(index: number, value: string) {
+    const brkCurrent = getBreakdownItemsList()
+    brkCurrent[index] = { ...brkCurrent[index], quantity: value, paxBreakdown: '' }
+    saveBreakdownItemsList(brkCurrent)
+  }
+
   function changeBreakdownPaxField(index: number, category: keyof PaxBreakdown, value: string) {
     const current = getBreakdownItemsList()
     const pax = readPaxBreakdown(current[index].paxBreakdown)
@@ -1788,7 +1797,7 @@ function App() {
               <p>05a · Internal Costing</p>
               <h2>Supplier nett vs client price</h2>
             </div>
-            <p className="field-help">For internal use only. Track what you pay the supplier vs what you charge the client. Toggle "Send to invoice" to push a row (item name + client price) to the client invoice, or "Send to P.O." to include it on a Purchase Order.</p>
+            <p className="field-help">For internal use only. Track what you pay the supplier vs what you charge the client. Toggle "Send to invoice" to push a row (item name, qty, and client price) to the client invoice, or "Send to P.O." to include it on a Purchase Order.</p>
 
             <div className="line-items-panel">
               <div className="line-items-heading">
@@ -1809,7 +1818,7 @@ function App() {
                   <span>Payment Method</span>
                   <span>Service / item</span>
                   <span>Description</span>
-                  <span>Pax</span>
+                  <span>Qty / Pax</span>
                   <span>Client price</span>
                   <span>Supplier nett</span>
                   <span>Send to invoice</span>
@@ -1922,13 +1931,26 @@ function App() {
                         onChange={(e) => changeBreakdownItemField(index, 'details', e.target.value)}
                         placeholder="Notes / details"
                       />
-                      <button
-                        type="button"
-                        className="pax-modal-trigger"
-                        onClick={() => setPaxModalIndex(index)}
-                      >
-                        <span>{formatPaxBreakdownLabel(readPaxBreakdown(item.paxBreakdown)) || item.quantity || '1'}</span>
-                      </button>
+                      <div className="pax-qty-cell">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          className="qty-input"
+                          value={item.quantity || '1'}
+                          onChange={(e) => changeBreakdownQuantity(index, e.target.value)}
+                          placeholder="1"
+                          disabled={item.isPackageRow}
+                          title={item.isPackageRow ? 'Package quantity is fixed at 1' : 'Qty — sent to the invoice along with the client price'}
+                        />
+                        <button
+                          type="button"
+                          className="pax-modal-trigger-icon"
+                          onClick={() => setPaxModalIndex(index)}
+                          title={formatPaxBreakdownLabel(readPaxBreakdown(item.paxBreakdown)) || 'Split qty by pax type (optional)'}
+                        >
+                          <UserRound size={13} />
+                        </button>
+                      </div>
                       <input
                         type="text"
                         value={item.unitPrice}
@@ -1943,12 +1965,12 @@ function App() {
                       />
                       <button
                         type="button"
-                        className={`send-to-invoice-btn active`}
+                        className={`send-to-invoice-btn ${item.isPackageRow || item.sendToInvoice ? 'active' : ''}`}
                         disabled={item.isPackageRow}
                         onClick={() => !item.isPackageRow && changeBreakdownItemField(index, 'sendToInvoice', !item.sendToInvoice)}
                         title={item.isPackageRow ? 'Package name is always sent to invoice & quotation' : undefined}
                       >
-                        <Eye size={14} />
+                        {item.isPackageRow || item.sendToInvoice ? <Eye size={14} /> : <EyeOff size={14} />}
                         <span>{item.isPackageRow ? 'Always on' : item.sendToInvoice ? 'Showing' : 'Hidden'}</span>
                       </button>
                       <button
