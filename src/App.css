@@ -145,6 +145,26 @@
   color: var(--teal) !important;
 }
 
+/* Dark mode: New Inquiry / create button needs visible contrast */
+[data-theme="dark"] .create-project-btn {
+  background: linear-gradient(135deg, var(--teal) 0%, var(--teal-dark) 100%);
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(41,184,219,.28);
+}
+
+[data-theme="dark"] .dashboard-banner .create-project-btn {
+  background: rgba(41,184,219,.18);
+  border-color: rgba(41,184,219,.5);
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(0,0,0,.32);
+}
+
+[data-theme="dark"] .dashboard-banner .create-project-btn:hover {
+  background: rgba(41,184,219,.30);
+  border-color: var(--teal);
+  color: #fff;
+}
+
 /* --- Reset --------------------------------------------------- */
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }

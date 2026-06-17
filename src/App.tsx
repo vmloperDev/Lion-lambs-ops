@@ -3772,14 +3772,6 @@ function App() {
           </div>
         </div>
         <div className="nav-actions">
-            <button
-              type="button"
-              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
-              onClick={() => setIsDark((d) => !d)}
-              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-            >
-              {isDark ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
           <button
             type="button"
             className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
