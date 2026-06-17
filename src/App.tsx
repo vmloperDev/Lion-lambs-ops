@@ -13,6 +13,7 @@ import {
   type User as FirebaseUser,
 } from 'firebase/auth'
 import {
+  addDoc,
   collection,
   collectionGroup,
   deleteDoc,
@@ -21,7 +22,9 @@ import {
   onSnapshot,
   orderBy,
   query,
+  serverTimestamp,
   setDoc,
+  Timestamp,
   writeBatch,
 } from 'firebase/firestore'
 import {
@@ -39,6 +42,7 @@ import {
   LogOut,
   Mail,
   MapPin,
+  MessageSquare,
   Moon,
   Plane,
   Plus,
@@ -46,6 +50,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  Send,
   Sparkles,
   Sun,
   UserRound,
@@ -625,6 +630,11 @@ function App() {
   const [screen, setScreen] = useState<Screen>('splash')
   const [isMigrating, setIsMigrating] = useState(false)
   const [migrationDone, setMigrationDone] = useState(false)
+  const [isChatOpen, setIsChatOpen] = useState(false)
+  const [chatMessages, setChatMessages] = useState<Array<{id: string, text: string, senderName: string, senderEmail: string, createdAt: any}>>([])
+  const [chatInput, setChatInput] = useState('')
+  const [unreadCount, setUnreadCount] = useState(0)
+  const chatBottomRef = useRef<HTMLDivElement>(null)
   const [invoiceEditorReturnScreen, setInvoiceEditorReturnScreen] = useState<Screen>('booking-detail')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('vmloper.dev@gmail.com')
@@ -763,7 +773,31 @@ function App() {
     return () => window.clearTimeout(timer)
   }, [authUser, isAuthLoading])
 
-  function getAuthErrorMessage(error: unknown) {
+  // Chat real-time listener
+  useEffect(() => {
+    if (!authUser?.emailVerified) return
+    const chatQuery = query(collection(db, 'team_chat'), orderBy('createdAt', 'asc'))
+    return onSnapshot(chatQuery, (snap) => {
+      const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() as any }))
+      setChatMessages(msgs)
+      if (!isChatOpen && msgs.length > 0) {
+        setUnreadCount(prev => prev + snap.docChanges().filter(c => c.type === 'added').length)
+      }
+      setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+    })
+  }, [authUser, isChatOpen])
+
+  async function sendChatMessage() {
+    if (!chatInput.trim() || !authUser) return
+    const text = chatInput.trim()
+    setChatInput('')
+    await addDoc(collection(db, 'team_chat'), {
+      text,
+      senderName: authUser.displayName || getDisplayName(authUser.email || ''),
+      senderEmail: authUser.email || '',
+      createdAt: serverTimestamp(),
+    })
+  }
     const code = typeof error === 'object' && error && 'code' in error ? (error as AuthError).code : ''
     if (code) {
       switch (code) {
@@ -3955,6 +3989,15 @@ function App() {
           >
             {isDark ? <Sun size={18} /> : <Moon size={18} />}
           </button>
+          <button
+            type="button"
+            className={`chat-nav-btn ${isChatOpen ? 'chat-active' : ''}`}
+            onClick={() => { setIsChatOpen(o => !o); setUnreadCount(0) }}
+            title="Team chat"
+          >
+            <MessageSquare size={18} />
+            {unreadCount > 0 && <span className="chat-badge">{unreadCount}</span>}
+          </button>
           <button type="button" onClick={handleLogout} title="Log out">
             <LogOut size={18} />
           </button>
@@ -4156,6 +4199,48 @@ function App() {
           </div>
         </section>
       </div>
+
+      {/* CHAT PANEL */}
+      {isChatOpen && (
+        <div className="chat-panel">
+          <div className="chat-panel-header">
+            <MessageSquare size={16} />
+            <strong>Team Chat</strong>
+            <button type="button" onClick={() => setIsChatOpen(false)}><X size={16} /></button>
+          </div>
+          <div className="chat-messages">
+            {chatMessages.length === 0 && (
+              <div className="chat-empty">No messages yet. Say hi! 👋</div>
+            )}
+            {chatMessages.map((msg) => {
+              const isMe = msg.senderEmail === authUser?.email
+              const time = msg.createdAt instanceof Timestamp
+                ? msg.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : ''
+              return (
+                <div key={msg.id} className={`chat-bubble ${isMe ? 'chat-mine' : 'chat-theirs'}`}>
+                  {!isMe && <span className="chat-sender">{msg.senderName}</span>}
+                  <div className="chat-text">{msg.text}</div>
+                  <span className="chat-time">{time}</span>
+                </div>
+              )
+            })}
+            <div ref={chatBottomRef} />
+          </div>
+          <div className="chat-input-row">
+            <input
+              className="chat-input"
+              placeholder="Message the team..."
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendChatMessage() } }}
+            />
+            <button type="button" className="chat-send-btn" onClick={() => void sendChatMessage()} disabled={!chatInput.trim()}>
+              <Send size={16} />
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   )
 }
