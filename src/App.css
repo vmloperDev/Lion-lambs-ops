@@ -1395,6 +1395,20 @@ input, select, textarea { font: inherit; }
   margin-top: 0;
   margin-bottom: 2px;
 }
+/* Portal variant: rendered into document.body (see FloatingDropdownMenu), positioned
+   with inline `top`/`left` computed from the trigger's real screen position. This is
+   what lets the menu escape every ancestor's overflow:hidden/overflow-x:auto clipping —
+   the table/panel containers clip on purpose (for layout), so the fix is to stop the
+   menu from being a clipped descendant in the first place rather than fight the clip. */
+.custom-select-menu-portal {
+  position: fixed;
+  z-index: 9999;
+  margin: 0;
+  overflow-y: auto;
+}
+.custom-select-menu-portal.open-up {
+  bottom: auto;
+}
 .custom-select-option {
   display: flex; align-items: center;
   border-radius: 6px;

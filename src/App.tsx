@@ -1,5 +1,6 @@
 import { extractBookingFieldsFromText, GeminiExtractError, type ExtractedBookingFields } from './geminiExtract'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   createUserWithEmailAndPassword,
   type AuthError,
@@ -500,6 +501,100 @@ function formatProjectDate(value: string) {
   })
 }
 
+// Renders a custom-select's option menu into document.body via a portal, positioned
+// with fixed coordinates computed from the trigger button's real on-screen position.
+// This is what makes the menu escape any ancestor's `overflow: hidden`/`overflow-x: auto`
+// and any clipped scroll container — the previous absolute-positioned-inside-the-table
+// approach got cropped because every parent table/panel clips overflow by design.
+function FloatingDropdownMenu({
+  anchorRef,
+  onClose,
+  children,
+}: {
+  anchorRef: React.RefObject<HTMLElement | null>
+  onClose: () => void
+  children: React.ReactNode
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const [style, setStyle] = useState<{ top: number; left: number; minWidth: number; maxHeight: number; openUp: boolean } | null>(null)
+
+  useEffect(() => {
+    const MARGIN = 8
+
+    function reposition() {
+      const anchor = anchorRef.current
+      const menu = menuRef.current
+      if (!anchor) return
+
+      const anchorRect = anchor.getBoundingClientRect()
+      const menuHeight = menu?.offsetHeight ?? 260
+      const menuWidth = Math.max(menu?.offsetWidth ?? 0, anchorRect.width, 220)
+
+      const spaceBelow = window.innerHeight - anchorRect.bottom - MARGIN
+      const spaceAbove = anchorRect.top - MARGIN
+      const openUp = spaceBelow < menuHeight && spaceAbove > spaceBelow
+
+      const maxHeight = Math.max(140, Math.min(260, openUp ? spaceAbove : spaceBelow))
+
+      let left = anchorRect.left
+      const maxLeft = window.innerWidth - menuWidth - MARGIN
+      if (left > maxLeft) left = Math.max(MARGIN, maxLeft)
+      if (left < MARGIN) left = MARGIN
+
+      const top = openUp ? anchorRect.top - Math.min(menuHeight, maxHeight) : anchorRect.bottom
+
+      setStyle({ top, left, minWidth: anchorRect.width, maxHeight, openUp })
+    }
+
+    reposition()
+    // Re-measure once more after the menu has actually painted, since its real
+    // height isn't known on the very first frame.
+    const raf = requestAnimationFrame(reposition)
+
+    window.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', reposition)
+
+    function handlePointerDown(e: MouseEvent) {
+      const target = e.target as Node
+      if (anchorRef.current?.contains(target)) return
+      if (menuRef.current?.contains(target)) return
+      onClose()
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', reposition)
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [anchorRef, onClose])
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className={`custom-select-menu custom-select-menu-portal${style?.openUp ? ' open-up' : ''}`}
+      style={{
+        position: 'fixed',
+        top: style ? style.top : -9999,
+        left: style ? style.left : -9999,
+        minWidth: style?.minWidth,
+        maxHeight: style?.maxHeight,
+        visibility: style ? 'visible' : 'hidden',
+      }}
+    >
+      {children}
+    </div>,
+    document.body,
+  )
+}
+
 function App() {
   const [screen, setScreen] = useState<Screen>('splash')
   const [name, setName] = useState('')
@@ -566,6 +661,7 @@ function App() {
   const [customInvoiceItemRowIndex, setCustomInvoiceItemRowIndex] = useState(-1)
   const [customInvoiceItemDraft, setCustomInvoiceItemDraft] = useState('')
   const [openInvoiceDropdownIndex, setOpenInvoiceDropdownIndex] = useState(-1)
+  const invoiceDropdownTriggerRefs = useRef<Record<number, HTMLButtonElement | null>>({})
   const [paxModalIndex, setPaxModalIndex] = useState(-1)
 
   const defaultBreakdownOptions = [
@@ -590,6 +686,7 @@ function App() {
   ]
   const [breakdownOptions, setBreakdownOptions] = useState(defaultBreakdownOptions)
   const [openBreakdownDropdownIndex, setOpenBreakdownDropdownIndex] = useState(-1)
+  const breakdownDropdownTriggerRefs = useRef<Record<number, HTMLButtonElement | null>>({})
   const [customBreakdownRowIndex, setCustomBreakdownRowIndex] = useState(-1)
   const [customBreakdownDraft, setCustomBreakdownDraft] = useState('')
 
@@ -1711,10 +1808,9 @@ function App() {
                             onBlur={() => confirmCustomInvoiceItem(index)}
                           />
                         ) : (
-                          <div className="custom-select" onBlur={(e) => {
-                            if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpenInvoiceDropdownIndex(-1)
-                          }}>
+                          <div className="custom-select">
                             <button
+                              ref={(el) => { invoiceDropdownTriggerRefs.current[index] = el }}
                               type="button"
                               className="custom-select-trigger"
                               onClick={() => setOpenInvoiceDropdownIndex(openInvoiceDropdownIndex === index ? -1 : index)}
@@ -1723,7 +1819,10 @@ function App() {
                               <ChevronDown size={15} />
                             </button>
                             {openInvoiceDropdownIndex === index && (
-                              <div className={`custom-select-menu${index >= currentInvoiceItems.length - 2 ? ' open-up' : ''}`}>
+                              <FloatingDropdownMenu
+                                anchorRef={{ current: invoiceDropdownTriggerRefs.current[index] }}
+                                onClose={() => setOpenInvoiceDropdownIndex(-1)}
+                              >
                                 {invoiceOptions.map((opt) => (
                                   <div key={opt} className="custom-select-option">
                                     <button
@@ -1761,7 +1860,7 @@ function App() {
                                 >
                                   <Plus size={14} /> Add custom item
                                 </button>
-                              </div>
+                              </FloatingDropdownMenu>
                             )}
                           </div>
                         )}
@@ -1894,10 +1993,9 @@ function App() {
                           onBlur={() => confirmCustomBreakdownItem(index)}
                         />
                       ) : (
-                        <div className="custom-select" onBlur={(e) => {
-                          if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpenBreakdownDropdownIndex(-1)
-                        }}>
+                        <div className="custom-select">
                           <button
+                            ref={(el) => { breakdownDropdownTriggerRefs.current[index] = el }}
                             type="button"
                             className="custom-select-trigger"
                             onClick={() => setOpenBreakdownDropdownIndex(openBreakdownDropdownIndex === index ? -1 : index)}
@@ -1906,7 +2004,10 @@ function App() {
                             <ChevronDown size={15} />
                           </button>
                           {openBreakdownDropdownIndex === index && (
-                            <div className="custom-select-menu">
+                            <FloatingDropdownMenu
+                              anchorRef={{ current: breakdownDropdownTriggerRefs.current[index] }}
+                              onClose={() => setOpenBreakdownDropdownIndex(-1)}
+                            >
                               {breakdownOptions.map((opt) => (
                                 <div key={opt} className="custom-select-option">
                                   <button
@@ -1944,7 +2045,7 @@ function App() {
                               >
                                 <Plus size={14} /> Add custom service
                               </button>
-                            </div>
+                            </FloatingDropdownMenu>
                           )}
                         </div>
                       )}
