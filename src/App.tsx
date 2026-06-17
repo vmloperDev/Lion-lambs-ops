@@ -568,7 +568,7 @@ function App() {
   const [openInvoiceDropdownIndex, setOpenInvoiceDropdownIndex] = useState(-1)
   const [paxModalIndex, setPaxModalIndex] = useState(-1)
 
-  const breakdownOptions = [
+  const defaultBreakdownOptions = [
     'Group Package',
     'Airfare',
     'Land Arrangement',
@@ -588,6 +588,10 @@ function App() {
     'TA Comm',
     'Other'
   ]
+  const [breakdownOptions, setBreakdownOptions] = useState(defaultBreakdownOptions)
+  const [openBreakdownDropdownIndex, setOpenBreakdownDropdownIndex] = useState(-1)
+  const [customBreakdownRowIndex, setCustomBreakdownRowIndex] = useState(-1)
+  const [customBreakdownDraft, setCustomBreakdownDraft] = useState('')
 
   useEffect(() => {
     return onAuthStateChanged(auth, (user: FirebaseUser | null) => {
@@ -1004,6 +1008,41 @@ function App() {
       return item
     })
     if (changed) saveInvoiceItemsList(next)
+  }
+
+  function startCustomBreakdownItem(index: number) {
+    setCustomBreakdownDraft('')
+    setCustomBreakdownRowIndex(index)
+  }
+
+  function cancelCustomBreakdownItem() {
+    setCustomBreakdownRowIndex(-1)
+    setCustomBreakdownDraft('')
+  }
+
+  function confirmCustomBreakdownItem(index: number) {
+    const name = customBreakdownDraft.trim()
+    if (!name) { cancelCustomBreakdownItem(); return }
+    if (!breakdownOptions.includes(name)) {
+      setBreakdownOptions((prev) => [...prev, name])
+    }
+    changeBreakdownItemField(index, 'description', name)
+    cancelCustomBreakdownItem()
+  }
+
+  function removeCustomBreakdownOption(option: string) {
+    if (defaultBreakdownOptions.includes(option)) return
+    setBreakdownOptions((prev) => prev.filter((opt) => opt !== option))
+    const current = getBreakdownItemsList()
+    let changed = false
+    const next = current.map((item) => {
+      if (!item.isPackageRow && item.description === option) {
+        changed = true
+        return { ...item, description: defaultBreakdownOptions[0] }
+      }
+      return item
+    })
+    if (changed) saveBreakdownItemsList(next)
   }
 
   function addBreakdownItemRow() {
@@ -1633,12 +1672,7 @@ function App() {
                 </button>
               </div>
 
-              <div className="line-items-table">
-                <div className="line-items-row header">
-                  <span>Service / item</span>
-                  <span>Qty</span>
-                  <span>Unit price</span>
-                  <span>Nett cost</span>
+              <div className="line-items-table no-overflow">
                   <span>Total</span>
                   <span></span>
                 </div>
@@ -1684,7 +1718,7 @@ function App() {
                               <ChevronDown size={15} />
                             </button>
                             {openInvoiceDropdownIndex === index && (
-                              <div className="custom-select-menu">
+                              <div className={`custom-select-menu${index >= currentInvoiceItems.length - 2 ? ' open-up' : ''}`}>
                                 {invoiceOptions.map((opt) => (
                                   <div key={opt} className="custom-select-option">
                                     <button
@@ -1802,7 +1836,8 @@ function App() {
                 </button>
               </div>
 
-              <div className="line-items-table">
+              <div className="line-items-table no-overflow">
+                <div className="line-items-scroll-wrapper">
                 <div className="line-items-row breakdown-row header">
                   <span>Vendor</span>
                   <span>Contact No.</span>
@@ -1840,10 +1875,74 @@ function App() {
                       />
                       {item.isPackageRow ? (
                         <input disabled className="disabled-field" value={`Auto: ${bookingForm.packageName || 'Basic Package'}`} />
+                      ) : customBreakdownRowIndex === index ? (
+                        <input
+                          autoFocus
+                          type="text"
+                          className="custom-item-input"
+                          placeholder="Type new service name..."
+                          value={customBreakdownDraft}
+                          onChange={(e) => setCustomBreakdownDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') { e.preventDefault(); confirmCustomBreakdownItem(index) }
+                            else if (e.key === 'Escape') { e.preventDefault(); cancelCustomBreakdownItem() }
+                          }}
+                          onBlur={() => confirmCustomBreakdownItem(index)}
+                        />
                       ) : (
-                        <select value={item.description} onChange={(e) => changeBreakdownItemField(index, 'description', e.target.value)}>
-                          {breakdownOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-                        </select>
+                        <div className="custom-select" onBlur={(e) => {
+                          if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpenBreakdownDropdownIndex(-1)
+                        }}>
+                          <button
+                            type="button"
+                            className="custom-select-trigger"
+                            onClick={() => setOpenBreakdownDropdownIndex(openBreakdownDropdownIndex === index ? -1 : index)}
+                          >
+                            <span>{item.description || 'Select service'}</span>
+                            <ChevronDown size={15} />
+                          </button>
+                          {openBreakdownDropdownIndex === index && (
+                            <div className="custom-select-menu">
+                              {breakdownOptions.map((opt) => (
+                                <div key={opt} className="custom-select-option">
+                                  <button
+                                    type="button"
+                                    className={`custom-select-option-label ${item.description === opt ? 'active' : ''}`}
+                                    onClick={() => {
+                                      changeBreakdownItemField(index, 'description', opt)
+                                      setOpenBreakdownDropdownIndex(-1)
+                                    }}
+                                  >
+                                    {opt}
+                                  </button>
+                                  {!defaultBreakdownOptions.includes(opt) && (
+                                    <button
+                                      type="button"
+                                      className="custom-select-option-delete"
+                                      title="Remove this option"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        removeCustomBreakdownOption(opt)
+                                      }}
+                                    >
+                                      <X size={13} />
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                              <button
+                                type="button"
+                                className="custom-select-add"
+                                onClick={() => {
+                                  setOpenBreakdownDropdownIndex(-1)
+                                  startCustomBreakdownItem(index)
+                                }}
+                              >
+                                <Plus size={14} /> Add custom service
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       )}
                       <input
                         type="text"
@@ -1900,6 +1999,7 @@ function App() {
                     </div>
                   </div>
                 ))}
+                </div>{/* end scroll-wrapper */}
               </div>
 
               <div className="line-items-summary">
