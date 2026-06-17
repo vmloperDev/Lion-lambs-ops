@@ -649,21 +649,6 @@ function App() {
   const passwordStrength = getPasswordStrength(password)
 
   // Options lists
-  const defaultInvoiceOptions = [
-    'Add-on Luggage - One Way',
-    'Add-on Luggage - Round Trip',
-    'Fuel Surcharge',
-    'Travel Insurance',
-    'Airport Transport (Manila/Clark)',
-    'Tipping',
-    'Visa',
-    'Other'
-  ]
-  const [invoiceOptions, setInvoiceOptions] = useState(defaultInvoiceOptions)
-  const [customInvoiceItemRowIndex, setCustomInvoiceItemRowIndex] = useState(-1)
-  const [customInvoiceItemDraft, setCustomInvoiceItemDraft] = useState('')
-  const [openInvoiceDropdownIndex, setOpenInvoiceDropdownIndex] = useState(-1)
-  const invoiceDropdownTriggerRefs = useRef<Record<number, HTMLButtonElement | null>>({})
   const [paxModalIndex, setPaxModalIndex] = useState(-1)
 
   const defaultBreakdownOptions = [
@@ -1038,9 +1023,9 @@ function App() {
           source: 'breakdown',
           sourceKey: item.id,
           description: item.description,
-          quantity: item.quantity,
+          quantity: '1',
           unitPrice: item.unitPrice,
-          nettCost: item.nettCost,
+          nettCost: '',
         }))
 
       return {
@@ -1049,146 +1034,6 @@ function App() {
         breakdownLineItemsJson: JSON.stringify(normalizedBreakdown),
       }
     })
-  }
-
-  // Combined save: writes both lists in one go so a mirrored pair (one row in
-  // section 04, one row in section 05) always lands in the same booking-form
-  // update. Re-applies the same package-row + send-to-invoice reconciliation
-  // that the individual save functions do, so nothing else regresses.
-  function saveItemLists(invoiceItems: InvoiceLineItem[], breakdownItems: BreakdownLineItem[]) {
-    setBookingForm(prev => {
-      const normInv = invoiceItems.map((item) => ({ ...item, id: item.id || createLineItemId() }))
-      const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(normInv, prev.packageName), 'total')
-      const normBrk = breakdownItems.map((item) => ({
-        ...item,
-        id: item.id || createLineItemId(),
-        ...(item.isPackageRow ? { description: 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : {}),
-      }))
-
-      const manualInvoiceItems = normInv.filter((item) => item.source !== 'breakdown')
-      const breakdownInvoiceItems: InvoiceLineItem[] = normBrk
-        .filter((item) => item.sendToInvoice && !item.isPackageRow)
-        .map((item) => ({
-          id: `INV-${item.id}`,
-          source: 'breakdown',
-          sourceKey: item.id,
-          description: item.description,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          nettCost: item.nettCost,
-          mirrorId: item.mirrorId,
-        }))
-
-      const updated = {
-        ...prev,
-        invoiceLineItemsJson: JSON.stringify([...manualInvoiceItems, ...breakdownInvoiceItems]),
-        breakdownLineItemsJson: JSON.stringify(normBrk),
-      }
-      const packageInvRow = manualInvoiceItems.find((i) => i.isPackageRow)
-      if (packageInvRow) {
-        updated.quantity = packageInvRow.quantity
-        updated.unitPrice = packageInvRow.unitPrice
-      }
-      return updated
-    })
-  }
-
-  // Fields that should stay identical between a mirrored 04/05 pair.
-  const mirroredFields: (keyof InvoiceLineItem & keyof BreakdownLineItem)[] = ['description', 'unitPrice', 'nettCost']
-
-  function addInvoiceItemRow() {
-    const invCurrent = getInvoiceItemsList()
-    const brkCurrent = getBreakdownItemsList()
-    const linkId = createLineItemId()
-    const description = invoiceOptions[0]
-
-    invCurrent.push({ id: linkId, description, quantity: '1', unitPrice: '', nettCost: '', source: 'manual', mirrorId: linkId })
-    // Auto-create the matching row in section 05 (internal costing) so the
-    // same item shows up there too, ready to take a vendor/nett cost.
-    brkCurrent.push({ id: createLineItemId(), description, details: '', vendor: '', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false, sendToPO: false, mirrorId: linkId })
-
-    if (!breakdownOptions.includes(description)) {
-      setBreakdownOptions((prev) => [...prev, description])
-    }
-    saveItemLists(invCurrent, brkCurrent)
-  }
-
-  function removeInvoiceItemRow(index: number) {
-    const invCurrent = getInvoiceItemsList()
-    const item = invCurrent[index]
-    if (item?.isPackageRow) return // lock baseline row protection
-    invCurrent.splice(index, 1)
-
-    if (item?.mirrorId) {
-      const brkCurrent = getBreakdownItemsList().filter((b) => b.mirrorId !== item.mirrorId)
-      saveItemLists(invCurrent, brkCurrent)
-      return
-    }
-    saveInvoiceItemsList(invCurrent)
-  }
-
-  function changeInvoiceItemField(index: number, field: keyof InvoiceLineItem, value: string) {
-    const invCurrent = getInvoiceItemsList()
-    const item = invCurrent[index]
-    invCurrent[index] = { ...item, [field]: value }
-
-    if (item?.mirrorId && (mirroredFields as string[]).includes(field)) {
-      const brkCurrent = getBreakdownItemsList()
-      const brkIndex = brkCurrent.findIndex((b) => b.mirrorId === item.mirrorId)
-      if (brkIndex !== -1) {
-        brkCurrent[brkIndex] = { ...brkCurrent[brkIndex], [field]: value }
-        if (field === 'description' && value && !breakdownOptions.includes(value)) {
-          setBreakdownOptions((prev) => [...prev, value])
-        }
-        saveItemLists(invCurrent, brkCurrent)
-        return
-      }
-    }
-    saveInvoiceItemsList(invCurrent)
-  }
-
-  function startCustomInvoiceItem(index: number) {
-    setCustomInvoiceItemDraft('')
-    setCustomInvoiceItemRowIndex(index)
-  }
-
-  function cancelCustomInvoiceItem() {
-    setCustomInvoiceItemRowIndex(-1)
-    setCustomInvoiceItemDraft('')
-  }
-
-  function confirmCustomInvoiceItem(index: number) {
-    const name = customInvoiceItemDraft.trim()
-    if (!name) {
-      cancelCustomInvoiceItem()
-      return
-    }
-    if (!invoiceOptions.includes(name)) {
-      setInvoiceOptions((prev) => [...prev, name])
-    }
-    changeInvoiceItemField(index, 'description', name)
-    cancelCustomInvoiceItem()
-  }
-
-  function removeCustomInvoiceOption(option: string) {
-    if (defaultInvoiceOptions.includes(option)) return // protect built-in options
-    setInvoiceOptions((prev) => prev.filter((opt) => opt !== option))
-    // if any row currently uses the removed option, reset it back to the first option
-    const invCurrent = getInvoiceItemsList()
-    const brkCurrent = getBreakdownItemsList()
-    let changed = false
-    const nextInv = invCurrent.map((item) => {
-      if (!item.isPackageRow && item.description === option) {
-        changed = true
-        if (item.mirrorId) {
-          const brkIndex = brkCurrent.findIndex((b) => b.mirrorId === item.mirrorId)
-          if (brkIndex !== -1) brkCurrent[brkIndex] = { ...brkCurrent[brkIndex], description: defaultInvoiceOptions[0] }
-        }
-        return { ...item, description: defaultInvoiceOptions[0] }
-      }
-      return item
-    })
-    if (changed) saveItemLists(nextInv, brkCurrent)
   }
 
   function startCustomBreakdownItem(index: number) {
@@ -1215,20 +1060,12 @@ function App() {
     if (defaultBreakdownOptions.includes(option)) return
     setBreakdownOptions((prev) => prev.filter((opt) => opt !== option))
     const brkCurrent = getBreakdownItemsList()
-    const invCurrent = getInvoiceItemsList()
-    let changed = false
-    const nextBrk = brkCurrent.map((item) => {
-      if (!item.isPackageRow && item.description === option) {
-        changed = true
-        if (item.mirrorId) {
-          const invIndex = invCurrent.findIndex((i) => i.mirrorId === item.mirrorId)
-          if (invIndex !== -1) invCurrent[invIndex] = { ...invCurrent[invIndex], description: defaultBreakdownOptions[0] }
-        }
-        return { ...item, description: defaultBreakdownOptions[0] }
-      }
-      return item
-    })
-    if (changed) saveItemLists(invCurrent, nextBrk)
+    const nextBrk = brkCurrent.map((item) =>
+      (!item.isPackageRow && item.description === option)
+        ? { ...item, description: defaultBreakdownOptions[0] }
+        : item
+    )
+    saveBreakdownItemsList(nextBrk)
   }
 
   function addBreakdownItemRow() {
@@ -1242,32 +1079,12 @@ function App() {
     const item = brkCurrent[index]
     if (item?.isPackageRow) return
     brkCurrent.splice(index, 1)
-
-    if (item?.mirrorId) {
-      const invCurrent = getInvoiceItemsList().filter((i) => i.mirrorId !== item.mirrorId)
-      saveItemLists(invCurrent, brkCurrent)
-      return
-    }
     saveBreakdownItemsList(brkCurrent)
   }
 
   function changeBreakdownItemField(index: number, field: keyof BreakdownLineItem, value: any) {
     const brkCurrent = getBreakdownItemsList()
-    const item = brkCurrent[index]
-    brkCurrent[index] = { ...item, [field]: value }
-
-    if (item?.mirrorId && (mirroredFields as string[]).includes(field)) {
-      const invCurrent = getInvoiceItemsList()
-      const invIndex = invCurrent.findIndex((i) => i.mirrorId === item.mirrorId)
-      if (invIndex !== -1) {
-        invCurrent[invIndex] = { ...invCurrent[invIndex], [field]: value }
-        if (field === 'description' && value && !invoiceOptions.includes(value)) {
-          setInvoiceOptions((prev) => [...prev, value])
-        }
-        saveItemLists(invCurrent, brkCurrent)
-        return
-      }
-    }
+    brkCurrent[index] = { ...brkCurrent[index], [field]: value }
     saveBreakdownItemsList(brkCurrent)
   }
 
@@ -1830,7 +1647,7 @@ function App() {
                 <div>
                   <p>Base price</p>
                   <h3>Client quotation price</h3>
-                  <span>This is the total the client sees on the quotation. Add optional invoice add-ons in section 04.</span>
+                  <span>This is the total the client sees on the quotation. Add optional invoice add-ons in section 05.</span>
                 </div>
               </div>
               <div className="line-items-table">
@@ -1855,178 +1672,7 @@ function App() {
                   />
                 </div>
               </div>
-              <p className="field-help">Supplier nett costs are handled in section 04 (invoice add-ons) and section 05 (internal breakdown).</p>
-            </div>
-          </section>
-
-          {/* 04 · INVOICE LINE ITEMS */}
-          <section className="form-section">
-            <div className="form-section-heading">
-              <p>04 · Invoice</p>
-              <h2>Client-visible line items</h2>
-            </div>
-            <p className="field-help">The package row is locked and auto-filled. Add optional service rows below — these appear on the client invoice.</p>
-
-            <div className="line-items-panel">
-              <div className="line-items-heading">
-                <div>
-                  <p>Invoice items</p>
-                  <h3>Services and add-ons</h3>
-                  <span>Client sees these rows on the final invoice PDF.</span>
-                </div>
-                <button type="button" onClick={addInvoiceItemRow}>
-                  <Plus size={15} /> Add item
-                </button>
-              </div>
-
-              <div className="line-items-table no-overflow">
-                <div className="line-items-row header">
-                  <span>Service / item</span>
-                  <span>Qty</span>
-                  <span>Unit price</span>
-                  <span>Nett cost</span>
-                  <span>Total</span>
-                  <span></span>
-                </div>
-
-                {currentInvoiceItems.map((item, index) => {
-                  const q = parseQuantity(item.quantity)
-                  const u = parseAmount(item.unitPrice)
-                  const rowTotal = q * u
-                  return (
-                    <div key={index} className="line-item-data-row">
-                      <div className="line-items-row">
-                        {item.isPackageRow ? (
-                          <input disabled className="disabled-field" value={bookingForm.packageName || 'Basic Package'} />
-                        ) : customInvoiceItemRowIndex === index ? (
-                          <input
-                            autoFocus
-                            type="text"
-                            className="custom-item-input"
-                            placeholder="Type new item name..."
-                            value={customInvoiceItemDraft}
-                            onChange={(e) => setCustomInvoiceItemDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault()
-                                confirmCustomInvoiceItem(index)
-                              } else if (e.key === 'Escape') {
-                                e.preventDefault()
-                                cancelCustomInvoiceItem()
-                              }
-                            }}
-                            onBlur={() => confirmCustomInvoiceItem(index)}
-                          />
-                        ) : (
-                          <div className="custom-select">
-                            <button
-                              ref={(el) => { invoiceDropdownTriggerRefs.current[index] = el }}
-                              type="button"
-                              className="custom-select-trigger"
-                              onClick={() => setOpenInvoiceDropdownIndex(openInvoiceDropdownIndex === index ? -1 : index)}
-                            >
-                              <span>{item.description || 'Select item'}</span>
-                              <ChevronDown size={15} />
-                            </button>
-                            {openInvoiceDropdownIndex === index && (
-                              <FloatingDropdownMenu
-                                anchorRef={{ current: invoiceDropdownTriggerRefs.current[index] }}
-                                onClose={() => setOpenInvoiceDropdownIndex(-1)}
-                              >
-                                {invoiceOptions.map((opt) => (
-                                  <div key={opt} className="custom-select-option">
-                                    <button
-                                      type="button"
-                                      className={`custom-select-option-label ${item.description === opt ? 'active' : ''}`}
-                                      onClick={() => {
-                                        changeInvoiceItemField(index, 'description', opt)
-                                        setOpenInvoiceDropdownIndex(-1)
-                                      }}
-                                    >
-                                      {opt}
-                                    </button>
-                                    {!defaultInvoiceOptions.includes(opt) && (
-                                      <button
-                                        type="button"
-                                        className="custom-select-option-delete"
-                                        title="Remove this item"
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          removeCustomInvoiceOption(opt)
-                                        }}
-                                      >
-                                        <X size={13} />
-                                      </button>
-                                    )}
-                                  </div>
-                                ))}
-                                <button
-                                  type="button"
-                                  className="custom-select-add"
-                                  onClick={() => {
-                                    setOpenInvoiceDropdownIndex(-1)
-                                    startCustomInvoiceItem(index)
-                                  }}
-                                >
-                                  <Plus size={14} /> Add custom item
-                                </button>
-                              </FloatingDropdownMenu>
-                            )}
-                          </div>
-                        )}
-                        <input
-                          type="number" min="1"
-                          value={item.quantity}
-                          onChange={(e) => changeInvoiceItemField(index, 'quantity', e.target.value)}
-                        />
-                        <input
-                          type="text"
-                          value={item.unitPrice}
-                          onChange={(e) => changeInvoiceItemField(index, 'unitPrice', e.target.value)}
-                          placeholder="0.00"
-                        />
-                        {item.isPackageRow ? (
-                          <input disabled className="disabled-field" value="N/A" />
-                        ) : (
-                          <input
-                            type="text"
-                            value={item.nettCost}
-                            onChange={(e) => changeInvoiceItemField(index, 'nettCost', e.target.value)}
-                            placeholder="0.00"
-                          />
-                        )}
-                        <div className={`line-item-profit ${rowTotal > 0 ? 'positive' : 'zero'}`}>
-                          {formatAmount(String(rowTotal))}
-                        </div>
-                        <button
-                          type="button"
-                          className="remove-line-btn"
-                          onClick={() => removeInvoiceItemRow(index)}
-                          disabled={item.isPackageRow}
-                          title={item.isPackageRow ? 'Package row cannot be removed' : 'Remove row'}
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-
-              <div className="line-items-summary">
-                <article>
-                  <span>Invoice total</span>
-                  <strong>{formatAmount(String(displayTotalClient))}</strong>
-                </article>
-                <article>
-                  <span>Items</span>
-                  <strong>{currentInvoiceItems.length} row{currentInvoiceItems.length !== 1 ? 's' : ''}</strong>
-                </article>
-                <article>
-                  <span>Status</span>
-                  <strong>{bookingForm.status}</strong>
-                </article>
-              </div>
+              <p className="field-help">Supplier nett costs are handled in section 05 (internal breakdown).</p>
             </div>
           </section>
 
@@ -2036,7 +1682,7 @@ function App() {
               <p>05a · Internal Costing</p>
               <h2>Supplier nett vs client price</h2>
             </div>
-            <p className="field-help">For internal use only. Track what you pay the supplier vs what you charge the client. Toggle "Send to invoice" to push a row to the client invoice.</p>
+            <p className="field-help">For internal use only. Track what you pay the supplier vs what you charge the client. Toggle "Send to invoice" to push a row (item name + client price) to the client invoice, or "Send to P.O." to include it on a Purchase Order.</p>
 
             <div className="line-items-panel">
               <div className="line-items-heading">
