@@ -161,6 +161,7 @@ type BookingFormData = {
   voucherRowsJson: string
   specialInstructions: string
   preparedBy: string
+  createdByName: string
   status: BookingStatus
   notes: string
 }
@@ -234,6 +235,7 @@ const emptyBookingForm: BookingFormData = {
   voucherRowsJson: '',
   specialInstructions: '',
   preparedBy: '',
+  createdByName: '',
   status: 'Inquiry',
   notes: '',
 }
@@ -506,8 +508,8 @@ function getBookingBreakdownNettTotal(booking: BookingFormData) {
   return sumLineItems(mapBreakdownItemsToBookingLines(readBreakdownItems(booking)), 'nettTotal')
 }
 
-function getUserBookingsCollectionPath(userId: string) {
-  return `users/${userId}/${bookingsCollectionKey}`
+function getSharedBookingsCollectionPath() {
+  return bookingsCollectionKey
 }
 
 function formatProjectDate(value: string) {
@@ -707,17 +709,14 @@ function App() {
     return onAuthStateChanged(auth, (user: FirebaseUser | null) => {
       setAuthUser(user)
       if (user?.emailVerified) {
-        setBookings(getStoredBookings(`${bookingStorageKey}-${user.uid}`, false))
+        setBookings(getStoredBookings(bookingStorageKey, false))
       }
       setIsAuthLoading(false)
     })
   }, [])
 
   useEffect(() => {
-    const userStorageKey = authUser?.uid
-      ? `${bookingStorageKey}-${authUser.uid}`
-      : bookingStorageKey
-    window.localStorage.setItem(userStorageKey, JSON.stringify(bookings))
+    window.localStorage.setItem(bookingStorageKey, JSON.stringify(bookings))
   }, [authUser?.uid, bookings])
 
   useEffect(() => {
@@ -725,7 +724,7 @@ function App() {
       return undefined
     }
     const bookingsQuery = query(
-      collection(db, getUserBookingsCollectionPath(authUser.uid)),
+      collection(db, getSharedBookingsCollectionPath()),
       orderBy('createdAt', 'desc'),
     )
     return onSnapshot(
@@ -1202,6 +1201,7 @@ function App() {
       sellingPrice: String(getBookingClientTotal(bookingForm)),
       id: editingBookingId || `BK-${Date.now()}`,
       createdAt: bookings.find((currentBooking) => currentBooking.id === editingBookingId)?.createdAt || new Date().toISOString(),
+      createdByName: bookingForm.createdByName || authUser?.displayName || '',
     }
 
     // Pin the exact saved booking so templates read fresh data immediately,
@@ -1216,11 +1216,12 @@ function App() {
 
     try {
       if (!authUser) throw new Error('Missing signed-in user')
-      await setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), booking.id), {
+      await setDoc(doc(db, getSharedBookingsCollectionPath(), booking.id), {
         ...booking,
         ownerId: authUser.uid,
         createdBy: authUser.uid,
         createdByEmail: authUser.email || '',
+        createdByName: authUser.displayName || booking.createdByName || '',
         updatedAt: new Date().toISOString(),
       }, { merge: true })
       
@@ -1253,7 +1254,7 @@ function App() {
         setDataError('Log in again before updating cloud records.')
         return
       }
-      void setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId), {
+      void setDoc(doc(db, getSharedBookingsCollectionPath(), selectedBookingId), {
         status,
         updatedAt: new Date().toISOString(),
       }, { merge: true }).catch(() => {
@@ -1390,7 +1391,7 @@ function App() {
 
     try {
       if (!authUser) throw new Error('Missing signed-in user')
-      await setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId), {
+      await setDoc(doc(db, getSharedBookingsCollectionPath(), selectedBookingId), {
         ...invoiceForm,
         status: 'Invoice',
         updatedAt: new Date().toISOString(),
@@ -1415,7 +1416,7 @@ function App() {
     setBookings((currentBookings) => currentBookings.filter((booking) => booking.id !== selectedBookingId))
     try {
       if (!authUser) throw new Error('Missing signed-in user')
-      await deleteDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId))
+      await deleteDoc(doc(db, getSharedBookingsCollectionPath(), selectedBookingId))
       setDataError('')
       setDataMessage('Project deleted successfully.')
     } catch {
@@ -4100,6 +4101,7 @@ function App() {
                   <span className="status-pill">{booking.status}</span>
                   <span><CalendarDays size={14} />{formatProjectDate(booking.createdAt)}</span>
                   <span><MapPin size={14} />{formatAmount(String(getBookingClientTotal(booking)))}</span>
+                  {booking.createdByName && <span className="booking-by-tag">By: {booking.createdByName}</span>}
                   <ChevronRight size={17} />
                 </div>
               </button>

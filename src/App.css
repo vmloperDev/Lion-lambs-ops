@@ -975,6 +975,7 @@ input, select, textarea { font: inherit; }
   flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: .8rem; font-weight: 700;
 }
 .project-meta span { display: inline-flex; align-items: center; gap: 4px; }
+.booking-by-tag { font-size: 0.7rem; font-weight: 700; color: var(--teal-dark); background: var(--teal-light, #e6f6fa); padding: 1px 6px; border-radius: 10px; }
 .status-pill {
   padding: 3px 10px; border-radius: 999px;
   background: var(--teal-light); color: var(--teal-dark);
