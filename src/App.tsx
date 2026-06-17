@@ -148,6 +148,7 @@ type BookingFormData = {
   invoiceAmountPaid: string
   invoicePaymentDate: string
   invoicePaymentStatus: string
+  invoiceFullyPaidDate: string
   invoiceReference: string
   optionDate: string
   flightDetails: string
@@ -220,6 +221,7 @@ const emptyBookingForm: BookingFormData = {
   invoiceAmountPaid: '',
   invoicePaymentDate: '',
   invoicePaymentStatus: 'Unpaid',
+  invoiceFullyPaidDate: '',
   invoiceReference: '',
   optionDate: '',
   flightDetails: '',
@@ -332,6 +334,12 @@ function formatAmount(value?: string) {
 
 function parseAmount(value?: string) {
   return Number((value ?? '').replace(/[^\d.]/g, '')) || 0
+}
+
+function computePaymentStatus(totalPrice: number, amountPaid: number): string {
+  if (totalPrice > 0 && amountPaid >= totalPrice) return 'Paid'
+  if (amountPaid > 0) return 'Partially Paid'
+  return 'Unpaid'
 }
 
 function parseQuantity(value?: string) {
@@ -648,6 +656,7 @@ function App() {
     invoiceAmountPaid: '',
     invoicePaymentDate: '',
     invoicePaymentStatus: 'Unpaid',
+    invoiceFullyPaidDate: '',
     invoiceReference: '',
   })
   const [paymentEntry, setPaymentEntry] = useState({
@@ -656,6 +665,8 @@ function App() {
     reference: '',
     date: new Date().toISOString().slice(0, 10),
   })
+  const [isFullyPaidModalOpen, setIsFullyPaidModalOpen] = useState(false)
+  const [fullyPaidDateInput, setFullyPaidDateInput] = useState(new Date().toISOString().slice(0, 10))
   const [activeBookingFilter, setActiveBookingFilter] = useState<BookingListFilter>('All')
   const [selectedBookingId, setSelectedBookingId] = useState('')
   const [editingBookingId, setEditingBookingId] = useState('')
@@ -1255,6 +1266,7 @@ function App() {
       invoiceAmountPaid: selectedBooking.invoiceAmountPaid || '',
       invoicePaymentDate: selectedBooking.invoicePaymentDate || '',
       invoicePaymentStatus: selectedBooking.invoicePaymentStatus || 'Unpaid',
+      invoiceFullyPaidDate: selectedBooking.invoiceFullyPaidDate || '',
       invoiceReference: selectedBooking.invoiceReference || '',
     })
     setScreen('invoice-editor')
@@ -1270,6 +1282,8 @@ function App() {
   function handleLogPayment() {
     const amount = parseFloat(paymentEntry.amount)
     if (!amount || amount <= 0) return
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
+    const totalPrice = selectedBooking ? sumLineItems(getBookingLineItems(selectedBooking), 'total') : 0
     const dateLabel = paymentEntry.date
       ? new Date(paymentEntry.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
       : new Date().toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -1280,14 +1294,77 @@ function App() {
     const newPaid = prevPaid + amount
     const prevRecords = invoiceForm.paymentRecords.trim()
     const newRecords = prevRecords ? `${prevRecords}\n${record}` : record
+    const newStatus = computePaymentStatus(totalPrice, newPaid)
     setInvoiceForm((f) => ({
       ...f,
       invoiceAmountPaid: String(newPaid),
       paymentRecords: newRecords,
       paymentMethod: paymentEntry.method || f.paymentMethod,
       invoicePaymentDate: paymentEntry.date || f.invoicePaymentDate,
+      invoicePaymentStatus: newStatus,
+      invoiceFullyPaidDate: newStatus === 'Paid' ? (f.invoiceFullyPaidDate || paymentEntry.date || f.invoicePaymentDate) : '',
     }))
     setPaymentEntry({ amount: '', method: '', reference: '', date: new Date().toISOString().slice(0, 10) })
+  }
+
+  function getInvoiceEditorTotal(): number {
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
+    return selectedBooking ? sumLineItems(getBookingLineItems(selectedBooking), 'total') : 0
+  }
+
+  function handleRemovePaymentRecord(index: number) {
+    const lines = invoiceForm.paymentRecords.split('\n').filter(Boolean)
+    const removedLine = lines[index] || ''
+    lines.splice(index, 1)
+    const removedAmountMatch = removedLine.match(/PHP\s*([\d,]+(?:\.\d{1,2})?)\s*$/)
+    const removedAmount = removedAmountMatch ? parseAmount(removedAmountMatch[1]) : 0
+    const newPaid = Math.max(parseAmount(invoiceForm.invoiceAmountPaid) - removedAmount, 0)
+    const totalPrice = getInvoiceEditorTotal()
+    const newStatus = computePaymentStatus(totalPrice, newPaid)
+    setInvoiceForm((f) => ({
+      ...f,
+      paymentRecords: lines.join('\n'),
+      invoiceAmountPaid: String(newPaid),
+      invoicePaymentStatus: newStatus,
+      invoiceFullyPaidDate: newStatus === 'Paid' ? f.invoiceFullyPaidDate : '',
+    }))
+  }
+
+  function handlePaymentStatusSelect(nextStatus: string) {
+    const totalPrice = getInvoiceEditorTotal()
+    const currentPaid = parseAmount(invoiceForm.invoiceAmountPaid)
+    if (nextStatus === 'Paid' && currentPaid < totalPrice) {
+      setFullyPaidDateInput(new Date().toISOString().slice(0, 10))
+      setIsFullyPaidModalOpen(true)
+      return
+    }
+    setInvoiceForm((f) => ({
+      ...f,
+      invoicePaymentStatus: nextStatus,
+      invoiceFullyPaidDate: nextStatus === 'Paid' ? (f.invoiceFullyPaidDate || new Date().toISOString().slice(0, 10)) : '',
+    }))
+  }
+
+  function confirmFullyPaid() {
+    const totalPrice = getInvoiceEditorTotal()
+    const currentPaid = parseAmount(invoiceForm.invoiceAmountPaid)
+    const remaining = Math.max(totalPrice - currentPaid, 0)
+    const dateLabel = new Date(fullyPaidDateInput + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+    const prevRecords = invoiceForm.paymentRecords.trim()
+    let newRecords = prevRecords
+    if (remaining > 0) {
+      const record = `${dateLabel} — Marked fully paid (balance settled) — PHP ${remaining.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+      newRecords = prevRecords ? `${prevRecords}\n${record}` : record
+    }
+    setInvoiceForm((f) => ({
+      ...f,
+      invoiceAmountPaid: String(totalPrice),
+      paymentRecords: newRecords,
+      invoicePaymentStatus: 'Paid',
+      invoiceFullyPaidDate: fullyPaidDateInput,
+      invoicePaymentDate: fullyPaidDateInput,
+    }))
+    setIsFullyPaidModalOpen(false)
   }
 
   async function handleSaveInvoiceUpdate(event: React.FormEvent<HTMLFormElement>) {
@@ -2846,11 +2923,7 @@ function App() {
                         type="button"
                         className="payment-log-remove"
                         title="Remove this record"
-                        onClick={() => {
-                          const lines = invoiceForm.paymentRecords.split('\n').filter(Boolean)
-                          lines.splice(i, 1)
-                          updateInvoiceField('paymentRecords', lines.join('\n'))
-                        }}
+                        onClick={() => handleRemovePaymentRecord(i)}
                       >×</button>
                     </div>
                   ))
@@ -2862,12 +2935,13 @@ function App() {
                 Payment status
                 <select
                   value={invoiceForm.invoicePaymentStatus}
-                  onChange={(event) => updateInvoiceField('invoicePaymentStatus', event.target.value)}
+                  onChange={(event) => handlePaymentStatusSelect(event.target.value)}
                 >
                   <option>Unpaid</option>
                   <option>Partially Paid</option>
                   <option>Paid</option>
                 </select>
+                <span className="field-help">Auto-updates as you log or remove payments. Pick "Paid" to settle the remaining balance and record the date it was fully paid.</span>
               </label>
               <label>
                 Total paid so far (auto-summed)
@@ -2881,6 +2955,42 @@ function App() {
             </div>
           </section>
         </form>
+
+        {isFullyPaidModalOpen && (
+          <div className="pax-modal-overlay" onClick={() => setIsFullyPaidModalOpen(false)}>
+            <div className="pax-modal fully-paid-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="pax-modal-header">
+                <span>Mark invoice as <strong>Paid</strong></span>
+                <button type="button" className="pax-modal-close" onClick={() => setIsFullyPaidModalOpen(false)}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="fully-paid-modal-body">
+                <p>
+                  This will settle the remaining balance of{' '}
+                  <strong>{formatAmount(String(Math.max(getInvoiceEditorTotal() - parseAmount(invoiceForm.invoiceAmountPaid), 0)))}</strong>{' '}
+                  to PHP 0.00. When was it fully paid?
+                </p>
+                <label className="fully-paid-date-field">
+                  Date fully paid
+                  <input
+                    type="date"
+                    value={fullyPaidDateInput}
+                    onChange={(e) => setFullyPaidDateInput(e.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="fully-paid-modal-actions">
+                <button type="button" className="fully-paid-cancel-btn" onClick={() => setIsFullyPaidModalOpen(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="fully-paid-confirm-btn" onClick={confirmFullyPaid}>
+                  Confirm fully paid
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     )
   }
@@ -3036,6 +3146,12 @@ function App() {
               <span>Balance</span>
               <strong>{formatAmount(String(balance))}</strong>
             </div>
+            {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate && (
+              <div className="fully-paid-badge">
+                <span>Fully Paid On</span>
+                <strong>{formatProjectDate(selectedBooking.invoiceFullyPaidDate)}</strong>
+              </div>
+            )}
             <div className="payment-placeholder">
               <span>Payment Updates</span>
               <ul>
@@ -3049,6 +3165,9 @@ function App() {
           <section className="invoice-notes">
             <p>
               Status: {selectedBooking.invoicePaymentStatus || 'Unpaid'}.
+              {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate
+                ? ` Fully paid on ${formatProjectDate(selectedBooking.invoiceFullyPaidDate)}.`
+                : ''}
               Payment method: {selectedBooking.paymentMethod || 'To be advised'}.
               Payment date:{' '}
               {selectedBooking.invoicePaymentDate

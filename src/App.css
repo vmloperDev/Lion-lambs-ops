@@ -1540,6 +1540,18 @@ input, select, textarea { font: inherit; }
 }
 .pax-modal-field input:focus { border-color: var(--accent); outline: none; }
 
+.fully-paid-modal-body { display: grid; gap: 16px; padding: 20px; }
+.fully-paid-modal-body p { margin: 0; font-size: .88rem; line-height: 1.5; color: var(--text); }
+.fully-paid-modal-body p strong { color: var(--accent); }
+.fully-paid-date-field { display: flex; flex-direction: column; gap: 6px; font-size: .8rem; font-weight: 600; color: var(--subtle); text-transform: uppercase; letter-spacing: .04em; }
+.fully-paid-date-field input { height: 42px; padding: 0 12px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 1rem; font-weight: 600; background: var(--surface); color: var(--text); }
+.fully-paid-date-field input:focus { border-color: var(--accent); outline: none; }
+.fully-paid-modal-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 20px; border-top: 1px solid var(--border); }
+.fully-paid-cancel-btn { height: 40px; padding: 0 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; font-weight: 600; }
+.fully-paid-cancel-btn:hover { background: var(--surface-3); }
+.fully-paid-confirm-btn { height: 40px; padding: 0 18px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; font-weight: 700; }
+.fully-paid-confirm-btn:hover { opacity: .92; }
+
 
 /* Invoice edit summary */
 .invoice-edit-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
@@ -1770,8 +1782,11 @@ input, select, textarea { font: inherit; }
 .invoice-table .desc-col { width: 38%; color: #3a4f60; line-height: 1.4; word-break: break-word; white-space: pre-wrap; padding-left: 20px; }
 .invoice-table .item-description-row td { background: #f4f6f8; color: #4a5a6a; font-size: 0.7rem; font-style: italic; padding: 3px 6px 6px 14px; border-bottom: 1px solid #d0dae3; }
 .invoice-total-panel { display: grid; justify-content: end; gap: 4px; margin-top: 8px; }
-.invoice-total-panel > div:not(.payment-placeholder) { display: grid; grid-template-columns: 90px 120px; align-items: center; gap: 10px; text-align: right; }
+.invoice-total-panel > div:not(.payment-placeholder):not(.fully-paid-badge) { display: grid; grid-template-columns: 90px 120px; align-items: center; gap: 10px; text-align: right; }
 .invoice-total-panel > div:nth-child(2) { padding: 5px 0; border-top: 2px solid #102a43; border-bottom: 2px solid #102a43; }
+.fully-paid-badge { display: grid; grid-template-columns: 90px 120px; align-items: center; gap: 10px; text-align: right; margin-top: 2px; }
+.fully-paid-badge span { color: #4f7b17; }
+.fully-paid-badge strong { color: #4f7b17; }
 .payment-placeholder { max-width: 280px; margin-top: 4px; padding: 6px 8px; background: transparent; color: #4f7b17; font-size: 0.7rem; font-style: italic; font-weight: 900; text-align: right; }
 .payment-placeholder p, .payment-placeholder li { margin: 0; line-height: 1.35; }
 .invoice-notes { margin-top: 12px; font-size: 0.68rem; line-height: 1.3; }
