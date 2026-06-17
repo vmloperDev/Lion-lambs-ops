@@ -650,6 +650,7 @@ function App() {
   const [unreadCount, setUnreadCount] = useState(0)
   const [chatFileUploading, setChatFileUploading] = useState(false)
   const [chatUploadProgress, setChatUploadProgress] = useState(0)
+  const [chatUploadError, setChatUploadError] = useState('')
   const chatFileInputRef = useRef<HTMLInputElement>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
   const chatPanelRef = useRef<HTMLDivElement>(null)
@@ -657,6 +658,8 @@ function App() {
     dragging: false, startX: 0, startY: 0, origRight: 24, origBottom: 24,
   })
   const [chatPos, setChatPos] = useState<{ right: number; bottom: number }>({ right: 24, bottom: 24 })
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false)
+  const chatInputRef = useRef<HTMLInputElement>(null)
 
   function onChatHeaderMouseDown(e: React.MouseEvent) {
     if ((e.target as HTMLElement).closest('button')) return
@@ -991,8 +994,10 @@ function App() {
         fileName: file.name,
         createdAt: serverTimestamp(),
       })
-    } catch {
-      // silent fail — could show a toast here
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Upload failed'
+      setChatUploadError(msg)
+      setTimeout(() => setChatUploadError(''), 4000)
     } finally {
       setChatFileUploading(false)
       setChatUploadProgress(0)
@@ -4405,19 +4410,28 @@ function App() {
       {/* CHAT PANEL */}
       {isChatOpen && (
         <div className="chat-panel" ref={chatPanelRef} style={{ right: chatPos.right, bottom: chatPos.bottom }}>
+          {/* Header */}
           <div className="chat-panel-header" onMouseDown={onChatHeaderMouseDown} style={{ cursor: 'grab' }}>
-            <MessageSquare size={16} />
-            <strong>Team Chat</strong>
-            <div className="chat-header-nexus-badge">
-              <Bot size={12} /> Nexus ready
+            <div className="chat-header-avatar">
+              <MessageSquare size={14} />
             </div>
-            <button type="button" onClick={() => setIsChatOpen(false)}><X size={16} /></button>
+            <div className="chat-header-info">
+              <strong>Team Chat</strong>
+              <span className="chat-header-status"><span className="chat-status-dot" />Online</span>
+            </div>
+            <div className="chat-header-nexus-badge">
+              <Bot size={11} /> Nexus
+            </div>
+            <button type="button" className="chat-close-btn" title="Close" onClick={() => setIsChatOpen(false)}><X size={15} /></button>
           </div>
+
+          {/* Messages */}
           <div className="chat-messages">
             {chatMessages.length === 0 && (
               <div className="chat-empty">
+                <div className="chat-empty-icon">💬</div>
                 <span>No messages yet. Say hi! 👋</span>
-                <span className="chat-nexus-hint">Tap <Bot size={11} /> to ask Nexus AI</span>
+                <span className="chat-nexus-hint">Type <strong>@Nexus</strong> to ask the AI assistant</span>
               </div>
             )}
             {chatMessages.map((msg) => {
@@ -4426,36 +4440,45 @@ function App() {
               const time = msg.createdAt?.toDate
                 ? msg.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                 : ''
+              const initials = msg.senderName ? msg.senderName.split(' ').map((n: string) => n[0]).join('').slice(0,2).toUpperCase() : '?'
               return (
-                <div key={msg.id} className={`chat-bubble ${isNexus ? 'chat-nexus' : isMe ? 'chat-mine' : 'chat-theirs'}`}>
+                <div key={msg.id} className={`chat-bubble-row ${isNexus ? 'row-nexus' : isMe ? 'row-mine' : 'row-theirs'}`}>
                   {(!isMe || isNexus) && (
-                    <span className={`chat-sender ${isNexus ? 'chat-sender-nexus' : ''}`}>
-                      {isNexus ? <><Bot size={11} /> Nexus</> : msg.senderName}
-                    </span>
-                  )}
-                  {msg.fileUrl && msg.fileType === 'image' ? (
-                    <div className="chat-image-bubble">
-                      <img src={msg.fileUrl} alt={msg.fileName || 'image'} className="chat-image" onClick={() => window.open(msg.fileUrl, '_blank')} />
-                    </div>
-                  ) : msg.fileUrl && msg.fileType === 'pdf' ? (
-                    <a href={msg.fileUrl} target="_blank" rel="noreferrer" className="chat-pdf-bubble">
-                      <FileText size={18} />
-                      <span>{msg.fileName || 'PDF file'}</span>
-                    </a>
-                  ) : (
-                    <div className={`chat-text ${isNexus ? 'chat-text-nexus' : ''} ${msg.isNexusThinking ? 'chat-thinking' : ''}`}>
-                      {msg.isNexusThinking ? (
-                        <span className="chat-thinking-dots"><span/><span/><span/></span>
-                      ) : msg.text}
+                    <div className={`chat-avatar ${isNexus ? 'chat-avatar-nexus' : ''}`}>
+                      {isNexus ? <Bot size={12} /> : initials}
                     </div>
                   )}
-                  <span className="chat-time">{time}</span>
+                  <div className={`chat-bubble ${isNexus ? 'chat-nexus' : isMe ? 'chat-mine' : 'chat-theirs'}`}>
+                    {(!isMe || isNexus) && (
+                      <span className={`chat-sender ${isNexus ? 'chat-sender-nexus' : ''}`}>
+                        {isNexus ? 'Nexus AI' : msg.senderName}
+                      </span>
+                    )}
+                    {msg.fileUrl && msg.fileType === 'image' ? (
+                      <div className="chat-image-bubble">
+                        <img src={msg.fileUrl} alt={msg.fileName || 'image'} className="chat-image" onClick={() => window.open(msg.fileUrl, '_blank')} />
+                      </div>
+                    ) : msg.fileUrl && msg.fileType === 'pdf' ? (
+                      <a href={msg.fileUrl} target="_blank" rel="noreferrer" className="chat-pdf-bubble">
+                        <FileText size={16} />
+                        <span>{msg.fileName || 'PDF file'}</span>
+                      </a>
+                    ) : (
+                      <div className={`chat-text ${isNexus ? 'chat-text-nexus' : ''} ${msg.isNexusThinking ? 'chat-thinking' : ''}`}>
+                        {msg.isNexusThinking ? (
+                          <span className="chat-thinking-dots"><span/><span/><span/></span>
+                        ) : msg.text}
+                      </div>
+                    )}
+                    <span className="chat-time">{time}</span>
+                  </div>
                 </div>
               )
             })}
             <div ref={chatBottomRef} />
           </div>
 
+          {/* Upload progress */}
           {chatFileUploading && (
             <div className="chat-upload-progress">
               <div className="chat-upload-bar" style={{ width: `${chatUploadProgress}%` }} />
@@ -4463,22 +4486,58 @@ function App() {
             </div>
           )}
 
+          {/* Upload error */}
+          {chatUploadError && (
+            <div className="chat-upload-error">
+              ⚠️ {chatUploadError}
+            </div>
+          )}
+
+          {/* Emoji Picker */}
+          {showEmojiPicker && (
+            <div className="chat-emoji-picker">
+              {['😀','😂','😍','🥰','😎','🤔','😅','🙏','👍','👎','❤️','🔥','🎉','✅','⚡','💼','✈️','🌴','📋','💰','🤝','👋','😊','🥳','💪','🫡','😴','🤯','👀','💡'].map(em => (
+                <button
+                  key={em}
+                  type="button"
+                  className="chat-emoji-btn"
+                  onClick={() => {
+                    setChatInput(prev => prev + em)
+                    chatInputRef.current?.focus()
+                  }}
+                >{em}</button>
+              ))}
+            </div>
+          )}
+
+          {/* Input Row */}
           <div className="chat-input-row">
             <input
               ref={chatFileInputRef}
               type="file"
               accept="image/*,application/pdf"
               style={{ display: 'none' }}
-              onChange={handleChatFileUpload}
+              onChange={(e) => {
+                void handleChatFileUpload(e)
+                setShowEmojiPicker(false)
+              }}
             />
             <button
               type="button"
               className="chat-attach-btn"
               title="Send image or PDF"
               disabled={chatFileUploading}
-              onClick={() => chatFileInputRef.current?.click()}
+              onClick={() => { setShowEmojiPicker(false); chatFileInputRef.current?.click() }}
             >
-              <Paperclip size={15} />
+              <Paperclip size={16} />
+            </button>
+            <button
+              type="button"
+              className={`chat-emoji-toggle ${showEmojiPicker ? 'active' : ''}`}
+              title="Emoji"
+              onClick={() => setShowEmojiPicker(v => !v)}
+            >
+              😊
             </button>
             <button
               type="button"
@@ -4488,18 +4547,31 @@ function App() {
                 if (!chatInput.startsWith('@Nexus ')) {
                   setChatInput(prev => '@Nexus ' + prev)
                 }
+                chatInputRef.current?.focus()
+                setShowEmojiPicker(false)
               }}
             >
               <Bot size={15} />
             </button>
             <input
+              ref={chatInputRef}
               className="chat-input"
-              placeholder="Message the team…"
+              placeholder="Aa"
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendChatMessage() } }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendChatMessage() }
+                if (e.key === 'Escape') setShowEmojiPicker(false)
+              }}
+              onFocus={() => setShowEmojiPicker(false)}
             />
-            <button type="button" className="chat-send-btn" onClick={() => void sendChatMessage()} disabled={!chatInput.trim() || chatFileUploading}>
+            <button
+              type="button"
+              className={`chat-send-btn ${chatInput.trim() ? 'active' : ''}`}
+              onClick={() => void sendChatMessage()}
+              disabled={!chatInput.trim() || chatFileUploading}
+              title="Send"
+            >
               <Send size={16} />
             </button>
           </div>
