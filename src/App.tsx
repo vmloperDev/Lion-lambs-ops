@@ -1836,8 +1836,7 @@ function App() {
                 </button>
               </div>
 
-              <div className="line-items-table no-overflow">
-                <div className="line-items-scroll-wrapper">
+              <div className="line-items-table no-overflow breakdown-table-outer">
                 <div className="line-items-row breakdown-row header">
                   <span>Vendor</span>
                   <span>Contact No.</span>
@@ -1999,7 +1998,6 @@ function App() {
                     </div>
                   </div>
                 ))}
-                </div>{/* end scroll-wrapper */}
               </div>
 
               <div className="line-items-summary">
