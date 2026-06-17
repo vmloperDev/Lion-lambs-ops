@@ -1800,11 +1800,11 @@ input, select, textarea { font: inherit; }
 .invoice-header { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 22px; align-items: start; }
 .invoice-preview::before, .po-preview::before, .voucher-preview::before { content: ""; display: block; height: 6px; margin: -2px 0 22px; background: #25328a; }
 .quotation-preview::before { content: ""; display: block; height: 8px; margin-bottom: 22px; background: #257588; }
-.invoice-header img, .po-header img { width: 110px; height: 90px; object-fit: contain; }
-.invoice-header div { display: grid; gap: 4px; }
-.invoice-header h1 { margin: 0 0 8px; color: #061c30; font-size: clamp(1.8rem,4vw,2.5rem); letter-spacing: 0; }
-.invoice-header strong { color: #061c30; font-size: 1.15rem; }
-.invoice-header span { color: #52667f; font-size: 0.84rem; font-weight: 700; }
+.invoice-header img, .po-header img { width: 70px; height: 58px; object-fit: contain; }
+.invoice-header div { display: grid; gap: 2px; }
+.invoice-header h1 { margin: 0 0 4px; color: #061c30; font-size: clamp(1.3rem,3vw,1.8rem); letter-spacing: 0; }
+.invoice-header strong { color: #061c30; font-size: 0.92rem; }
+.invoice-header span { color: #52667f; font-size: 0.74rem; font-weight: 700; }
 .invoice-strip { display: grid; grid-template-columns: 1fr 1fr minmax(160px,0.8fr); gap: 8px; margin: 12px 0 0; padding: 7px 10px; border-top: 1px solid #d7e3ea; border-bottom: 1px solid #d7e3ea; background: #f5f7f8; }
 .invoice-strip div { display: grid; gap: 3px; }
 .invoice-strip span, .invoice-total-panel span { color: #52667f; font-size: 0.62rem; font-weight: 900; text-transform: uppercase; }
@@ -1826,7 +1826,6 @@ input, select, textarea { font: inherit; }
 .invoice-total-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; align-items: center; padding: 5px 8px; border-bottom: 1px solid #e6ecf1; text-align: right; }
 .invoice-total-row span { color: #52667f; font-weight: 900; text-transform: uppercase; font-size: 0.62rem; text-align: left; }
 .invoice-total-row strong { color: #102a43; font-weight: 700; }
-.invoice-total-row.subtotal-row { background: #f5f7f8; }
 .invoice-total-row.total-row { border-top: 2px solid #102a43; border-bottom: 2px solid #102a43; background: #f5f7f8; }
 .fully-paid-badge span { color: #4f7b17 !important; }
 .fully-paid-badge strong { color: #4f7b17; }

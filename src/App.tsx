@@ -3164,10 +3164,6 @@ function App() {
             </table>
 
             <section className="invoice-total-panel">
-              <div className="invoice-total-row subtotal-row">
-                <span>SUBTOTAL</span>
-                <strong>{formatAmount(String(totalPrice))}</strong>
-              </div>
               <div className="invoice-total-row total-row">
                 <span>TOTAL</span>
                 <strong>{formatAmount(String(totalPrice))}</strong>
