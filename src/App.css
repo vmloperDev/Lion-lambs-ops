@@ -530,7 +530,9 @@ input, select, textarea { font: inherit; }
    HOME SCREEN
    ================================================================ */
 .home-screen {
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
   padding: 18px;
   display: grid;
   grid-template-rows: auto minmax(0,1fr);
@@ -543,6 +545,8 @@ input, select, textarea { font: inherit; }
   grid-template-columns: minmax(0, 1.15fr) minmax(390px, .85fr);
   align-items: stretch;
   gap: 16px;
+  min-height: 0;
+  overflow: hidden;
   width: min(1240px,100%);
   min-height: 0;
   margin: 0 auto;
@@ -552,6 +556,7 @@ input, select, textarea { font: inherit; }
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 16px;
   min-width: 0; min-height: 0;
+  max-height: 100%;
   padding: 0;
   overflow: hidden;
   border-radius: var(--r-xl);
@@ -810,12 +815,14 @@ input, select, textarea { font: inherit; }
 /* Projects panel */
 .projects-panel {
   min-height: 0;
+  max-height: 100%;
   display: flex; flex-direction: column;
   padding: 20px;
   border-radius: var(--r-xl);
   background: var(--surface);
   border: 1px solid var(--border);
   box-shadow: var(--sh);
+  overflow: hidden;
 }
 .section-heading {
   display: flex; align-items: center; justify-content: space-between;
