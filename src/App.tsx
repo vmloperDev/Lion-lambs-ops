@@ -875,7 +875,7 @@ function App() {
     }
     // Seed initial JSON representations
     const initialInvoice: InvoiceLineItem[] = [
-      { id: createLineItemId(), description: '', quantity: '1', unitPrice: '', nettCost: '', isPackageRow: true }
+      { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: '', nettCost: '', isPackageRow: true }
     ]
     const initialBreakdown: BreakdownLineItem[] = [
       { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false, sendToPO: false, isPackageRow: true }
@@ -1005,8 +1005,9 @@ function App() {
       try {
         const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(normalizedItems, updated.packageName), 'total')
         const brkItems = readBreakdownItems(updated)
+        const invPackageRow = normalizedItems.find(i => i.isPackageRow)
         const nextBrk = brkItems.map((item) =>
-          item.isPackageRow ? { ...item, id: item.id || createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : { ...item, id: item.id || createLineItemId() },
+          item.isPackageRow ? { ...item, id: item.id || createLineItemId(), description: invPackageRow?.description || item.description || 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : { ...item, id: item.id || createLineItemId() },
         )
         updated.breakdownLineItemsJson = JSON.stringify(nextBrk)
       } catch(e){}
@@ -1023,7 +1024,14 @@ function App() {
         id: item.id || createLineItemId(),
         ...(item.isPackageRow ? { quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : {}),
       }))
-      const manualInvoiceItems = invoiceItems.filter((item) => item.source !== 'breakdown')
+      // Sync the invoice package row description from the breakdown package row description
+      const brkPackageRow = normalizedBreakdown.find(i => i.isPackageRow)
+      const manualInvoiceItems = invoiceItems
+        .filter((item) => item.source !== 'breakdown')
+        .map((item) => item.isPackageRow && brkPackageRow?.description
+          ? { ...item, description: brkPackageRow.description }
+          : item
+        )
       const breakdownInvoiceItems: InvoiceLineItem[] = normalizedBreakdown
         .filter((item) => item.sendToInvoice && !item.isPackageRow)
         .map((item) => {
