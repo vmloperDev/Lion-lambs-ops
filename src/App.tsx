@@ -960,9 +960,19 @@ function App() {
           const invItems: InvoiceLineItem[] = readInvoiceItems(updated)
           const brkItems: BreakdownLineItem[] = readBreakdownItems(updated)
           
-          const nextInv = invItems.map(item => item.isPackageRow ? { ...item, description: updated.packageName || item.description, quantity: updated.quantity || '1', unitPrice: updated.unitPrice } : item)
+          const nextInv = invItems.map(item => item.isPackageRow ? {
+            ...item,
+            description: updated.packageName || item.description,
+            ...(field === 'quantity' ? { quantity: updated.quantity || '1' } : {}),
+            ...(field === 'unitPrice' ? { unitPrice: updated.unitPrice } : {}),
+          } : item)
           const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(nextInv, updated.packageName), 'total')
-          const nextBrk = brkItems.map(item => item.isPackageRow ? { ...item, description: updated.packageName || item.description, quantity: '1', unitPrice: String(invoiceTotal) } : item)
+          const nextBrk = brkItems.map(item => item.isPackageRow ? {
+            ...item,
+            description: updated.packageName || item.description,
+            quantity: '1',
+            ...(field === 'unitPrice' ? { unitPrice: String(invoiceTotal) } : {}),
+          } : item)
           
           updated.invoiceLineItemsJson = JSON.stringify(nextInv)
           updated.breakdownLineItemsJson = JSON.stringify(nextBrk)
@@ -1019,7 +1029,7 @@ function App() {
     return readBreakdownItems(bookingForm).map((item) => ({
       ...item,
       id: item.id || createLineItemId(),
-      ...(item.isPackageRow ? { quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: true } : {}),
+      ...(item.isPackageRow ? { quantity: '1', sendToInvoice: true } : {}),
     }))
   }
 
@@ -1037,7 +1047,7 @@ function App() {
         const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(normalizedItems, updated.packageName), 'total')
         const brkItems = readBreakdownItems(updated)
         const nextBrk = brkItems.map((item) =>
-          item.isPackageRow ? { ...item, id: item.id || createLineItemId(), description: item.description || 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: true } : { ...item, id: item.id || createLineItemId() },
+          item.isPackageRow ? { ...item, id: item.id || createLineItemId(), description: item.description || 'Group Package', quantity: '1', sendToInvoice: true } : { ...item, id: item.id || createLineItemId() },
         )
         updated.breakdownLineItemsJson = JSON.stringify(nextBrk)
       } catch(e){}
@@ -1052,7 +1062,7 @@ function App() {
       const normalizedBreakdown = items.map((item) => ({
         ...item,
         id: item.id || createLineItemId(),
-        ...(item.isPackageRow ? { quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: true } : {}),
+        ...(item.isPackageRow ? { quantity: '1', sendToInvoice: true } : {}),
       }))
       const manualInvoiceItems = invoiceItems.filter((item) => item.source === 'breakdown' && !item.isPackageRow)
       const breakdownInvoiceItems: InvoiceLineItem[] = normalizedBreakdown
@@ -1840,8 +1850,6 @@ function App() {
                       </button>
                       <input
                         type="text"
-                        disabled={item.isPackageRow}
-                        className={item.isPackageRow ? 'disabled-field' : ''}
                         value={item.unitPrice}
                         onChange={(e) => changeBreakdownItemField(index, 'unitPrice', e.target.value)}
                         placeholder="0.00"
