@@ -16,10 +16,12 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
   setDoc,
+  writeBatch,
 } from 'firebase/firestore'
 import {
   ArrowRight,
@@ -620,6 +622,8 @@ function FloatingDropdownMenu({
 
 function App() {
   const [screen, setScreen] = useState<Screen>('splash')
+  const [isMigrating, setIsMigrating] = useState(false)
+  const [migrationDone, setMigrationDone] = useState(false)
   const [invoiceEditorReturnScreen, setInvoiceEditorReturnScreen] = useState<Screen>('booking-detail')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('vmloper.dev@gmail.com')
@@ -1431,6 +1435,36 @@ function App() {
   function openVoucherPreview() { setScreen('voucher-preview') }
   function openBreakdownPreview() { setScreen('breakdown-preview') }
   function openDocumentFolder() { setScreen('document-folder') }
+
+  async function migrateMyBookings() {
+    if (!authUser) return
+    setIsMigrating(true)
+    try {
+      const oldPath = `users/${authUser.uid}/bookings`
+      const oldSnap = await getDocs(collection(db, oldPath))
+      if (oldSnap.empty) {
+        setMigrationDone(true)
+        setIsMigrating(false)
+        return
+      }
+      const batch = writeBatch(db)
+      oldSnap.docs.forEach((oldDoc) => {
+        const data = oldDoc.data()
+        const newRef = doc(db, 'bookings', oldDoc.id)
+        batch.set(newRef, {
+          ...data,
+          createdByName: data.createdByName || authUser.displayName || authUser.email || '',
+          migratedFrom: oldPath,
+        }, { merge: true })
+      })
+      await batch.commit()
+      setMigrationDone(true)
+      setDataMessage(`${oldSnap.size} booking(s) migrated to shared database successfully!`)
+    } catch {
+      setDataError('Migration failed. Please try again.')
+    }
+    setIsMigrating(false)
+  }
 
   function openDocumentByTitle(title: string) {
     if (title === 'Breakdown') { openBreakdownPreview(); return }
@@ -3956,6 +3990,23 @@ function App() {
               </button>
             </div>
           </section>
+
+          {!migrationDone && (
+            <div className="migration-banner">
+              <div>
+                <strong>⚠️ One-time setup required</strong>
+                <span>Move your old bookings to the shared database so everyone can see them.</span>
+              </div>
+              <button
+                type="button"
+                className="migration-btn"
+                onClick={migrateMyBookings}
+                disabled={isMigrating}
+              >
+                {isMigrating ? 'Migrating...' : 'Migrate My Bookings'}
+              </button>
+            </div>
+          )}
 
           <section className="dashboard-grid">
             <article className="summary-card teal" onClick={() => setActiveBookingFilter('Inquiry')} style={{ cursor: 'pointer' }}>
