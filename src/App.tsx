@@ -2933,15 +2933,22 @@ function App() {
             <div className="field-grid two" style={{marginTop:'1rem'}}>
               <label>
                 Payment status
-                <select
-                  value={invoiceForm.invoicePaymentStatus}
-                  onChange={(event) => handlePaymentStatusSelect(event.target.value)}
-                >
-                  <option>Unpaid</option>
-                  <option>Partially Paid</option>
-                  <option>Paid</option>
-                </select>
-                <span className="field-help">Auto-updates as you log or remove payments. Pick "Paid" to settle the remaining balance and record the date it was fully paid.</span>
+                <div className="payment-status-row">
+                  <span className={`payment-status-badge status-${invoiceForm.invoicePaymentStatus.toLowerCase().replaceAll(' ', '-')}`}>
+                    {invoiceForm.invoicePaymentStatus}
+                  </span>
+                  {invoiceForm.invoicePaymentStatus !== 'Paid' && (
+                    <button
+                      type="button"
+                      className="mark-paid-btn"
+                      onClick={() => handlePaymentStatusSelect('Paid')}
+                    >
+                      <CheckCircle2 size={16} />
+                      PAID?
+                    </button>
+                  )}
+                </div>
+                <span className="field-help">Auto-updates as you log or remove payments. Click "PAID?" to settle the remaining balance and record the date it was fully paid.</span>
               </label>
               <label>
                 Total paid so far (auto-summed)
