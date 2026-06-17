@@ -24,7 +24,6 @@ import {
   query,
   serverTimestamp,
   setDoc,
-  Timestamp,
   writeBatch,
 } from 'firebase/firestore'
 import {
@@ -798,6 +797,8 @@ function App() {
       createdAt: serverTimestamp(),
     })
   }
+
+  function getAuthErrorMessage(error: unknown) {
     const code = typeof error === 'object' && error && 'code' in error ? (error as AuthError).code : ''
     if (code) {
       switch (code) {
@@ -4214,7 +4215,7 @@ function App() {
             )}
             {chatMessages.map((msg) => {
               const isMe = msg.senderEmail === authUser?.email
-              const time = msg.createdAt instanceof Timestamp
+              const time = msg.createdAt?.toDate
                 ? msg.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                 : ''
               return (
