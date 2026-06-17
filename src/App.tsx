@@ -388,7 +388,16 @@ function readInvoiceItems(booking: BookingFormData): InvoiceLineItem[] {
     if (booking.invoiceLineItemsJson) {
       const items: InvoiceLineItem[] = JSON.parse(booking.invoiceLineItemsJson)
       // Drop stale items from removed sections — only keep package row and breakdown-sourced rows
-      return items.filter(item => item.isPackageRow || item.source === 'breakdown')
+      const filtered = items.filter(item => item.isPackageRow || item.source === 'breakdown')
+      // Deduplicate package rows — keep only the first one (breakdown-sourced takes priority)
+      let packageRowSeen = false
+      return filtered.filter(item => {
+        if (item.isPackageRow) {
+          if (packageRowSeen) return false
+          packageRowSeen = true
+        }
+        return true
+      })
     }
   } catch {}
   return [
