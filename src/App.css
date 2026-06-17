@@ -46,6 +46,105 @@
   --t: 150ms ease;
 }
 
+/* ================================================================
+   DARK MODE
+   ================================================================ */
+[data-theme="dark"] {
+  --teal:        #29b8db;
+  --teal-dark:   #1a9ab8;
+  --teal-deeper: #0f7fa0;
+  --teal-light:  #0d2e3a;
+  --teal-mid:    #1a4a5c;
+  --teal-glow:   rgba(41,184,219,.18);
+  --gold:        #f0b429;
+  --gold-dark:   #d4900a;
+  --gold-light:  #2a1f07;
+  --gold-mid:    #3a2a0a;
+  --navy:        #e2edf5;
+  --navy-mid:    #c8dce9;
+  --ink:         #e8f1f7;
+  --body:        #a8c0d0;
+  --muted:       #6b8fa8;
+  --subtle:      #4a6a82;
+  --border:      #1e3448;
+  --border-mid:  #253f56;
+  --bg:          #0a1520;
+  --bg-mid:      #0e1d2c;
+  --surface:     #0f1f30;
+  --surface-2:   #122436;
+  --surface-3:   #152a3e;
+  --red:         #e05c4e;
+  --red-light:   #2a0f0d;
+  --red-mid:     #4a1a16;
+  --green:       #2db87a;
+  --green-light: #0a2218;
+  --green-mid:   #153d28;
+  --sh-xs: 0 1px 4px rgba(0,0,0,.25);
+  --sh-sm: 0 3px 12px rgba(0,0,0,.32);
+  --sh:    0 8px 32px rgba(0,0,0,.40);
+  --sh-lg: 0 20px 60px rgba(0,0,0,.50);
+  --sh-xl: 0 32px 80px rgba(0,0,0,.60);
+}
+
+[data-theme="dark"] .app-nav {
+  background: rgba(15, 31, 48, .96);
+}
+
+[data-theme="dark"] .auth-screen {
+  background: var(--bg);
+}
+
+[data-theme="dark"] .auth-card {
+  background: var(--surface);
+}
+
+[data-theme="dark"] body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* Dark mode: keep print/document areas white */
+[data-theme="dark"] .print-document,
+[data-theme="dark"] .quotation-preview,
+[data-theme="dark"] .invoice-preview,
+[data-theme="dark"] .po-preview,
+[data-theme="dark"] .voucher-preview,
+[data-theme="dark"] .breakdown-preview {
+  background: #ffffff !important;
+  color: #1a2e3d !important;
+}
+
+[data-theme="dark"] .print-document *,
+[data-theme="dark"] .quotation-preview *,
+[data-theme="dark"] .invoice-preview *,
+[data-theme="dark"] .po-preview *,
+[data-theme="dark"] .voucher-preview *,
+[data-theme="dark"] .breakdown-preview * {
+  color: inherit;
+}
+
+/* Dark mode nav bg needs override for preview screens */
+[data-theme="dark"] .preview-screen {
+  background: var(--bg);
+}
+
+/* Dark mode: pipeline progress bars */
+[data-theme="dark"] .pipeline-row .pipeline-track span {
+  background: var(--teal);
+}
+
+/* Dark mode: internal section tint */
+[data-theme="dark"] .internal-section {
+  background: #0e1d2c;
+}
+
+/* Dark mode toggle button active state */
+.dark-toggle-btn.dark-active {
+  background: var(--teal-light) !important;
+  border-color: var(--teal-mid) !important;
+  color: var(--teal) !important;
+}
+
 /* --- Reset --------------------------------------------------- */
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }

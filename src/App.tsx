@@ -35,6 +35,7 @@ import {
   LogOut,
   Mail,
   MapPin,
+  Moon,
   Plane,
   Plus,
   Printer,
@@ -42,6 +43,7 @@ import {
   Save,
   Search,
   Sparkles,
+  Sun,
   UserRound,
   X,
   Check,
@@ -515,6 +517,17 @@ function App() {
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
   const [aiFilledFields, setAiFilledFields] = useState<string[]>([])
+  const [isDark, setIsDark] = useState(() => {
+    const stored = window.localStorage.getItem('llops-theme')
+    if (stored) return stored === 'dark'
+    return window.matchMedia('(prefers-color-scheme: dark)').matches
+  })
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light')
+    window.localStorage.setItem('llops-theme', isDark ? 'dark' : 'light')
+  }, [isDark])
+
   const [isPdfExporting, setIsPdfExporting] = useState(false)
   const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
@@ -1406,6 +1419,14 @@ function App() {
           <div className="nav-actions">
             <button
               type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button
+              type="button"
               onClick={() => { setEditingBookingId(''); setScreen(isEditingBooking ? 'booking-detail' : 'home') }}
               title="Close"
             >
@@ -2201,6 +2222,14 @@ function App() {
             </div>
           </div>
           <div className="nav-actions">
+            <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
             <button type="button" onClick={() => setScreen('home')} title="Back">
               <X size={18} />
             </button>
@@ -2429,6 +2458,14 @@ function App() {
           </div>
           <div className="nav-actions">
             <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button
               className="nav-text-action"
               type="button"
               onClick={() => setScreen('booking-detail')}
@@ -2532,6 +2569,14 @@ function App() {
             </div>
           </div>
           <div className="nav-actions">
+            <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
             <button
               className="nav-text-action"
               type="button"
@@ -2696,6 +2741,14 @@ function App() {
             </div>
           </div>
           <div className="nav-actions">
+            <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
             <button
               type="button"
               onClick={() => setScreen('booking-detail')}
@@ -2885,6 +2938,14 @@ function App() {
             </div>
           </div>
           <div className="nav-actions">
+            <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
             <button
               className="nav-text-action"
               type="button"
@@ -3223,6 +3284,14 @@ function App() {
           </div>
           <div className="nav-actions">
             <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button
               className="nav-text-action"
               type="button"
               onClick={handlePrintPreview}
@@ -3328,6 +3397,14 @@ function App() {
             </div>
           </div>
           <div className="nav-actions">
+            <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
             <button
               className="nav-text-action"
               type="button"
@@ -3536,6 +3613,14 @@ function App() {
           </div>
           <div className="nav-actions">
             <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button
               className="nav-text-action"
               type="button"
               onClick={handlePrintPreview}
@@ -3687,6 +3772,22 @@ function App() {
           </div>
         </div>
         <div className="nav-actions">
+            <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+          <button
+            type="button"
+            className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+            onClick={() => setIsDark((d) => !d)}
+            title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {isDark ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
           <button type="button" onClick={handleLogout} title="Log out">
             <LogOut size={18} />
           </button>
