@@ -1094,7 +1094,7 @@ function App() {
   }
 
   // Fields that should stay identical between a mirrored 04/05 pair.
-  const mirroredFields: (keyof InvoiceLineItem & keyof BreakdownLineItem)[] = ['description', 'quantity', 'unitPrice', 'nettCost']
+  const mirroredFields: (keyof InvoiceLineItem & keyof BreakdownLineItem)[] = ['description', 'unitPrice', 'nettCost']
 
   function addInvoiceItemRow() {
     const invCurrent = getInvoiceItemsList()
@@ -1272,24 +1272,16 @@ function App() {
   }
 
   function changeBreakdownPaxField(index: number, category: keyof PaxBreakdown, value: string) {
-    const brkCurrent = getBreakdownItemsList()
-    const item = brkCurrent[index]
-    const pax = readPaxBreakdown(item.paxBreakdown)
+    const current = getBreakdownItemsList()
+    const pax = readPaxBreakdown(current[index].paxBreakdown)
     pax[category] = value
     const total = sumPaxBreakdown(pax)
-    const nextQuantity = total > 0 ? String(total) : item.quantity
-    brkCurrent[index] = { ...item, paxBreakdown: JSON.stringify(pax), quantity: nextQuantity }
-
-    if (item?.mirrorId) {
-      const invCurrent = getInvoiceItemsList()
-      const invIndex = invCurrent.findIndex((i) => i.mirrorId === item.mirrorId)
-      if (invIndex !== -1) {
-        invCurrent[invIndex] = { ...invCurrent[invIndex], quantity: nextQuantity }
-        saveItemLists(invCurrent, brkCurrent)
-        return
-      }
+    current[index] = {
+      ...current[index],
+      paxBreakdown: JSON.stringify(pax),
+      quantity: total > 0 ? String(total) : current[index].quantity,
     }
-    saveBreakdownItemsList(brkCurrent)
+    saveBreakdownItemsList(current)
   }
 
   function validateBookingForm() {
