@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react'
+import { extractBookingFieldsFromText, GeminiExtractError, type ExtractedBookingFields } from './geminiExtract'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   createUserWithEmailAndPassword,
   type AuthError,
@@ -23,6 +25,7 @@ import {
   ArrowRight,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   ClipboardList,
   Clock3,
@@ -33,6 +36,7 @@ import {
   LogOut,
   Mail,
   MapPin,
+  Moon,
   Plane,
   Plus,
   Printer,
@@ -40,6 +44,7 @@ import {
   Save,
   Search,
   Sparkles,
+  Sun,
   UserRound,
   X,
   Check,
@@ -87,16 +92,29 @@ type InvoiceLineItem = {
   isPackageRow?: boolean
   source?: 'manual' | 'breakdown'
   sourceKey?: string
+  mirrorId?: string // links this row to its auto-created counterpart in the other section
 }
 
 type BreakdownLineItem = {
   id?: string
   description: string // drop-down choices
+  details?: string    // free-text details column
+  vendor?: string      // name of vendor/supplier for this row
+  contactNumber?: string // per-PO supplier contact number
+  paymentMethod?: string // per-PO payment method
   quantity: string
+  paxBreakdown?: string // JSON: {adult, senior, child, infant} — sums into quantity
   unitPrice: string
   nettCost: string
   sendToInvoice: boolean
+  sendToPO?: boolean
   isPackageRow?: boolean
+  // Pax-tier columns for the quotation breakdown template
+  price2Pax?: string
+  price5Pax?: string
+  priceGroup?: string
+  priceInfant?: string
+  mirrorId?: string // links this row to its auto-created counterpart in the other section
 }
 
 type BookingFormData = {
@@ -114,12 +132,15 @@ type BookingFormData = {
   lineItems: string 
   invoiceLineItemsJson: string
   breakdownLineItemsJson: string
+  breakdownPaxTiers: string // JSON: [col1Pax, col2Pax, col3Pax, col4Pax]
+  breakdownColLabels: string // JSON: [col1Label, col2Label, col3Label, col4Label]
 
   itemDescription: string
   quantity: string
   unitPrice: string
   supplier: string
   supplierContact: string
+  supplierPaymentMethod: string
   nettCost: string
   sellingPrice: string
   paymentMethod: string
@@ -127,6 +148,7 @@ type BookingFormData = {
   invoiceAmountPaid: string
   invoicePaymentDate: string
   invoicePaymentStatus: string
+  invoiceFullyPaidDate: string
   invoiceReference: string
   optionDate: string
   flightDetails: string
@@ -136,6 +158,7 @@ type BookingFormData = {
   inclusions: string
   exclusions: string
   itinerary: string
+  voucherRowsJson: string
   specialInstructions: string
   preparedBy: string
   status: BookingStatus
@@ -183,11 +206,14 @@ const emptyBookingForm: BookingFormData = {
   lineItems: '',
   invoiceLineItemsJson: '',
   breakdownLineItemsJson: '',
+  breakdownPaxTiers: '',
+  breakdownColLabels: '',
   itemDescription: '',
   quantity: '1',
   unitPrice: '',
   supplier: '',
   supplierContact: '',
+  supplierPaymentMethod: '',
   nettCost: '',
   sellingPrice: '',
   paymentMethod: '',
@@ -195,6 +221,7 @@ const emptyBookingForm: BookingFormData = {
   invoiceAmountPaid: '',
   invoicePaymentDate: '',
   invoicePaymentStatus: 'Unpaid',
+  invoiceFullyPaidDate: '',
   invoiceReference: '',
   optionDate: '',
   flightDetails: '',
@@ -204,6 +231,7 @@ const emptyBookingForm: BookingFormData = {
   inclusions: '',
   exclusions: '',
   itinerary: '',
+  voucherRowsJson: '',
   specialInstructions: '',
   preparedBy: '',
   status: 'Inquiry',
@@ -308,9 +336,47 @@ function parseAmount(value?: string) {
   return Number((value ?? '').replace(/[^\d.]/g, '')) || 0
 }
 
+function computePaymentStatus(totalPrice: number, amountPaid: number): string {
+  if (totalPrice > 0 && amountPaid >= totalPrice) return 'Paid'
+  if (amountPaid > 0) return 'Partially Paid'
+  return 'Unpaid'
+}
+
 function parseQuantity(value?: string) {
   const quantity = Number((value ?? '').replace(/[^\d.]/g, ''))
   return Number.isFinite(quantity) && quantity > 0 ? quantity : 1
+}
+
+type PaxBreakdown = { adult: string; senior: string; child: string; infant: string }
+
+function readPaxBreakdown(value?: string): PaxBreakdown {
+  try {
+    if (value) {
+      const parsed = JSON.parse(value)
+      return {
+        adult: parsed.adult || '',
+        senior: parsed.senior || '',
+        child: parsed.child || '',
+        infant: parsed.infant || '',
+      }
+    }
+  } catch {}
+  return { adult: '', senior: '', child: '', infant: '' }
+}
+
+function sumPaxBreakdown(pax: PaxBreakdown) {
+  return (
+    parseAmount(pax.adult) + parseAmount(pax.senior) + parseAmount(pax.child) + parseAmount(pax.infant)
+  )
+}
+
+function formatPaxBreakdownLabel(pax: PaxBreakdown) {
+  const parts: string[] = []
+  if (parseAmount(pax.adult) > 0) parts.push(`${pax.adult} Adult`)
+  if (parseAmount(pax.senior) > 0) parts.push(`${pax.senior} Senior`)
+  if (parseAmount(pax.child) > 0) parts.push(`${pax.child} Child`)
+  if (parseAmount(pax.infant) > 0) parts.push(`${pax.infant} Infant`)
+  return parts.join(', ')
 }
 
 function createLineItemId() {
@@ -328,7 +394,18 @@ function getLines(value: string | undefined, fallback: string[]) {
 function readInvoiceItems(booking: BookingFormData): InvoiceLineItem[] {
   try {
     if (booking.invoiceLineItemsJson) {
-      return JSON.parse(booking.invoiceLineItemsJson)
+      const items: InvoiceLineItem[] = JSON.parse(booking.invoiceLineItemsJson)
+      // Drop stale items from removed sections — only keep package row and breakdown-sourced rows
+      const filtered = items.filter(item => item.isPackageRow || item.source === 'breakdown')
+      // Deduplicate package rows — keep only the first one (breakdown-sourced takes priority)
+      let packageRowSeen = false
+      return filtered.filter(item => {
+        if (item.isPackageRow) {
+          if (packageRowSeen) return false
+          packageRowSeen = true
+        }
+        return true
+      })
     }
   } catch {}
   return [
@@ -355,6 +432,7 @@ function readBreakdownItems(booking: BookingFormData): BreakdownLineItem[] {
       unitPrice: booking.unitPrice || booking.sellingPrice,
       nettCost: booking.nettCost,
       sendToInvoice: false,
+      sendToPO: false,
       isPackageRow: true,
     },
   ]
@@ -366,7 +444,7 @@ function mapInvoiceItemsToBookingLines(items: InvoiceLineItem[], packageName = '
     const u = parseAmount(it.unitPrice)
     const n = it.isPackageRow ? 0 : parseAmount(it.nettCost)
     return {
-      description: it.isPackageRow ? packageName || 'Basic Package' : it.description,
+      description: it.description || (it.isPackageRow ? packageName || 'Basic Package' : 'Item'),
       quantity: q,
       unitPrice: u,
       nettCost: n,
@@ -377,13 +455,13 @@ function mapInvoiceItemsToBookingLines(items: InvoiceLineItem[], packageName = '
   })
 }
 
-function mapBreakdownItemsToBookingLines(items: BreakdownLineItem[]): BookingLineItem[] {
+function mapBreakdownItemsToBookingLines(items: BreakdownLineItem[], packageName = 'Basic Package'): BookingLineItem[] {
   return items.map((it) => {
     const q = parseQuantity(it.quantity)
     const u = parseAmount(it.unitPrice)
     const n = parseAmount(it.nettCost)
     return {
-      description: it.description,
+      description: it.description || (it.isPackageRow ? packageName || 'Basic Package' : 'Item'),
       quantity: q,
       unitPrice: u,
       nettCost: n,
@@ -405,7 +483,7 @@ function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
 
   return [
     {
-      description: booking.packageName || 'Basic Package',
+      description: readBreakdownItems(booking).find(i => i.isPackageRow)?.description || booking.packageName || 'Basic Package',
       quantity,
       unitPrice,
       nettCost: 0,
@@ -444,8 +522,103 @@ function formatProjectDate(value: string) {
   })
 }
 
+// Renders a custom-select's option menu into document.body via a portal, positioned
+// with fixed coordinates computed from the trigger button's real on-screen position.
+// This is what makes the menu escape any ancestor's `overflow: hidden`/`overflow-x: auto`
+// and any clipped scroll container — the previous absolute-positioned-inside-the-table
+// approach got cropped because every parent table/panel clips overflow by design.
+function FloatingDropdownMenu({
+  anchorRef,
+  onClose,
+  children,
+}: {
+  anchorRef: React.RefObject<HTMLElement | null>
+  onClose: () => void
+  children: React.ReactNode
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const [style, setStyle] = useState<{ top: number; left: number; minWidth: number; maxHeight: number; openUp: boolean } | null>(null)
+
+  useEffect(() => {
+    const MARGIN = 8
+
+    function reposition() {
+      const anchor = anchorRef.current
+      const menu = menuRef.current
+      if (!anchor) return
+
+      const anchorRect = anchor.getBoundingClientRect()
+      const menuHeight = menu?.offsetHeight ?? 260
+      const menuWidth = Math.max(menu?.offsetWidth ?? 0, anchorRect.width, 220)
+
+      const spaceBelow = window.innerHeight - anchorRect.bottom - MARGIN
+      const spaceAbove = anchorRect.top - MARGIN
+      const openUp = spaceBelow < menuHeight && spaceAbove > spaceBelow
+
+      const maxHeight = Math.max(140, Math.min(260, openUp ? spaceAbove : spaceBelow))
+
+      let left = anchorRect.left
+      const maxLeft = window.innerWidth - menuWidth - MARGIN
+      if (left > maxLeft) left = Math.max(MARGIN, maxLeft)
+      if (left < MARGIN) left = MARGIN
+
+      const top = openUp ? anchorRect.top - Math.min(menuHeight, maxHeight) : anchorRect.bottom
+
+      setStyle({ top, left, minWidth: anchorRect.width, maxHeight, openUp })
+    }
+
+    reposition()
+    // Re-measure once more after the menu has actually painted, since its real
+    // height isn't known on the very first frame.
+    const raf = requestAnimationFrame(reposition)
+
+    window.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', reposition)
+
+    function handlePointerDown(e: MouseEvent) {
+      const target = e.target as Node
+      if (anchorRef.current?.contains(target)) return
+      if (menuRef.current?.contains(target)) return
+      onClose()
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', reposition)
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [anchorRef, onClose])
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className={`custom-select-menu custom-select-menu-portal${style?.openUp ? ' open-up' : ''}`}
+      style={{
+        position: 'fixed',
+        top: style ? style.top : -9999,
+        left: style ? style.left : -9999,
+        minWidth: style?.minWidth,
+        maxHeight: style?.maxHeight,
+        visibility: style ? 'visible' : 'hidden',
+      }}
+    >
+      {children}
+    </div>,
+    document.body,
+  )
+}
+
 function App() {
   const [screen, setScreen] = useState<Screen>('splash')
+  const [invoiceEditorReturnScreen, setInvoiceEditorReturnScreen] = useState<Screen>('booking-detail')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('vmloper.dev@gmail.com')
   const [password, setPassword] = useState('')
@@ -456,17 +629,45 @@ function App() {
   const [isAuthLoading, setIsAuthLoading] = useState(true)
   const [dataError, setDataError] = useState('')
   const [dataMessage, setDataMessage] = useState('')
+  const [aiPasteOpen, setAiPasteOpen] = useState(false)
+  const [aiPasteText, setAiPasteText] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [aiFilledFields, setAiFilledFields] = useState<string[]>([])
+  const [isDark, setIsDark] = useState(() => {
+    const stored = window.localStorage.getItem('llops-theme')
+    if (stored) return stored === 'dark'
+    return window.matchMedia('(prefers-color-scheme: dark)').matches
+  })
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light')
+    window.localStorage.setItem('llops-theme', isDark ? 'dark' : 'light')
+  }, [isDark])
+
   const [isPdfExporting, setIsPdfExporting] = useState(false)
   const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
+  // Holds the exact booking object built at save-time so templates always
+  // reflect the latest saved data regardless of Firestore snapshot timing.
+  const lastSavedBookingRef = useRef<BookingRecord | null>(null)
   const [invoiceForm, setInvoiceForm] = useState({
     paymentMethod: '',
     paymentRecords: '',
     invoiceAmountPaid: '',
     invoicePaymentDate: '',
     invoicePaymentStatus: 'Unpaid',
+    invoiceFullyPaidDate: '',
     invoiceReference: '',
   })
+  const [paymentEntry, setPaymentEntry] = useState({
+    amount: '',
+    method: '',
+    reference: '',
+    date: new Date().toISOString().slice(0, 10),
+  })
+  const [isFullyPaidModalOpen, setIsFullyPaidModalOpen] = useState(false)
+  const [fullyPaidDateInput, setFullyPaidDateInput] = useState(new Date().toISOString().slice(0, 10))
   const [activeBookingFilter, setActiveBookingFilter] = useState<BookingListFilter>('All')
   const [selectedBookingId, setSelectedBookingId] = useState('')
   const [editingBookingId, setEditingBookingId] = useState('')
@@ -474,18 +675,9 @@ function App() {
   const passwordStrength = getPasswordStrength(password)
 
   // Options lists
-  const invoiceOptions = [
-    'Add-on Luggage - One Way',
-    'Add-on Luggage - Round Trip',
-    'Fuel Surcharge',
-    'Travel Insurance',
-    'Airport Transport (Manila/Clark)',
-    'Tipping',
-    'Visa',
-    'Other'
-  ]
+  const [paxModalIndex, setPaxModalIndex] = useState(-1)
 
-  const breakdownOptions = [
+  const defaultBreakdownOptions = [
     'Group Package',
     'Airfare',
     'Land Arrangement',
@@ -502,8 +694,14 @@ function App() {
     'Visa',
     'Travel Kit',
     'LLTP',
+    'TA Comm',
     'Other'
   ]
+  const [breakdownOptions, setBreakdownOptions] = useState(defaultBreakdownOptions)
+  const [openBreakdownDropdownIndex, setOpenBreakdownDropdownIndex] = useState(-1)
+  const breakdownDropdownTriggerRefs = useRef<Record<number, HTMLButtonElement | null>>({})
+  const [customBreakdownRowIndex, setCustomBreakdownRowIndex] = useState(-1)
+  const [customBreakdownDraft, setCustomBreakdownDraft] = useState('')
 
   useEffect(() => {
     return onAuthStateChanged(auth, (user: FirebaseUser | null) => {
@@ -533,12 +731,17 @@ function App() {
     return onSnapshot(
       bookingsQuery,
       (snapshot) => {
-        const firestoreBookings = snapshot.docs.map((bookingDoc) =>
-          normalizeBooking({
+        const firestoreBookings = snapshot.docs.map((bookingDoc) => {
+          const normalized = normalizeBooking({
             ...(bookingDoc.data() as BookingRecord),
             id: bookingDoc.id,
-          }),
-        )
+          })
+          // If this doc was just saved locally, prefer the local version so
+          // the template screens always reflect the user's latest changes
+          // even if the Firestore snapshot arrives slightly behind.
+          const saved = lastSavedBookingRef.current
+          return (saved && saved.id === normalized.id) ? saved : normalized
+        })
         setBookings(firestoreBookings)
         setDataError('')
       },
@@ -698,7 +901,7 @@ function App() {
       { id: createLineItemId(), description: '', quantity: '1', unitPrice: '', nettCost: '', isPackageRow: true }
     ]
     const initialBreakdown: BreakdownLineItem[] = [
-      { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false, isPackageRow: true }
+      { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: true, sendToPO: false, isPackageRow: true }
     ]
     freshForm.invoiceLineItemsJson = JSON.stringify(initialInvoice)
     freshForm.breakdownLineItemsJson = JSON.stringify(initialBreakdown)
@@ -708,7 +911,7 @@ function App() {
   }
 
   function handleEditBooking() {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
     if (!selectedBooking) {
       setScreen('home')
       return
@@ -719,15 +922,35 @@ function App() {
     // Fallback parsing if JSON objects don't exist yet
     if (!normalized.invoiceLineItemsJson) {
       const fallbackInv: InvoiceLineItem[] = [
-        { id: createLineItemId(), description: normalized.packageName, quantity: normalized.quantity || '1', unitPrice: normalized.unitPrice || normalized.sellingPrice, nettCost: '0', isPackageRow: true }
+        { id: createLineItemId(), description: normalized.packageName || 'Group Package', quantity: normalized.quantity || '1', unitPrice: normalized.unitPrice || normalized.sellingPrice, nettCost: '0', isPackageRow: true }
       ]
       normalized.invoiceLineItemsJson = JSON.stringify(fallbackInv)
     }
     if (!normalized.breakdownLineItemsJson) {
       const fallbackBrk: BreakdownLineItem[] = [
-        { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: normalized.unitPrice || normalized.sellingPrice, nettCost: normalized.nettCost || '0', sendToInvoice: false, isPackageRow: true }
+        { id: createLineItemId(), description: normalized.packageName || 'Group Package', quantity: '1', unitPrice: normalized.unitPrice || normalized.sellingPrice, nettCost: normalized.nettCost || '0', sendToInvoice: true, sendToPO: false, isPackageRow: true }
       ]
       normalized.breakdownLineItemsJson = JSON.stringify(fallbackBrk)
+    }
+
+    // Migrate: if breakdown package row still has default description, replace with actual package name
+    if (normalized.packageName) {
+      try {
+        const brkItems: BreakdownLineItem[] = JSON.parse(normalized.breakdownLineItemsJson)
+        const migrated = brkItems.map(item =>
+          item.isPackageRow && (!item.description || item.description === 'Group Package')
+            ? { ...item, description: normalized.packageName, sendToInvoice: true }
+            : item
+        )
+        normalized.breakdownLineItemsJson = JSON.stringify(migrated)
+        const invItems: InvoiceLineItem[] = JSON.parse(normalized.invoiceLineItemsJson)
+        const migratedInv = invItems.map(item =>
+          item.isPackageRow && (!item.description || item.description === 'Group Package')
+            ? { ...item, description: normalized.packageName }
+            : item
+        )
+        normalized.invoiceLineItemsJson = JSON.stringify(migratedInv)
+      } catch(e) {}
     }
 
     setBookingForm(normalized)
@@ -749,9 +972,19 @@ function App() {
           const invItems: InvoiceLineItem[] = readInvoiceItems(updated)
           const brkItems: BreakdownLineItem[] = readBreakdownItems(updated)
           
-          const nextInv = invItems.map(item => item.isPackageRow ? { ...item, description: updated.packageName, quantity: updated.quantity || '1', unitPrice: updated.unitPrice } : item)
+          const nextInv = invItems.map(item => item.isPackageRow ? {
+            ...item,
+            description: updated.packageName || item.description,
+            ...(field === 'quantity' ? { quantity: updated.quantity || '1' } : {}),
+            ...(field === 'unitPrice' ? { unitPrice: updated.unitPrice } : {}),
+          } : item)
           const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(nextInv, updated.packageName), 'total')
-          const nextBrk = brkItems.map(item => item.isPackageRow ? { ...item, description: 'Group Package', quantity: '1', unitPrice: String(invoiceTotal) } : item)
+          const nextBrk = brkItems.map(item => item.isPackageRow ? {
+            ...item,
+            description: updated.packageName || item.description,
+            quantity: '1',
+            ...(field === 'unitPrice' ? { unitPrice: String(invoiceTotal) } : {}),
+          } : item)
           
           updated.invoiceLineItemsJson = JSON.stringify(nextInv)
           updated.breakdownLineItemsJson = JSON.stringify(nextBrk)
@@ -761,12 +994,45 @@ function App() {
     })
   }
 
+  async function handleAiAutoFill() {
+    setAiError('')
+    setAiFilledFields([])
+    setAiLoading(true)
+    try {
+      const { fields, rawFieldCount } = await extractBookingFieldsFromText(aiPasteText)
+      if (rawFieldCount === 0) {
+        setAiError('Could not find any recognizable booking details in that text. Try pasting more context.')
+        return
+      }
+      const filledKeys: string[] = []
+      setBookingForm((current) => {
+        const updated = { ...current }
+        ;(Object.keys(fields) as Array<keyof ExtractedBookingFields>).forEach((key) => {
+          const value = fields[key]
+          if (value && key in updated) {
+            ;(updated as Record<string, string>)[key] = value
+            filledKeys.push(key)
+          }
+        })
+        return updated
+      })
+      setAiFilledFields(filledKeys)
+      setDataMessage(`Auto-filled ${filledKeys.length} field${filledKeys.length === 1 ? '' : 's'} from pasted text. Review before saving.`)
+      setAiPasteOpen(false)
+      setAiPasteText('')
+    } catch (err) {
+      setAiError(err instanceof GeminiExtractError ? err.message : 'Something went wrong while contacting Gemini. Please try again.')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
   // Functional parsing helpers for the dynamic interface tables
   function getInvoiceItemsList(): InvoiceLineItem[] {
     return readInvoiceItems(bookingForm).map((item) => ({
       ...item,
       id: item.id || createLineItemId(),
-      description: item.isPackageRow ? bookingForm.packageName : item.description,
+      description: item.description,
     }))
   }
 
@@ -775,7 +1041,7 @@ function App() {
     return readBreakdownItems(bookingForm).map((item) => ({
       ...item,
       id: item.id || createLineItemId(),
-      ...(item.isPackageRow ? { description: 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : {}),
+      ...(item.isPackageRow ? { quantity: '1', sendToInvoice: true } : {}),
     }))
   }
 
@@ -793,7 +1059,7 @@ function App() {
         const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(normalizedItems, updated.packageName), 'total')
         const brkItems = readBreakdownItems(updated)
         const nextBrk = brkItems.map((item) =>
-          item.isPackageRow ? { ...item, id: item.id || createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : { ...item, id: item.id || createLineItemId() },
+          item.isPackageRow ? { ...item, id: item.id || createLineItemId(), description: item.description || 'Group Package', quantity: '1', sendToInvoice: true } : { ...item, id: item.id || createLineItemId() },
         )
         updated.breakdownLineItemsJson = JSON.stringify(nextBrk)
       } catch(e){}
@@ -808,70 +1074,110 @@ function App() {
       const normalizedBreakdown = items.map((item) => ({
         ...item,
         id: item.id || createLineItemId(),
-        ...(item.isPackageRow ? { description: 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : {}),
+        ...(item.isPackageRow ? { quantity: '1', sendToInvoice: true } : {}),
       }))
-      const manualInvoiceItems = invoiceItems.filter((item) => item.source !== 'breakdown')
+      const manualInvoiceItems = invoiceItems.filter((item) => item.source !== 'breakdown' && !item.isPackageRow)
       const breakdownInvoiceItems: InvoiceLineItem[] = normalizedBreakdown
-        .filter((item) => item.sendToInvoice && !item.isPackageRow)
-        .map((item) => ({
-          id: `INV-${item.id}`,
-          source: 'breakdown',
-          sourceKey: item.id,
-          description: item.description,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          nettCost: item.nettCost,
-        }))
+        .filter((item) => item.isPackageRow || item.sendToInvoice)
+        .map((item) => {
+          const paxTotal = sumPaxBreakdown(readPaxBreakdown(item.paxBreakdown))
+          return {
+            id: `INV-${item.id}`,
+            source: 'breakdown',
+            sourceKey: item.id,
+            description: item.description,
+            quantity: String(paxTotal > 0 ? paxTotal : parseQuantity(item.quantity) || 1),
+            unitPrice: item.unitPrice,
+            nettCost: '',
+            ...(item.isPackageRow ? { isPackageRow: true } : {}),
+          }
+        })
 
       return {
         ...prev,
-        invoiceLineItemsJson: JSON.stringify([...manualInvoiceItems, ...breakdownInvoiceItems]),
+        invoiceLineItemsJson: JSON.stringify([...breakdownInvoiceItems.filter(i => i.isPackageRow), ...manualInvoiceItems, ...breakdownInvoiceItems.filter(i => !i.isPackageRow)]),
         breakdownLineItemsJson: JSON.stringify(normalizedBreakdown),
       }
     })
   }
 
-  function addInvoiceItemRow() {
-    const current = getInvoiceItemsList()
-    current.push({ id: createLineItemId(), description: invoiceOptions[0], quantity: '1', unitPrice: '', nettCost: '', source: 'manual' })
-    saveInvoiceItemsList(current)
+  function startCustomBreakdownItem(index: number) {
+    setCustomBreakdownDraft('')
+    setCustomBreakdownRowIndex(index)
   }
 
-  function removeInvoiceItemRow(index: number) {
-    const current = getInvoiceItemsList()
-    if (current[index]?.isPackageRow) return // lock baseline row protection
-    current.splice(index, 1)
-    saveInvoiceItemsList(current)
+  function cancelCustomBreakdownItem() {
+    setCustomBreakdownRowIndex(-1)
+    setCustomBreakdownDraft('')
   }
 
-  function changeInvoiceItemField(index: number, field: keyof InvoiceLineItem, value: string) {
-    const current = getInvoiceItemsList()
-    current[index] = { ...current[index], [field]: value }
-    saveInvoiceItemsList(current)
+  function confirmCustomBreakdownItem(index: number) {
+    const name = customBreakdownDraft.trim()
+    if (!name) { cancelCustomBreakdownItem(); return }
+    if (!breakdownOptions.includes(name)) {
+      setBreakdownOptions((prev) => [...prev, name])
+    }
+    changeBreakdownItemField(index, 'description', name)
+    cancelCustomBreakdownItem()
+  }
+
+  function removeCustomBreakdownOption(option: string) {
+    if (defaultBreakdownOptions.includes(option)) return
+    setBreakdownOptions((prev) => prev.filter((opt) => opt !== option))
+    const brkCurrent = getBreakdownItemsList()
+    const nextBrk = brkCurrent.map((item) =>
+      (!item.isPackageRow && item.description === option)
+        ? { ...item, description: defaultBreakdownOptions[0] }
+        : item
+    )
+    saveBreakdownItemsList(nextBrk)
   }
 
   function addBreakdownItemRow() {
     const current = getBreakdownItemsList()
-    current.push({ id: createLineItemId(), description: breakdownOptions[0], quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false })
+    current.push({ id: createLineItemId(), description: breakdownOptions[0], details: '', vendor: '', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false, sendToPO: false })
     saveBreakdownItemsList(current)
   }
 
   function removeBreakdownItemRow(index: number) {
-    const current = getBreakdownItemsList()
-    if (current[index]?.isPackageRow) return
-    current.splice(index, 1)
-    saveBreakdownItemsList(current)
+    const brkCurrent = getBreakdownItemsList()
+    const item = brkCurrent[index]
+    if (item?.isPackageRow) return
+    brkCurrent.splice(index, 1)
+    saveBreakdownItemsList(brkCurrent)
   }
 
   function changeBreakdownItemField(index: number, field: keyof BreakdownLineItem, value: any) {
+    const brkCurrent = getBreakdownItemsList()
+    brkCurrent[index] = { ...brkCurrent[index], [field]: value }
+    saveBreakdownItemsList(brkCurrent)
+  }
+
+  // Typing a plain qty directly should win over any old Adult/Child/Senior/Infant
+  // split, otherwise the stale pax total would silently override this value
+  // (and the invoice/P.O. rows) the next time the list is saved.
+  function changeBreakdownQuantity(index: number, value: string) {
+    const brkCurrent = getBreakdownItemsList()
+    brkCurrent[index] = { ...brkCurrent[index], quantity: value, paxBreakdown: '' }
+    saveBreakdownItemsList(brkCurrent)
+  }
+
+  function changeBreakdownPaxField(index: number, category: keyof PaxBreakdown, value: string) {
     const current = getBreakdownItemsList()
-    current[index] = { ...current[index], [field]: value }
+    const pax = readPaxBreakdown(current[index].paxBreakdown)
+    pax[category] = value
+    const total = sumPaxBreakdown(pax)
+    current[index] = {
+      ...current[index],
+      paxBreakdown: JSON.stringify(pax),
+      quantity: total > 0 ? String(total) : current[index].quantity,
+    }
     saveBreakdownItemsList(current)
   }
 
   function validateBookingForm() {
     if (!bookingForm.clientName.trim()) return 'Enter the client name before saving.'
-    if (!bookingForm.packageName.trim()) return 'Enter the package or project name before saving.'
+    // packageName is optional — section 05 package row drives document labels
     return ''
   }
 
@@ -897,6 +1203,10 @@ function App() {
       id: editingBookingId || `BK-${Date.now()}`,
       createdAt: bookings.find((currentBooking) => currentBooking.id === editingBookingId)?.createdAt || new Date().toISOString(),
     }
+
+    // Pin the exact saved booking so templates read fresh data immediately,
+    // before the Firestore onSnapshot has a chance to overwrite bookings state.
+    lastSavedBookingRef.current = booking
 
     setBookings((currentBookings) =>
       isEditing
@@ -955,10 +1265,13 @@ function App() {
   function openQuotationPreview() { setScreen('quotation-preview') }
   
   function openInvoiceEditor() {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
     if (!selectedBooking) {
       setScreen('home')
       return
+    }
+    if (screen === 'booking-detail' || screen === 'document-folder') {
+      setInvoiceEditorReturnScreen(screen)
     }
     setInvoiceForm({
       paymentMethod: selectedBooking.paymentMethod || '',
@@ -966,6 +1279,7 @@ function App() {
       invoiceAmountPaid: selectedBooking.invoiceAmountPaid || '',
       invoicePaymentDate: selectedBooking.invoicePaymentDate || '',
       invoicePaymentStatus: selectedBooking.invoicePaymentStatus || 'Unpaid',
+      invoiceFullyPaidDate: selectedBooking.invoiceFullyPaidDate || '',
       invoiceReference: selectedBooking.invoiceReference || '',
     })
     setScreen('invoice-editor')
@@ -976,6 +1290,94 @@ function App() {
     value: (typeof invoiceForm)[Field],
   ) {
     setInvoiceForm((currentForm) => ({ ...currentForm, [field]: value }))
+  }
+
+  function handleLogPayment() {
+    const amount = parseFloat(paymentEntry.amount)
+    if (!amount || amount <= 0) return
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
+    const totalPrice = selectedBooking ? sumLineItems(getBookingLineItems(selectedBooking), 'total') : 0
+    const dateLabel = paymentEntry.date
+      ? new Date(paymentEntry.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+      : new Date().toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+    const methodPart = paymentEntry.method ? ` via ${paymentEntry.method}` : ''
+    const refPart = paymentEntry.reference ? ` (Ref: ${paymentEntry.reference})` : ''
+    const record = `${dateLabel}${methodPart}${refPart} — PHP ${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+    const prevPaid = parseAmount(invoiceForm.invoiceAmountPaid)
+    const newPaid = prevPaid + amount
+    const prevRecords = invoiceForm.paymentRecords.trim()
+    const newRecords = prevRecords ? `${prevRecords}\n${record}` : record
+    const newStatus = computePaymentStatus(totalPrice, newPaid)
+    setInvoiceForm((f) => ({
+      ...f,
+      invoiceAmountPaid: String(newPaid),
+      paymentRecords: newRecords,
+      paymentMethod: paymentEntry.method || f.paymentMethod,
+      invoicePaymentDate: paymentEntry.date || f.invoicePaymentDate,
+      invoicePaymentStatus: newStatus,
+      invoiceFullyPaidDate: newStatus === 'Paid' ? (f.invoiceFullyPaidDate || paymentEntry.date || f.invoicePaymentDate) : '',
+    }))
+    setPaymentEntry({ amount: '', method: '', reference: '', date: new Date().toISOString().slice(0, 10) })
+  }
+
+  function getInvoiceEditorTotal(): number {
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
+    return selectedBooking ? sumLineItems(getBookingLineItems(selectedBooking), 'total') : 0
+  }
+
+  function handleRemovePaymentRecord(index: number) {
+    const lines = invoiceForm.paymentRecords.split('\n').filter(Boolean)
+    const removedLine = lines[index] || ''
+    lines.splice(index, 1)
+    const removedAmountMatch = removedLine.match(/PHP\s*([\d,]+(?:\.\d{1,2})?)\s*$/)
+    const removedAmount = removedAmountMatch ? parseAmount(removedAmountMatch[1]) : 0
+    const newPaid = Math.max(parseAmount(invoiceForm.invoiceAmountPaid) - removedAmount, 0)
+    const totalPrice = getInvoiceEditorTotal()
+    const newStatus = computePaymentStatus(totalPrice, newPaid)
+    setInvoiceForm((f) => ({
+      ...f,
+      paymentRecords: lines.join('\n'),
+      invoiceAmountPaid: String(newPaid),
+      invoicePaymentStatus: newStatus,
+      invoiceFullyPaidDate: newStatus === 'Paid' ? f.invoiceFullyPaidDate : '',
+    }))
+  }
+
+  function handlePaymentStatusSelect(nextStatus: string) {
+    const totalPrice = getInvoiceEditorTotal()
+    const currentPaid = parseAmount(invoiceForm.invoiceAmountPaid)
+    if (nextStatus === 'Paid' && currentPaid < totalPrice) {
+      setFullyPaidDateInput(new Date().toISOString().slice(0, 10))
+      setIsFullyPaidModalOpen(true)
+      return
+    }
+    setInvoiceForm((f) => ({
+      ...f,
+      invoicePaymentStatus: nextStatus,
+      invoiceFullyPaidDate: nextStatus === 'Paid' ? (f.invoiceFullyPaidDate || new Date().toISOString().slice(0, 10)) : '',
+    }))
+  }
+
+  function confirmFullyPaid() {
+    const totalPrice = getInvoiceEditorTotal()
+    const currentPaid = parseAmount(invoiceForm.invoiceAmountPaid)
+    const remaining = Math.max(totalPrice - currentPaid, 0)
+    const dateLabel = new Date(fullyPaidDateInput + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+    const prevRecords = invoiceForm.paymentRecords.trim()
+    let newRecords = prevRecords
+    if (remaining > 0) {
+      const record = `${dateLabel} — Marked fully paid (balance settled) — PHP ${remaining.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+      newRecords = prevRecords ? `${prevRecords}\n${record}` : record
+    }
+    setInvoiceForm((f) => ({
+      ...f,
+      invoiceAmountPaid: String(totalPrice),
+      paymentRecords: newRecords,
+      invoicePaymentStatus: 'Paid',
+      invoiceFullyPaidDate: fullyPaidDateInput,
+      invoicePaymentDate: fullyPaidDateInput,
+    }))
+    setIsFullyPaidModalOpen(false)
   }
 
   async function handleSaveInvoiceUpdate(event: React.FormEvent<HTMLFormElement>) {
@@ -1004,7 +1406,7 @@ function App() {
   }
 
   async function handleDeleteBooking() {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
     if (!selectedBooking) { setScreen('home'); return }
 
     const confirmed = window.confirm(`Delete ${selectedBooking.packageName || 'this project'}? This cannot be undone.`)
@@ -1227,6 +1629,14 @@ function App() {
           <div className="nav-actions">
             <button
               type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button
+              type="button"
               onClick={() => { setEditingBookingId(''); setScreen(isEditingBooking ? 'booking-detail' : 'home') }}
               title="Close"
             >
@@ -1247,6 +1657,45 @@ function App() {
               {isEditingBooking ? 'Save Changes' : 'Save Inquiry'}
             </button>
           </header>
+
+          <section className="ai-autofill-panel">
+            {!aiPasteOpen ? (
+              <button type="button" className="ai-autofill-trigger" onClick={() => { setAiPasteOpen(true); setAiError('') }}>
+                <Sparkles size={16} />
+                Paste & auto-fill with AI
+              </button>
+            ) : (
+              <div className="ai-autofill-box">
+                <div className="ai-autofill-box-heading">
+                  <Sparkles size={16} />
+                  <span>Paste a chat, email, or any client conversation — AI will fill in what it finds</span>
+                  <button type="button" className="ai-autofill-close" onClick={() => { setAiPasteOpen(false); setAiPasteText(''); setAiError('') }}>
+                    <X size={16} />
+                  </button>
+                </div>
+                <textarea
+                  className="ai-autofill-textarea"
+                  rows={6}
+                  placeholder="Paste the client's message, email thread, or notes here..."
+                  value={aiPasteText}
+                  onChange={(e) => setAiPasteText(e.target.value)}
+                  disabled={aiLoading}
+                />
+                {aiError && <p className="data-alert error">{aiError}</p>}
+                <div className="ai-autofill-actions">
+                  <span className="ai-autofill-hint">Only fields it can confidently find will be filled — review before saving.</span>
+                  <button
+                    type="button"
+                    className="ai-autofill-submit"
+                    onClick={handleAiAutoFill}
+                    disabled={aiLoading || !aiPasteText.trim()}
+                  >
+                    {aiLoading ? 'Reading...' : 'Auto-fill form'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
 
           {dataError && <p className="data-alert error">{dataError}</p>}
           {dataMessage && <p className="data-alert info">{dataMessage}</p>}
@@ -1289,8 +1738,8 @@ function App() {
                 <input value={bookingForm.destination} onChange={(e) => updateBookingField('destination', e.target.value)} placeholder="Clark, Boracay, Hong Kong" />
               </label>
               <label>
-                No. of pax
-                <input value={bookingForm.pax} onChange={(e) => updateBookingField('pax', e.target.value)} placeholder="2 adults, 1 infant" />
+                Payment method
+                <input value={bookingForm.paymentMethod} onChange={(e) => updateBookingField('paymentMethod', e.target.value)} placeholder="Bank Transfer, GCash, Cash" />
               </label>
               <label>
                 Travel start
@@ -1312,6 +1761,11 @@ function App() {
                 </select>
               </label>
             </div>
+            <label className="textarea-field">
+              Item description
+              <textarea rows={6} value={bookingForm.itemDescription} onChange={(e) => updateBookingField('itemDescription', e.target.value)} placeholder="e.g. This package includes round trip airfare, 3 nights accommodation, daily breakfast, airport transfers, island hopping with snorkeling equipment, and a certified tour guide for the entire stay." />
+              <span className="field-help">Appears as a sub-row under the package name in the quotation and invoice.</span>
+            </label>
           </section>
 
           {/* 03 · QUOTATION */}
@@ -1335,191 +1789,170 @@ function App() {
               </label>
             </div>
 
-            <div className="line-items-panel">
-              <div className="line-items-heading">
-                <div>
-                  <p>Base price</p>
-                  <h3>Client quotation price</h3>
-                  <span>This is the total the client sees on the quotation. Add optional invoice add-ons in section 04.</span>
-                </div>
-              </div>
-              <div className="line-items-table">
-                <div className="line-items-row header">
-                  <span>Package name</span>
-                  <span>Qty</span>
-                  <span>Client price (PHP)</span>
-                </div>
-                <div className="line-items-row">
-                  <input disabled value={bookingForm.packageName || '(Set package name in section 02)'} className="disabled-field" />
-                  <input
-                    type="number" min="1"
-                    value={bookingForm.quantity || '1'}
-                    onChange={(e) => updateBookingField('quantity', e.target.value)}
-                    placeholder="1"
-                  />
-                  <input
-                    type="text"
-                    value={bookingForm.unitPrice}
-                    onChange={(e) => updateBookingField('unitPrice', e.target.value)}
-                    placeholder="0.00"
-                  />
-                </div>
-              </div>
-              <p className="field-help">Supplier nett costs are handled in section 04 (invoice add-ons) and section 05 (internal breakdown).</p>
-            </div>
           </section>
 
-          {/* 04 · INVOICE LINE ITEMS */}
-          <section className="form-section">
-            <div className="form-section-heading">
-              <p>04 · Invoice</p>
-              <h2>Client-visible line items</h2>
-            </div>
-            <p className="field-help">The package row is locked and auto-filled. Add optional service rows below — these appear on the client invoice.</p>
-
-            <div className="line-items-panel">
-              <div className="line-items-heading">
-                <div>
-                  <p>Invoice items</p>
-                  <h3>Services and add-ons</h3>
-                  <span>Client sees these rows on the final invoice PDF.</span>
-                </div>
-                <button type="button" onClick={addInvoiceItemRow}>
-                  <Plus size={15} /> Add item
-                </button>
-              </div>
-
-              <div className="line-items-table">
-                <div className="line-items-row header">
-                  <span>Service / item</span>
-                  <span>Qty</span>
-                  <span>Unit price</span>
-                  <span>Nett cost</span>
-                  <span>Total</span>
-                  <span></span>
-                </div>
-
-                {currentInvoiceItems.map((item, index) => {
-                  const q = parseQuantity(item.quantity)
-                  const u = parseAmount(item.unitPrice)
-                  const rowTotal = q * u
-                  return (
-                    <div key={index} className="line-item-data-row">
-                      <div className="line-items-row">
-                        {item.isPackageRow ? (
-                          <input disabled className="disabled-field" value={bookingForm.packageName || 'Basic Package'} />
-                        ) : (
-                          <select value={item.description} onChange={(e) => changeInvoiceItemField(index, 'description', e.target.value)}>
-                            {invoiceOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-                          </select>
-                        )}
-                        <input
-                          type="number" min="1"
-                          value={item.quantity}
-                          onChange={(e) => changeInvoiceItemField(index, 'quantity', e.target.value)}
-                        />
-                        <input
-                          type="text"
-                          value={item.unitPrice}
-                          onChange={(e) => changeInvoiceItemField(index, 'unitPrice', e.target.value)}
-                          placeholder="0.00"
-                        />
-                        {item.isPackageRow ? (
-                          <input disabled className="disabled-field" value="N/A" />
-                        ) : (
-                          <input
-                            type="text"
-                            value={item.nettCost}
-                            onChange={(e) => changeInvoiceItemField(index, 'nettCost', e.target.value)}
-                            placeholder="0.00"
-                          />
-                        )}
-                        <div className={`line-item-profit ${rowTotal > 0 ? 'positive' : 'zero'}`}>
-                          {formatAmount(String(rowTotal))}
-                        </div>
-                        <button
-                          type="button"
-                          className="remove-line-btn"
-                          onClick={() => removeInvoiceItemRow(index)}
-                          disabled={item.isPackageRow}
-                          title={item.isPackageRow ? 'Package row cannot be removed' : 'Remove row'}
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-
-              <div className="line-items-summary">
-                <article>
-                  <span>Invoice total</span>
-                  <strong>{formatAmount(String(displayTotalClient))}</strong>
-                </article>
-                <article>
-                  <span>Items</span>
-                  <strong>{currentInvoiceItems.length} row{currentInvoiceItems.length !== 1 ? 's' : ''}</strong>
-                </article>
-                <article>
-                  <span>Status</span>
-                  <strong>{bookingForm.status}</strong>
-                </article>
-              </div>
-            </div>
-          </section>
-
-          {/* 05 · INTERNAL BREAKDOWN */}
+          {/* 05a · INTERNAL COSTING */}
           <section className="form-section internal-section">
             <div className="form-section-heading">
-              <p>05 · Breakdown</p>
-              <h2>Internal supplier costing</h2>
+              <p>05a · Internal Costing</p>
+              <h2>Supplier nett vs client price</h2>
             </div>
-            <p className="field-help">For internal use only. Enable "Send to invoice" on any row to also push it to the client invoice.</p>
+            <p className="field-help">For internal use only. Track what you pay the supplier vs what you charge the client. Toggle "Send to invoice" to push a row (item name, qty, and client price) to the client invoice, or "Send to P.O." to include it on a Purchase Order.</p>
 
             <div className="line-items-panel">
               <div className="line-items-heading">
                 <div>
                   <p>Costing sheet</p>
-                  <h3>Supplier nett vs client price</h3>
-                  <span>These rows are hidden from the client. Toggle visibility per row.</span>
+                  <h3>Per-service profit tracking</h3>
+                  <span>These rows are hidden from the client.</span>
                 </div>
                 <button type="button" onClick={addBreakdownItemRow}>
                   <Plus size={15} /> Add row
                 </button>
               </div>
 
-              <div className="line-items-table">
+              <div className="line-items-table no-overflow breakdown-table-outer">
                 <div className="line-items-row breakdown-row header">
+                  <span>Vendor</span>
+                  <span>Contact No.</span>
+                  <span>Payment Method</span>
                   <span>Service / item</span>
-                  <span>Qty</span>
+                  <span>Description</span>
+                  <span>Qty / Pax</span>
                   <span>Client price</span>
                   <span>Supplier nett</span>
                   <span>Send to invoice</span>
+                  <span>Send to P.O.</span>
                   <span></span>
                 </div>
 
                 {currentBreakdownItems.map((item, index) => (
                   <div key={index} className="line-item-data-row">
                     <div className="line-items-row breakdown-row">
-                      {item.isPackageRow ? (
-                        <input disabled className="disabled-field" value={`Auto: ${bookingForm.packageName || 'Basic Package'}`} />
-                      ) : (
-                        <select value={item.description} onChange={(e) => changeBreakdownItemField(index, 'description', e.target.value)}>
-                          {breakdownOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-                        </select>
-                      )}
                       <input
-                        type="number" min="1"
-                        disabled={item.isPackageRow}
-                        className={item.isPackageRow ? 'disabled-field' : ''}
-                        value={item.quantity}
-                        onChange={(e) => changeBreakdownItemField(index, 'quantity', e.target.value)}
+                        type="text"
+                        value={item.vendor || ''}
+                        onChange={(e) => changeBreakdownItemField(index, 'vendor', e.target.value)}
+                        placeholder="Vendor / supplier name"
                       />
                       <input
                         type="text"
-                        disabled={item.isPackageRow}
-                        className={item.isPackageRow ? 'disabled-field' : ''}
+                        value={item.contactNumber || ''}
+                        onChange={(e) => changeBreakdownItemField(index, 'contactNumber', e.target.value)}
+                        placeholder="Contact no."
+                      />
+                      <input
+                        type="text"
+                        value={item.paymentMethod || ''}
+                        onChange={(e) => changeBreakdownItemField(index, 'paymentMethod', e.target.value)}
+                        placeholder="GCash, Bank Transfer…"
+                      />
+                      {item.isPackageRow ? (
+                        <input
+                          type="text"
+                          value={item.description}
+                          onChange={(e) => changeBreakdownItemField(index, 'description', e.target.value)}
+                          placeholder="e.g. 3D2N Boracay Package"
+                        />
+                      ) : customBreakdownRowIndex === index ? (
+                        <input
+                          autoFocus
+                          type="text"
+                          className="custom-item-input"
+                          placeholder="Type new service name..."
+                          value={customBreakdownDraft}
+                          onChange={(e) => setCustomBreakdownDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') { e.preventDefault(); confirmCustomBreakdownItem(index) }
+                            else if (e.key === 'Escape') { e.preventDefault(); cancelCustomBreakdownItem() }
+                          }}
+                          onBlur={() => confirmCustomBreakdownItem(index)}
+                        />
+                      ) : (
+                        <div className="custom-select">
+                          <button
+                            ref={(el) => { breakdownDropdownTriggerRefs.current[index] = el }}
+                            type="button"
+                            className="custom-select-trigger"
+                            onClick={() => setOpenBreakdownDropdownIndex(openBreakdownDropdownIndex === index ? -1 : index)}
+                          >
+                            <span>{item.description || 'Select service'}</span>
+                            <ChevronDown size={15} />
+                          </button>
+                          {openBreakdownDropdownIndex === index && (
+                            <FloatingDropdownMenu
+                              anchorRef={{ current: breakdownDropdownTriggerRefs.current[index] }}
+                              onClose={() => setOpenBreakdownDropdownIndex(-1)}
+                            >
+                              {breakdownOptions.map((opt) => (
+                                <div key={opt} className="custom-select-option">
+                                  <button
+                                    type="button"
+                                    className={`custom-select-option-label ${item.description === opt ? 'active' : ''}`}
+                                    onClick={() => {
+                                      changeBreakdownItemField(index, 'description', opt)
+                                      setOpenBreakdownDropdownIndex(-1)
+                                    }}
+                                  >
+                                    {opt}
+                                  </button>
+                                  {!defaultBreakdownOptions.includes(opt) && (
+                                    <button
+                                      type="button"
+                                      className="custom-select-option-delete"
+                                      title="Remove this option"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        removeCustomBreakdownOption(opt)
+                                      }}
+                                    >
+                                      <X size={13} />
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                              <button
+                                type="button"
+                                className="custom-select-add"
+                                onClick={() => {
+                                  setOpenBreakdownDropdownIndex(-1)
+                                  startCustomBreakdownItem(index)
+                                }}
+                              >
+                                <Plus size={14} /> Add custom service
+                              </button>
+                            </FloatingDropdownMenu>
+                          )}
+                        </div>
+                      )}
+                      <input
+                        type="text"
+                        value={item.details || ''}
+                        onChange={(e) => changeBreakdownItemField(index, 'details', e.target.value)}
+                        placeholder="Notes / details"
+                      />
+                      <div className="pax-qty-cell">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          className="qty-input"
+                          value={item.quantity || '1'}
+                          onChange={(e) => changeBreakdownQuantity(index, e.target.value)}
+                          placeholder="1"
+                          disabled={item.isPackageRow}
+                          title={item.isPackageRow ? 'Package quantity is fixed at 1' : 'Qty — sent to the invoice along with the client price'}
+                        />
+                        <button
+                          type="button"
+                          className="pax-modal-trigger-icon"
+                          onClick={() => setPaxModalIndex(index)}
+                          title={formatPaxBreakdownLabel(readPaxBreakdown(item.paxBreakdown)) || 'Split qty by pax type (optional)'}
+                        >
+                          <UserRound size={13} />
+                        </button>
+                      </div>
+                      <input
+                        type="text"
                         value={item.unitPrice}
                         onChange={(e) => changeBreakdownItemField(index, 'unitPrice', e.target.value)}
                         placeholder="0.00"
@@ -1532,11 +1965,21 @@ function App() {
                       />
                       <button
                         type="button"
-                        className={`send-to-invoice-btn ${item.sendToInvoice ? 'active' : ''}`}
-                        onClick={() => changeBreakdownItemField(index, 'sendToInvoice', !item.sendToInvoice)}
+                        className={`send-to-invoice-btn ${item.isPackageRow || item.sendToInvoice ? 'active' : ''}`}
+                        disabled={item.isPackageRow}
+                        onClick={() => !item.isPackageRow && changeBreakdownItemField(index, 'sendToInvoice', !item.sendToInvoice)}
+                        title={item.isPackageRow ? 'Package name is always sent to invoice & quotation' : undefined}
                       >
-                        {item.sendToInvoice ? <Eye size={14} /> : <EyeOff size={14} />}
-                        <span>{item.sendToInvoice ? 'Showing' : 'Hidden'}</span>
+                        {item.isPackageRow || item.sendToInvoice ? <Eye size={14} /> : <EyeOff size={14} />}
+                        <span>{item.isPackageRow ? 'Always on' : item.sendToInvoice ? 'Showing' : 'Hidden'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`send-to-invoice-btn ${item.sendToPO ? 'active' : ''}`}
+                        onClick={() => changeBreakdownItemField(index, 'sendToPO', !item.sendToPO)}
+                      >
+                        {item.sendToPO ? <Eye size={14} /> : <EyeOff size={14} />}
+                        <span>{item.sendToPO ? 'Showing' : 'Hidden'}</span>
                       </button>
                       <button
                         type="button"
@@ -1571,21 +2014,98 @@ function App() {
             </div>
           </section>
 
-          {/* 06 · SUPPLIER */}
+          {/* 05b · PAX-TIER BREAKDOWN (Quotation template) */}
           <section className="form-section">
             <div className="form-section-heading">
-              <p>06 · Supplier</p>
-              <h2>Operator details</h2>
+              <p>05b · Breakdown Template</p>
+              <h2>Price per person by group size</h2>
             </div>
-            <div className="field-grid two">
-              <label>
-                Supplier / operator
-                <input value={bookingForm.supplier} onChange={(e) => updateBookingField('supplier', e.target.value)} placeholder="Tour operator or hotel name" />
-              </label>
-              <label>
-                Supplier contact
-                <input value={bookingForm.supplierContact} onChange={(e) => updateBookingField('supplierContact', e.target.value)} placeholder="09xxxxxxxxx or email" />
-              </label>
+
+            {/* Step 1 — Column setup */}
+            {(() => {
+              const fixedLabels = ['Adult', 'Child', 'Senior', 'Infant']
+              const fixedFields = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant'] as const
+              let paxCounts = ['', '', '', '']
+              try { const p = JSON.parse(bookingForm.breakdownPaxTiers); if (Array.isArray(p) && p.length === 4) paxCounts = p } catch {}
+              const setPax = (i: number, v: string) => { const next = [...paxCounts]; next[i] = v; updateBookingField('breakdownPaxTiers', JSON.stringify(next)) }
+              return (
+                <div className="breakdown-tier-config">
+                  <div className="breakdown-tier-config-header">
+                    <div>
+                      <p className="breakdown-tier-config-label">STEP 1 — Set up your group size columns</p>
+                      <p className="breakdown-tier-config-hint">Enter how many people are in each category so the total can be calculated correctly.</p>
+                    </div>
+                  </div>
+                  <div className="breakdown-tier-grid">
+                    {fixedLabels.map((label, i) => (
+                      <div key={i} className="breakdown-tier-col">
+                        <p className="tier-col-num">{label}</p>
+                        <label className="tier-field-label">How many people?</label>
+                        <input
+                          type="number" min="0"
+                          value={paxCounts[i]}
+                          onChange={(e) => setPax(i, e.target.value)}
+                          placeholder="0"
+                          className="tier-pax-input"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Step 2 — Per-service prices */}
+            <div className="breakdown-tier-prices-panel">
+              <div className="breakdown-tier-prices-header">
+                <div>
+                  <p className="breakdown-tier-config-label">STEP 2 — Enter the price per person for each service</p>
+                  <p className="breakdown-tier-config-hint">For each service below, type the price per person under the correct category. Leave blank if that service doesn't apply.</p>
+                </div>
+              </div>
+
+              <div className="line-items-table">
+                <div className="line-items-row pax-tier-row header">
+                  <span>Service</span>
+                  <span>Details (optional)</span>
+                  <span>Price per person<br/>(Adult)</span>
+                  <span>Price per person<br/>(Child)</span>
+                  <span>Price per person<br/>(Senior)</span>
+                  <span>Price per person<br/>(Infant)</span>
+                </div>
+
+                {currentBreakdownItems.filter(item => !item.isPackageRow).map((item, index) => {
+                  const realIndex = currentBreakdownItems.indexOf(item)
+                  return (
+                    <div key={index} className="line-item-data-row">
+                      <div className="line-items-row pax-tier-row">
+                        <div className="pax-tier-service-label">{item.description}</div>
+                        <input
+                          type="text"
+                          value={item.details || ''}
+                          onChange={(e) => changeBreakdownItemField(realIndex, 'details', e.target.value)}
+                          placeholder="e.g. CRK - MPH"
+                        />
+                        {(['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant'] as const).map((field) => (
+                          <input
+                            key={field}
+                            type="text"
+                            value={(item[field] as string) || ''}
+                            onChange={(e) => changeBreakdownItemField(realIndex, field, e.target.value)}
+                            placeholder="0.00"
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {currentBreakdownItems.filter(i => !i.isPackageRow).length === 0 && (
+                  <div style={{padding:'1.25rem', textAlign:'center', color:'var(--text-secondary)', fontSize:'0.85rem', fontStyle:'italic'}}>
+                    No services yet — add rows in Section 05a above first, then come back here to fill in the prices.
+                  </div>
+                )}
+              </div>
             </div>
           </section>
 
@@ -1618,31 +2138,86 @@ function App() {
           {/* 08 · INCLUSIONS */}
           <section className="form-section">
             <div className="form-section-heading">
-              <p>08 · Inclusions</p>
-              <h2>Document line specifications</h2>
+              <p>08 · Inclusions &amp; Exclusions</p>
+              <h2>Manual entry</h2>
             </div>
             <div className="field-grid two">
               <label className="textarea-field">
                 Inclusions
-                <textarea rows={4} value={bookingForm.inclusions} onChange={(e) => updateBookingField('inclusions', e.target.value)} placeholder={'Daily Breakfast\nRoundtrip Airport Transfers\nFree Wi-Fi access'} />
+                <textarea
+                  rows={5}
+                  value={bookingForm.inclusions}
+                  onChange={(e) => updateBookingField('inclusions', e.target.value)}
+                  placeholder={'One item per line, e.g.\nRound-trip airfare\nHotel accommodation\nAirport transfers'}
+                />
               </label>
               <label className="textarea-field">
                 Exclusions
-                <textarea rows={4} value={bookingForm.exclusions} onChange={(e) => updateBookingField('exclusions', e.target.value)} placeholder={'Tipping for Tour Guide\nPersonal spending money\nTravel insurance'} />
+                <textarea
+                  rows={5}
+                  value={bookingForm.exclusions}
+                  onChange={(e) => updateBookingField('exclusions', e.target.value)}
+                  placeholder={'One item per line, e.g.\nMeals not stated\nPersonal expenses\nTravel insurance'}
+                />
               </label>
             </div>
+            <p className="field-help">One item per line. These show exactly as typed on the quotation, invoice, and voucher.</p>
           </section>
 
           {/* 09 · SCHEDULE */}
           <section className="form-section">
             <div className="form-section-heading">
               <p>09 · Schedule</p>
-              <h2>Itinerary roadmap</h2>
+              <h2>Itinerary &amp; hotel per day</h2>
             </div>
-            <label className="textarea-field">
-              Daily routing schedule
-              <textarea rows={6} value={bookingForm.itinerary} onChange={(e) => updateBookingField('itinerary', e.target.value)} placeholder={'Day 1: Arrival at Caticlan Airport, Transfer to Resort, Free Time\nDay 2: Boracay Island Hopping Tour with Lunch\nDay 3: Breakfast, Free Time until checkout, Departure transfer'} />
-            </label>
+            {(() => {
+              const rows: { date: string; itinerary: string; hotel: string }[] = (() => {
+                try { return bookingForm.voucherRowsJson ? JSON.parse(bookingForm.voucherRowsJson) : [] } catch { return [] }
+              })()
+              const save = (updated: typeof rows) => updateBookingField('voucherRowsJson', JSON.stringify(updated))
+              const addRow = () => {
+                const prev = rows[rows.length - 1]
+                const nextDate = prev?.date
+                  ? (() => { const d = new Date(prev.date + 'T00:00:00'); d.setDate(d.getDate() + 1); return d.toISOString().slice(0,10) })()
+                  : (bookingForm.travelStart || '')
+                save([...rows, { date: nextDate, itinerary: '', hotel: prev?.hotel || bookingForm.accommodation || '' }])
+              }
+              const updateRow = (i: number, field: string, val: string) => {
+                const next = rows.map((r, idx) => idx === i ? { ...r, [field]: val } : r)
+                save(next)
+              }
+              const removeRow = (i: number) => save(rows.filter((_, idx) => idx !== i))
+              return (
+                <div className="voucher-day-builder">
+                  {rows.length === 0 && (
+                    <p className="voucher-day-empty">No days added yet. Click &ldquo;+ Add day&rdquo; to build the itinerary.</p>
+                  )}
+                  {rows.map((row, i) => (
+                    <div key={i} className="voucher-day-row">
+                      <div className="voucher-day-header">
+                        <span>Day {i + 1}</span>
+                        <button type="button" className="voucher-day-remove" onClick={() => removeRow(i)}>× Remove</button>
+                      </div>
+                      <div className="field-grid three">
+                        <label>
+                          Date
+                          <input type="date" value={row.date} onChange={(e) => updateRow(i, 'date', e.target.value)} />
+                        </label>
+                        <label style={{gridColumn:'span 2'}}>
+                          Hotel / Accommodation
+                          <input value={row.hotel} onChange={(e) => updateRow(i, 'hotel', e.target.value)} placeholder="e.g. Azalea Hotel Baguio" />
+                        </label>
+                      </div>
+                      <label className="textarea-field" style={{marginTop:'0.5rem'}}>
+                        Itinerary for this day
+                        <textarea rows={3} value={row.itinerary} onChange={(e) => updateRow(i, 'itinerary', e.target.value)} placeholder="e.g. Arrival at NAIA Terminal 3, Transfer to hotel, Check-in, Free time" />
+                      </label>
+                    </div>
+                  ))}
+                  <button type="button" className="voucher-add-day-btn" onClick={addRow}>+ Add day</button>
+                </div>
+              )
+            })()}
           </section>
 
           {/* 10 · REMARKS */}
@@ -1677,12 +2252,43 @@ function App() {
             </button>
           </footer>
         </form>
+
+        {/* PAX MODAL */}
+        {paxModalIndex >= 0 && (() => {
+          const item = currentBreakdownItems[paxModalIndex]
+          const label = item?.description || (item?.isPackageRow ? 'Package' : '')
+          return (
+            <div className="pax-modal-overlay" onClick={() => setPaxModalIndex(-1)}>
+              <div className="pax-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="pax-modal-header">
+                  <span>No. of Pax — <strong>{label}</strong></span>
+                  <button type="button" className="pax-modal-close" onClick={() => setPaxModalIndex(-1)}>
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className="pax-modal-body">
+                  {(['adult', 'child', 'senior', 'infant'] as const).map((category) => (
+                    <label key={category} className="pax-modal-field">
+                      <span>{category.charAt(0).toUpperCase() + category.slice(1)}</span>
+                      <input
+                        type="number" min="0"
+                        value={readPaxBreakdown(item?.paxBreakdown)[category]}
+                        onChange={(e) => changeBreakdownPaxField(paxModalIndex, category, e.target.value)}
+                        placeholder="0"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )
+        })()}
       </main>
     )
   }
 
   if (screen === 'booking-detail') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
@@ -1709,6 +2315,14 @@ function App() {
             </div>
           </div>
           <div className="nav-actions">
+            <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
             <button type="button" onClick={() => setScreen('home')} title="Back">
               <X size={18} />
             </button>
@@ -1765,7 +2379,7 @@ function App() {
               </article>
               <article>
                 <span>No. of pax</span>
-                <strong>{selectedBooking.pax || 'Not provided'}</strong>
+                <strong>{formatPaxBreakdownLabel(readPaxBreakdown(readBreakdownItems(selectedBooking).find(i => i.isPackageRow)?.paxBreakdown)) || selectedBooking.pax || 'Not provided'}</strong>
               </article>
               <article>
                 <span>Travel dates</span>
@@ -1856,7 +2470,7 @@ function App() {
   }
 
   if (screen === 'document-folder') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
@@ -1908,9 +2522,7 @@ function App() {
         description: 'Reservation instruction for supplier or operator.',
         requirement: 'Needs supplier/operator, package, pax, and travel date.',
         ready: Boolean(
-          selectedBooking.supplier &&
-            selectedBooking.packageName &&
-            selectedBooking.pax &&
+          selectedBooking.packageName &&
             selectedBooking.travelStart,
         ),
       },
@@ -1938,6 +2550,14 @@ function App() {
             </div>
           </div>
           <div className="nav-actions">
+            <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
             <button
               className="nav-text-action"
               type="button"
@@ -2006,7 +2626,7 @@ function App() {
   }
 
   if (screen === 'quotation-preview') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
@@ -2043,6 +2663,14 @@ function App() {
           </div>
           <div className="nav-actions">
             <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button
               className="nav-text-action"
               type="button"
               onClick={handlePrintPreview}
@@ -2054,7 +2682,7 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => setScreen('booking-detail')}
+              onClick={() => setScreen('document-folder')}
               title="Back"
             >
               <X size={18} />
@@ -2113,16 +2741,18 @@ function App() {
           <table className="quote-table">
             <thead>
               <tr>
-                <th>Description</th>
+                <th>Item</th>
+                <th className="desc-col">Description</th>
                 <th>Qty</th>
-                <th>Unit price</th>
-                <th>Total price</th>
+                <th>Unit Price</th>
+                <th>Amount</th>
               </tr>
             </thead>
             <tbody>
               {lineItems.map((item, index) => (
                 <tr key={`${item.description}-${index}`}>
-                  <td>{item.description}</td>
+                  <td className="item-col">{item.description}</td>
+                  <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
                   <td>{item.quantity}</td>
                   <td>{formatAmount(String(item.unitPrice))}</td>
                   <td>{formatAmount(String(item.total))}</td>
@@ -2172,7 +2802,7 @@ function App() {
   }
 
   if (screen === 'invoice-editor') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
@@ -2206,7 +2836,15 @@ function App() {
           <div className="nav-actions">
             <button
               type="button"
-              onClick={() => setScreen('booking-detail')}
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button
+              type="button"
+              onClick={() => setScreen(invoiceEditorReturnScreen)}
               title="Back"
             >
               <X size={18} />
@@ -2247,87 +2885,151 @@ function App() {
 
           <section className="form-section">
             <div className="form-section-heading">
-              <p>Editable invoice</p>
-              <h2>Payment update before PDF</h2>
+              <p>Log a payment</p>
+              <h2>Add customer payment</h2>
             </div>
-            <div className="field-grid three">
+            <div className="field-grid two">
               <label>
-                Payment status
-                <select
-                  value={invoiceForm.invoicePaymentStatus}
-                  onChange={(event) =>
-                    updateInvoiceField('invoicePaymentStatus', event.target.value)
-                  }
-                >
-                  <option>Unpaid</option>
-                  <option>Partially Paid</option>
-                  <option>Paid</option>
-                </select>
-              </label>
-              <label>
-                Amount paid
+                Amount received (PHP)
                 <input
                   type="number"
                   min="0"
                   step="0.01"
-                  value={invoiceForm.invoiceAmountPaid}
-                  onChange={(event) =>
-                    updateInvoiceField('invoiceAmountPaid', event.target.value)
-                  }
-                  placeholder="PHP 0.00"
+                  value={paymentEntry.amount}
+                  onChange={(e) => setPaymentEntry((p) => ({ ...p, amount: e.target.value }))}
+                  placeholder="e.g. 5000"
                 />
               </label>
               <label>
                 Payment date
                 <input
                   type="date"
-                  value={invoiceForm.invoicePaymentDate}
-                  onChange={(event) =>
-                    updateInvoiceField('invoicePaymentDate', event.target.value)
-                  }
+                  value={paymentEntry.date}
+                  onChange={(e) => setPaymentEntry((p) => ({ ...p, date: e.target.value }))}
                 />
               </label>
-            </div>
-            <div className="field-grid two">
               <label>
                 Payment method
                 <input
-                  value={invoiceForm.paymentMethod}
-                  onChange={(event) =>
-                    updateInvoiceField('paymentMethod', event.target.value)
-                  }
-                  placeholder="Bank transfer, cash, GCash"
+                  value={paymentEntry.method}
+                  onChange={(e) => setPaymentEntry((p) => ({ ...p, method: e.target.value }))}
+                  placeholder="GCash, BDO, cash, etc."
                 />
               </label>
               <label>
-                Payment reference
+                Reference / OR no.
                 <input
-                  value={invoiceForm.invoiceReference}
-                  onChange={(event) =>
-                    updateInvoiceField('invoiceReference', event.target.value)
-                  }
-                  placeholder="OR / bank ref / GCash ref"
+                  value={paymentEntry.reference}
+                  onChange={(e) => setPaymentEntry((p) => ({ ...p, reference: e.target.value }))}
+                  placeholder="GCash ref, OR no., bank ref"
                 />
               </label>
             </div>
-            <label className="textarea-field">
-              Payment records
-              <textarea
-                value={invoiceForm.paymentRecords}
-                onChange={(event) =>
-                  updateInvoiceField('paymentRecords', event.target.value)
-                }
-                placeholder="One payment update per line, e.g. DP MAR 3 PAID - PHP 40,000"
-              />
-            </label>
+            <button
+              type="button"
+              className="log-payment-btn"
+              onClick={handleLogPayment}
+              disabled={!paymentEntry.amount || Number(paymentEntry.amount) <= 0}
+            >
+              + Log payment
+            </button>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-heading">
+              <p>Payment records</p>
+              <h2>History &amp; status</h2>
+            </div>
+            <div className="payment-log-list">
+              {invoiceForm.paymentRecords
+                ? invoiceForm.paymentRecords.split('\n').filter(Boolean).map((rec, i) => (
+                    <div key={i} className="payment-log-entry">
+                      <span>{rec}</span>
+                      <button
+                        type="button"
+                        className="payment-log-remove"
+                        title="Remove this record"
+                        onClick={() => handleRemovePaymentRecord(i)}
+                      >×</button>
+                    </div>
+                  ))
+                : <p className="payment-log-empty">No payments logged yet.</p>
+              }
+            </div>
+            <div className="field-grid two" style={{marginTop:'1rem'}}>
+              <label>
+                Payment status
+                <div className="payment-status-row">
+                  <span className={`payment-status-badge status-${invoiceForm.invoicePaymentStatus.toLowerCase().replaceAll(' ', '-')}`}>
+                    {invoiceForm.invoicePaymentStatus}
+                  </span>
+                  {invoiceForm.invoicePaymentStatus !== 'Paid' && (
+                    <button
+                      type="button"
+                      className="mark-paid-btn"
+                      onClick={() => handlePaymentStatusSelect('Paid')}
+                    >
+                      <CheckCircle2 size={16} />
+                      PAID?
+                    </button>
+                  )}
+                </div>
+                <span className="field-help">Auto-updates as you log or remove payments. Click "PAID?" to settle the remaining balance and record the date it was fully paid.</span>
+              </label>
+              <label>
+                Total paid so far (auto-summed)
+                <input
+                  type="number"
+                  value={invoiceForm.invoiceAmountPaid}
+                  onChange={(event) => updateInvoiceField('invoiceAmountPaid', event.target.value)}
+                  placeholder="0"
+                />
+              </label>
+            </div>
           </section>
         </form>
+
+        {isFullyPaidModalOpen && (
+          <div className="pax-modal-overlay" onClick={() => setIsFullyPaidModalOpen(false)}>
+            <div className="pax-modal fully-paid-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="pax-modal-header">
+                <span>Mark invoice as <strong>Paid</strong></span>
+                <button type="button" className="pax-modal-close" onClick={() => setIsFullyPaidModalOpen(false)}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="fully-paid-modal-body">
+                <p>
+                  This will settle the remaining balance of{' '}
+                  <strong>{formatAmount(String(Math.max(getInvoiceEditorTotal() - parseAmount(invoiceForm.invoiceAmountPaid), 0)))}</strong>{' '}
+                  to PHP 0.00. When was it fully paid?
+                </p>
+                <label className="fully-paid-date-field">
+                  Date fully paid
+                  <input
+                    type="date"
+                    value={fullyPaidDateInput}
+                    onChange={(e) => setFullyPaidDateInput(e.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="fully-paid-modal-actions">
+                <button type="button" className="fully-paid-cancel-btn" onClick={() => setIsFullyPaidModalOpen(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="fully-paid-confirm-btn" onClick={confirmFullyPaid}>
+                  Confirm fully paid
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     )
   }
 
   if (screen === 'invoice-preview') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
@@ -2370,6 +3072,14 @@ function App() {
           </div>
           <div className="nav-actions">
             <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button
               className="nav-text-action"
               type="button"
               onClick={handlePrintPreview}
@@ -2388,7 +3098,7 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => setScreen('booking-detail')}
+              onClick={() => setScreen(invoiceEditorReturnScreen)}
               title="Back"
             >
               <X size={18} />
@@ -2429,76 +3139,70 @@ function App() {
             <span>{selectedBooking.clientName}</span>
           </section>
 
-          <table className="invoice-table">
-            <thead>
-              <tr>
-                <th>Description</th>
-                <th>Qty</th>
-                <th>Unit Price</th>
-                <th>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lineItems.map((item, index) => (
-                <tr key={`${item.description}-${index}`}>
-                  <td>{item.description}</td>
-                  <td>{item.quantity}</td>
-                  <td>{formatAmount(String(item.unitPrice))}</td>
-                  <td>{formatAmount(String(item.total))}</td>
+          <div className="invoice-body-grid">
+            <table className="invoice-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th className="desc-col">Description</th>
+                  <th>Qty</th>
+                  <th>Unit Price</th>
+                  <th>Amount</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <section className="invoice-total-panel">
-            <div>
-              <span>Subtotal</span>
-              <strong>{formatAmount(String(totalPrice))}</strong>
-            </div>
-            <div>
-              <span>Total</span>
-              <strong>{formatAmount(String(totalPrice))}</strong>
-            </div>
-            <div>
-              <span>Paid</span>
-              <strong>{formatAmount(selectedBooking.invoiceAmountPaid)}</strong>
-            </div>
-            <div>
-              <span>Balance</span>
-              <strong>{formatAmount(String(balance))}</strong>
-            </div>
-            <div className="payment-placeholder">
-              <span>Payment Updates</span>
-              <ul>
-                {paymentRecords.map((record) => (
-                  <li key={record}>{record}</li>
+              </thead>
+              <tbody>
+                {lineItems.map((item, index) => (
+                  <tr key={`${item.description}-${index}`}>
+                    <td className="item-col">{item.description}</td>
+                    <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
+                    <td>{item.quantity}</td>
+                    <td>{formatAmount(String(item.unitPrice))}</td>
+                    <td>{formatAmount(String(item.total))}</td>
+                  </tr>
                 ))}
-              </ul>
-            </div>
-          </section>
+              </tbody>
+            </table>
 
-          <section className="invoice-notes document-checklists">
-            <h2>Note to Customer</h2>
-            <div className="invoice-note-grid">
-              <div className="included-list">
-                <strong>Inclusions</strong>
+            <section className="invoice-total-panel">
+              <div className="invoice-total-row subtotal-row">
+                <span>SUBTOTAL</span>
+                <strong>{formatAmount(String(totalPrice))}</strong>
+              </div>
+              <div className="invoice-total-row total-row">
+                <span>TOTAL</span>
+                <strong>{formatAmount(String(totalPrice))}</strong>
+              </div>
+              <div className="invoice-total-row">
+                <span>PAID</span>
+                <strong>{formatAmount(selectedBooking.invoiceAmountPaid)}</strong>
+              </div>
+              <div className="invoice-total-row">
+                <span>BALANCE</span>
+                <strong>{formatAmount(String(balance))}</strong>
+              </div>
+              {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate && (
+                <div className="invoice-total-row fully-paid-badge">
+                  <span>FULLY PAID ON</span>
+                  <strong>{formatProjectDate(selectedBooking.invoiceFullyPaidDate)}</strong>
+                </div>
+              )}
+              <div className="payment-placeholder">
+                <span>PAYMENT UPDATES</span>
                 <ul>
-                  {inclusions.map((item) => (
-                    <li key={item}>{item}</li>
+                  {paymentRecords.map((record) => (
+                    <li key={record}>{record}</li>
                   ))}
                 </ul>
               </div>
-              <div className="excluded-list">
-                <strong>Exclusions</strong>
-                <ul>
-                  {exclusions.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
+            </section>
+          </div>
+
+          <section className="invoice-notes">
             <p>
               Status: {selectedBooking.invoicePaymentStatus || 'Unpaid'}.
+              {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate
+                ? ` Fully paid on ${formatProjectDate(selectedBooking.invoiceFullyPaidDate)}.`
+                : ''}
               Payment method: {selectedBooking.paymentMethod || 'To be advised'}.
               Payment date:{' '}
               {selectedBooking.invoicePaymentDate
@@ -2531,9 +3235,25 @@ function App() {
               </p>
             </section>
             <div className="transaction-box">
-              <strong>For faster transactions</strong>
-              <span>Send deposit or payment proof with your booking reference.</span>
-              <span>BDO - OLONGAPO / SHARON R MORINE</span>
+              <strong>For faster transactions:</strong>
+              <span>You may deposit your payment below:</span>
+              <div className="transaction-banks">
+                <div>
+                  <span className="bank-name">BDO - OLONGAPO</span>
+                  <span>Sharon R. Morine</span>
+                  <span>PESO SA: 007700076844</span>
+                </div>
+                <div>
+                  <span className="bank-name">CHINA BANK - OLONGAPO</span>
+                  <span>Sharon R. Morine</span>
+                  <span>USD SA: 167352000868</span>
+                </div>
+                <div>
+                  <span className="bank-name">GCASH</span>
+                  <span>Sharon R.</span>
+                  <span>9613495114</span>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -2550,7 +3270,7 @@ function App() {
   }
 
   if (screen === 'purchase-order-preview') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
@@ -2566,42 +3286,26 @@ function App() {
       )
     }
 
-    const lineItems = getBookingLineItems(selectedBooking)
-    const amount = sumLineItems(lineItems, 'nettTotal') || sumLineItems(lineItems, 'total')
+    const poBreakdownItems = readBreakdownItems(selectedBooking).filter((item) => item.sendToPO)
     const poNumber = selectedBooking.id.replace('BK-', new Date().getFullYear().toString())
+    const travelDateStr = selectedBooking.travelStart
+      ? `${formatProjectDate(selectedBooking.travelStart)}${selectedBooking.travelEnd ? ` - ${formatProjectDate(selectedBooking.travelEnd)}` : ''}`
+      : 'TBA'
+    const optionDateStr = selectedBooking.optionDate ? formatProjectDate(selectedBooking.optionDate) : 'TBA'
+    const supplierPayment = (item: BreakdownLineItem) =>
+      item.paymentMethod || selectedBooking.paymentMethod || 'Bank Transfer'
 
-    return (
-      <main className="preview-screen">
-        <nav className="app-nav">
-          <div className="nav-brand">
-            <img src={logo} alt="Lion and Lamb Travel logo" />
-            <div>
-              <strong>Lion and Lamb Travel</strong>
-              <span>Purchase Order Preview</span>
-            </div>
-          </div>
-          <div className="nav-actions">
-            <button
-              className="nav-text-action"
-              type="button"
-              onClick={handlePrintPreview}
-              title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
-              disabled={isPdfExporting}
-            >
-              <Printer size={18} />
-              <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setScreen('booking-detail')}
-              title="Back"
-            >
-              <X size={18} />
-            </button>
-          </div>
-        </nav>
+    const renderPODocument = (item: BreakdownLineItem, itemIndex: number, isLast: boolean) => {
+      const paxBreakdown = readPaxBreakdown(item.paxBreakdown)
+      const paxTotal = sumPaxBreakdown(paxBreakdown)
+      const paxLabel = formatPaxBreakdownLabel(paxBreakdown) || item.quantity || '1'
+      const quantity = paxTotal > 0 ? paxTotal : parseQuantity(item.quantity)
+      const itemDescription = item.description || (item.isPackageRow ? selectedBooking.packageName || 'Basic Package' : 'Item')
+      const poUnitPrice = parseAmount(item.nettCost) || parseAmount(item.unitPrice)
+      const poAmount = poUnitPrice * quantity
 
-        <section className="po-preview print-document">
+      return (
+        <section key={itemIndex} className={`po-preview print-document${!isLast ? ' po-page-break' : ''}`}>
           <header className="po-header">
             <img src={logo} alt="Lion and Lamb Travel logo" />
             <div>
@@ -2627,27 +3331,21 @@ function App() {
             </article>
             <article>
               <span>P.O. No.</span>
-              <strong>{poNumber}</strong>
+              <strong>{poNumber}-{itemIndex + 1}</strong>
             </article>
           </section>
 
           <section className="po-party-grid">
             <div>
               <span>Vendor:</span>
-              <strong>{selectedBooking.supplier || 'To be assigned'}</strong>
-              <small>
-                Agent:{' '}
-                {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
-              </small>
-              <small>Contact No.: {selectedBooking.supplierContact || 'N/A'}</small>
+              <strong>{item.vendor || 'To be assigned'}</strong>
+              <small>Agent: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}</small>
+              <small>Contact No.: {item.contactNumber || 'N/A'}</small>
             </div>
             <div>
               <span>Client Details:</span>
-              <strong>
-                {selectedBooking.clientName}
-                {selectedBooking.pax ? ` x${selectedBooking.pax}` : ''}
-              </strong>
-              <small>No. of pax: {selectedBooking.pax || 'N/A'}</small>
+              <strong>{selectedBooking.clientName}</strong>
+              <small>No. of pax: {paxLabel}</small>
               <small>Contact No.: {selectedBooking.contactNumber || 'N/A'}</small>
             </div>
           </section>
@@ -2663,22 +3361,10 @@ function App() {
             </thead>
             <tbody>
               <tr>
-                <td>{selectedBooking.paymentMethod || 'Bank Transfer'}</td>
-                <td>{selectedBooking.destination || 'Tours and Transfers'}</td>
-                <td>
-                  {selectedBooking.travelStart
-                    ? `${formatProjectDate(selectedBooking.travelStart)}${
-                        selectedBooking.travelEnd
-                          ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
-                          : ''
-                      }`
-                    : 'TBA'}
-                </td>
-                <td>
-                  {selectedBooking.optionDate
-                    ? formatProjectDate(selectedBooking.optionDate)
-                    : 'TBA'}
-                </td>
+                <td>{supplierPayment(item)}</td>
+                <td>{itemDescription}</td>
+                <td>{travelDateStr}</td>
+                <td>{optionDateStr}</td>
               </tr>
             </tbody>
           </table>
@@ -2689,31 +3375,26 @@ function App() {
                 <th>Qty</th>
                 <th># of Pax</th>
                 <th>Particular</th>
+                <th>Description</th>
                 <th>Unit Price</th>
                 <th>Amount</th>
               </tr>
             </thead>
             <tbody>
-              {lineItems.map((item, index) => {
-                const poUnitPrice = item.nettCost || item.unitPrice
-                const poAmount = item.nettTotal || item.total
-
-                return (
-                  <tr key={`${item.description}-${index}`}>
-                    <td>{item.quantity}</td>
-                    <td>{selectedBooking.pax || item.quantity}</td>
-                    <td>{item.description}</td>
-                    <td>{formatAmount(String(poUnitPrice))}</td>
-                    <td>{formatAmount(String(poAmount))}</td>
-                  </tr>
-                )
-              })}
+              <tr>
+                <td>{quantity}</td>
+                <td>{paxLabel}</td>
+                <td>{itemDescription}</td>
+                <td>{item.details || '—'}</td>
+                <td>{formatAmount(String(poUnitPrice))}</td>
+                <td>{formatAmount(String(poAmount))}</td>
+              </tr>
             </tbody>
           </table>
 
           <section className="po-total">
             <span>Total Amount:</span>
-            <strong>{formatAmount(String(amount))}</strong>
+            <strong>{formatAmount(String(poAmount))}</strong>
           </section>
 
           <section className="po-notes-grid">
@@ -2727,9 +3408,7 @@ function App() {
             </div>
             <div>
               <span>Special Instructions:</span>
-              <strong>
-                {selectedBooking.specialInstructions || selectedBooking.notes || 'N/A'}
-              </strong>
+              <strong>{selectedBooking.specialInstructions || selectedBooking.notes || 'N/A'}</strong>
             </div>
           </section>
 
@@ -2737,12 +3416,73 @@ function App() {
             Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
           </footer>
         </section>
+      )
+    }
+
+    return (
+      <main className="preview-screen">
+        <nav className="app-nav">
+          <div className="nav-brand">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>Lion and Lamb Travel</strong>
+              <span>Purchase Order Preview</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={handlePrintPreview}
+              title={isPdfExporting ? 'Preparing PDF...' : 'Download clean PDF'}
+              disabled={isPdfExporting}
+            >
+              <Printer size={18} />
+              <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setScreen('document-folder')}
+              title="Back"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </nav>
+
+        {poBreakdownItems.length === 0 ? (
+          <section className="po-preview print-document">
+            <header className="po-header">
+              <img src={logo} alt="Lion and Lamb Travel logo" />
+              <div>
+                <strong>LION AND LAMB TRAVEL</strong>
+                <span>BLK #7-17 OLONGAPO CITY PUBLIC MARKET</span>
+                <span>Olongapo City, Philippines 2200</span>
+                <span>travel_lionlamb@yahoo.com</span>
+                <span>DOT No: R03 - TTA 013652023</span>
+              </div>
+              <img src={agencySeal} alt="DOT accreditation seal" />
+            </header>
+            <h1>Purchase Order</h1>
+            <p className="po-empty-row">No items marked "Send to P.O." yet — toggle a row in section 05a to add it here.</p>
+          </section>
+        ) : (
+          poBreakdownItems.map((item, index) => renderPODocument(item, index, index === poBreakdownItems.length - 1))
+        )}
       </main>
     )
   }
 
   if (screen === 'voucher-preview') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
@@ -2758,11 +3498,6 @@ function App() {
       )
     }
 
-    const itineraryLines = getLines(selectedBooking.itinerary, [
-      selectedBooking.itemDescription ||
-        `Arrival and start of ${selectedBooking.packageName}`,
-      'Free own leisure. Final reminders and departure arrangements.',
-    ])
     const inclusions = getLines(selectedBooking.inclusions, [
       'Travel arrangement based on confirmed package',
       'Accommodation / service details as stated above',
@@ -2773,22 +3508,30 @@ function App() {
       'Optional tours or personal expenses',
       'Other incidental charges not stated',
     ])
-    const itineraryRows = itineraryLines.map((line, index) => ({
-      date:
-        index === 0
-          ? selectedBooking.travelStart
-            ? formatProjectDate(selectedBooking.travelStart)
-            : `Day ${index + 1}`
-          : index === itineraryLines.length - 1 && selectedBooking.travelEnd
-            ? formatProjectDate(selectedBooking.travelEnd)
-            : `Day ${index + 1}`,
-      itinerary: line,
-      hotel:
-        selectedBooking.hotelAddress ||
-        selectedBooking.accommodation ||
-        selectedBooking.destination ||
-        'Accommodation to be advised',
-    }))
+    // Use structured voucher rows if available, otherwise fall back to itinerary textarea
+    const itineraryRows: { date: string; itinerary: string; hotel: string }[] = (() => {
+      if (selectedBooking.voucherRowsJson) {
+        try {
+          const parsed = JSON.parse(selectedBooking.voucherRowsJson)
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed.map((r) => ({
+            date: r.date ? formatProjectDate(r.date) : '',
+            itinerary: r.itinerary || '',
+            hotel: r.hotel || '',
+          }))
+        } catch { /* fall through */ }
+      }
+      const lines = getLines(selectedBooking.itinerary, [
+        selectedBooking.itemDescription || `Arrival and start of ${selectedBooking.packageName}`,
+        'Free own leisure. Final reminders and departure arrangements.',
+      ])
+      return lines.map((line, index) => ({
+        date: index === 0
+          ? selectedBooking.travelStart ? formatProjectDate(selectedBooking.travelStart) : `Day ${index + 1}`
+          : index === lines.length - 1 && selectedBooking.travelEnd ? formatProjectDate(selectedBooking.travelEnd) : `Day ${index + 1}`,
+        itinerary: line,
+        hotel: selectedBooking.hotelAddress || selectedBooking.accommodation || selectedBooking.destination || 'Accommodation to be advised',
+      }))
+    })()
 
     return (
       <main className="preview-screen">
@@ -2802,6 +3545,14 @@ function App() {
           </div>
           <div className="nav-actions">
             <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button
               className="nav-text-action"
               type="button"
               onClick={handlePrintPreview}
@@ -2813,7 +3564,7 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => setScreen('booking-detail')}
+              onClick={() => setScreen('document-folder')}
               title="Back"
             >
               <X size={18} />
@@ -2945,7 +3696,7 @@ function App() {
   }
 
   if (screen === 'breakdown-preview') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
@@ -2961,11 +3712,41 @@ function App() {
       )
     }
 
-    const lineItems = mapBreakdownItemsToBookingLines(readBreakdownItems(selectedBooking))
-    const quantity = parseQuantity(selectedBooking.quantity)
-    const internalTotal = sumLineItems(lineItems, 'nettTotal')
-    const clientTotal = sumLineItems(lineItems, 'total')
-    const estimatedProfit = sumLineItems(lineItems, 'profit')
+    const brkItems = readBreakdownItems(selectedBooking)
+
+    // Parse pax-tier column labels (default matches the reference image)
+    let colLabels = ['2 PAX', '5 PAX', 'PAX AND ABOVE', 'INFANT']
+    try {
+      const parsed = JSON.parse(selectedBooking.breakdownColLabels)
+      if (Array.isArray(parsed) && parsed.length === 4) colLabels = parsed
+    } catch {}
+
+    // Parse pax counts per column for the TOTAL row
+    // Auto-detect from label if it starts with a number (e.g. "2 PAX" → 2)
+    let colPaxStored = ['', '', '', '']
+    try {
+      const parsed = JSON.parse(selectedBooking.breakdownPaxTiers)
+      if (Array.isArray(parsed) && parsed.length === 4) colPaxStored = parsed
+    } catch {}
+    const colPax = colLabels.map((label, i) => {
+      const match = label.match(/^(\d+)/)
+      return match ? match[1] : colPaxStored[i]
+    })
+
+    const paxPriceFields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
+
+    // Subtotals per column (sum of all price cells in that column)
+    const subtotals = paxPriceFields.map((field) =>
+      brkItems
+        .filter((item) => !item.isPackageRow)
+        .reduce((sum, item) => sum + parseAmount(item[field] as string), 0)
+    )
+
+    // Totals per column (subtotal × pax count for that column)
+    const totals = subtotals.map((sub, i) => {
+      const pax = parseQuantity(colPax[i])
+      return sub * pax
+    })
 
     return (
       <main className="preview-screen">
@@ -2974,10 +3755,18 @@ function App() {
             <img src={logo} alt="Lion and Lamb Travel logo" />
             <div>
               <strong>Lion and Lamb Travel</strong>
-              <span>Internal Breakdown Preview</span>
+              <span>Breakdown Preview</span>
             </div>
           </div>
           <div className="nav-actions">
+            <button
+              type="button"
+              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+              onClick={() => setIsDark((d) => !d)}
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
             <button
               className="nav-text-action"
               type="button"
@@ -2990,7 +3779,7 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => setScreen('booking-detail')}
+              onClick={() => setScreen('document-folder')}
               title="Back"
             >
               <X size={18} />
@@ -2999,75 +3788,84 @@ function App() {
         </nav>
 
         <section className="breakdown-preview print-document">
-          <header className="breakdown-header">
-            <h1>QUOTATION: {selectedBooking.quotationNo || selectedBooking.id}</h1>
-            <strong>INTERNAL BREAKDOWN</strong>
-          </header>
-
-          <section className="breakdown-info">
-            <div>
-              <span>Name</span>
-              <strong>{selectedBooking.packageName}</strong>
-            </div>
-            <div>
-              <span>Date of Travel</span>
-              <strong>
-                {selectedBooking.travelStart
-                  ? `${formatProjectDate(selectedBooking.travelStart)}${
-                      selectedBooking.travelEnd
-                        ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
-                        : ''
-                    }`
-                  : 'TBA'}
-              </strong>
-            </div>
-            <div>
-              <span>No. of Pax</span>
-              <strong>{selectedBooking.pax || quantity}</strong>
-            </div>
-            <div>
-              <span>Operator</span>
-              <strong>{selectedBooking.supplier || 'To be assigned'}</strong>
-            </div>
-          </section>
-
-          <table className="breakdown-table">
+          {/* Header row */}
+          <table className="breakdown-quotation-table">
             <thead>
-              <tr>
-                <th>Service</th>
-                <th>Qty</th>
-                <th>Supplier Nett</th>
-                <th>Client Price</th>
-                <th>Profit</th>
+              <tr className="bq-title-row">
+                <th colSpan={2}>QUOTATION: {selectedBooking.quotationNo || selectedBooking.id}</th>
+                <th colSpan={4} className="bq-amount-header">AMOUNT</th>
+              </tr>
+              <tr className="bq-info-row">
+                <td className="bq-label">NAME:</td>
+                <td className="bq-value">
+                  {selectedBooking.packageName}
+                </td>
+                <td rowSpan={4} colSpan={4} className="bq-amount-cell"></td>
+              </tr>
+              <tr className="bq-info-row">
+                <td className="bq-label">DATE OF TRAVEL:</td>
+                <td className="bq-value">
+                  {selectedBooking.travelStart
+                    ? `${formatProjectDate(selectedBooking.travelStart)}${selectedBooking.travelEnd ? ` - ${formatProjectDate(selectedBooking.travelEnd)}` : ''}`
+                    : 'TBA'}
+                </td>
+              </tr>
+              <tr className="bq-info-row">
+                <td className="bq-label">NO OF PAX:</td>
+                <td className="bq-value">{formatPaxBreakdownLabel(readPaxBreakdown(readBreakdownItems(selectedBooking).find(i => i.isPackageRow)?.paxBreakdown)) || selectedBooking.pax || '—'}</td>
+              </tr>
+              <tr className="bq-col-header">
+                <th>SERVICE</th>
+                <th>DETAILS</th>
+                {colLabels.map((label, i) => (
+                  <th key={i} className={i === 3 ? 'bq-infant-col' : ''}>{label}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {lineItems.map((item, index) => (
-                <tr key={`${item.description}-${index}`}>
-                  <td>{item.description}</td>
-                  <td>{item.quantity}</td>
-                  <td>{formatAmount(String(item.nettTotal))}</td>
-                  <td>{formatAmount(String(item.total))}</td>
-                  <td>{formatAmount(String(item.profit))}</td>
+              {brkItems.filter(item => !item.isPackageRow).map((item, index) => (
+                <tr key={index} className="bq-data-row">
+                  <td className="bq-service">{item.description.toUpperCase()}</td>
+                  <td className="bq-details">{item.details || ''}</td>
+                  {paxPriceFields.map((field, ci) => {
+                    const val = parseAmount(item[field] as string)
+                    return (
+                      <td key={ci} className={`bq-price${val > 0 ? ' bq-has-value' : ''}${ci === 3 ? ' bq-infant-col' : ''}`}>
+                        {val > 0 ? `₱${val.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                      </td>
+                    )
+                  })}
                 </tr>
               ))}
+              {/* SUBTOTAL row */}
+              <tr className="bq-subtotal-row">
+                <td colSpan={2}>SUBTOTAL:</td>
+                {subtotals.map((val, i) => (
+                  <td key={i} className={`bq-price${val > 0 ? ' bq-has-value' : ''}${i === 3 ? ' bq-infant-col' : ''}`}>
+                    {val > 0 ? `₱${val.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'}
+                  </td>
+                ))}
+              </tr>
+              {/* NO. OF PAX row */}
+              <tr className="bq-pax-row">
+                <td colSpan={2}>NO. OF PAX</td>
+                {colPax.map((pax, i) => (
+                  <td key={i} className={`bq-price${pax ? ' bq-has-value' : ''}${i === 3 ? ' bq-infant-col' : ''}`}>
+                    {pax || ''}
+                  </td>
+                ))}
+              </tr>
+              {/* TOTAL row */}
+              <tr className="bq-total-row">
+                <td colSpan={2}>TOTAL:</td>
+                {totals.map((val, i) => (
+                  <td key={i} className={`bq-price${val > 0 ? ' bq-has-value' : ''}${i === 3 ? ' bq-infant-col' : ''}`}>
+                    {val > 0 ? `₱${val.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'}
+                  </td>
+                ))}
+              </tr>
             </tbody>
           </table>
-
-          <section className="breakdown-total-grid">
-            <div>
-              <span>Supplier Nett Total</span>
-              <strong>{formatAmount(String(internalTotal))}</strong>
-            </div>
-            <div>
-              <span>Client Total</span>
-              <strong>{formatAmount(String(clientTotal))}</strong>
-            </div>
-            <div>
-              <span>Estimated Profit</span>
-              <strong>{formatAmount(String(estimatedProfit))}</strong>
-            </div>
-          </section>
 
           <section className="internal-warning">
             <ListChecks size={20} />
@@ -3121,6 +3919,14 @@ function App() {
           </div>
         </div>
         <div className="nav-actions">
+          <button
+            type="button"
+            className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
+            onClick={() => setIsDark((d) => !d)}
+            title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {isDark ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
           <button type="button" onClick={handleLogout} title="Log out">
             <LogOut size={18} />
           </button>
