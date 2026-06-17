@@ -1657,36 +1657,6 @@ function App() {
               </label>
             </div>
 
-            <div className="line-items-panel">
-              <div className="line-items-heading">
-                <div>
-                  <p>Base price</p>
-                  <h3>Client quotation price</h3>
-                  <span>This is the total the client sees on the quotation. Add optional invoice add-ons in section 05.</span>
-                </div>
-              </div>
-              <div className="line-items-table">
-                <div className="line-items-row header">
-                  <span>Qty</span>
-                  <span>Client price (PHP)</span>
-                </div>
-                <div className="line-items-row">
-                  <input
-                    type="number" min="1"
-                    value={bookingForm.quantity || '1'}
-                    onChange={(e) => updateBookingField('quantity', e.target.value)}
-                    placeholder="1"
-                  />
-                  <input
-                    type="text"
-                    value={bookingForm.unitPrice}
-                    onChange={(e) => updateBookingField('unitPrice', e.target.value)}
-                    placeholder="0.00"
-                  />
-                </div>
-              </div>
-              <p className="field-help">Supplier nett costs are handled in section 05 (internal breakdown).</p>
-            </div>
           </section>
 
           {/* 05a · INTERNAL COSTING */}
