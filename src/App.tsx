@@ -1076,7 +1076,7 @@ function App() {
         id: item.id || createLineItemId(),
         ...(item.isPackageRow ? { quantity: '1', sendToInvoice: true } : {}),
       }))
-      const manualInvoiceItems = invoiceItems.filter((item) => item.source === 'breakdown' && !item.isPackageRow)
+      const manualInvoiceItems = invoiceItems.filter((item) => item.source !== 'breakdown' && !item.isPackageRow)
       const breakdownInvoiceItems: InvoiceLineItem[] = normalizedBreakdown
         .filter((item) => item.isPackageRow || item.sendToInvoice)
         .map((item) => {
