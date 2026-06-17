@@ -618,6 +618,7 @@ function FloatingDropdownMenu({
 
 function App() {
   const [screen, setScreen] = useState<Screen>('splash')
+  const [invoiceEditorReturnScreen, setInvoiceEditorReturnScreen] = useState<Screen>('booking-detail')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('vmloper.dev@gmail.com')
   const [password, setPassword] = useState('')
@@ -1259,6 +1260,9 @@ function App() {
     if (!selectedBooking) {
       setScreen('home')
       return
+    }
+    if (screen === 'booking-detail' || screen === 'document-folder') {
+      setInvoiceEditorReturnScreen(screen)
     }
     setInvoiceForm({
       paymentMethod: selectedBooking.paymentMethod || '',
@@ -2656,7 +2660,7 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => setScreen('booking-detail')}
+              onClick={() => setScreen('document-folder')}
               title="Back"
             >
               <X size={18} />
@@ -2818,7 +2822,7 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => setScreen('booking-detail')}
+              onClick={() => setScreen(invoiceEditorReturnScreen)}
               title="Back"
             >
               <X size={18} />
@@ -3072,7 +3076,7 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => setScreen('booking-detail')}
+              onClick={() => setScreen(invoiceEditorReturnScreen)}
               title="Back"
             >
               <X size={18} />
@@ -3422,7 +3426,7 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => setScreen('booking-detail')}
+              onClick={() => setScreen('document-folder')}
               title="Back"
             >
               <X size={18} />
@@ -3536,7 +3540,7 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => setScreen('booking-detail')}
+              onClick={() => setScreen('document-folder')}
               title="Back"
             >
               <X size={18} />
@@ -3751,7 +3755,7 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => setScreen('booking-detail')}
+              onClick={() => setScreen('document-folder')}
               title="Back"
             >
               <X size={18} />
