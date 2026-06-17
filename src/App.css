@@ -165,6 +165,100 @@
   color: #fff;
 }
 
+/* Dark mode: data-form sticky header */
+[data-theme="dark"] .data-form-header {
+  background: rgba(15, 31, 48, .97);
+}
+
+/* Dark mode: line-items-heading — navy becomes light in dark theme so override */
+[data-theme="dark"] .line-items-heading {
+  background: #0a1a28;
+  border-bottom-color: var(--teal);
+}
+
+/* Dark mode: the Add item / Add row button inside the dark heading */
+[data-theme="dark"] .line-items-heading button {
+  background: rgba(41,184,219,.15);
+  border-color: rgba(41,184,219,.4);
+  color: #fff;
+}
+[data-theme="dark"] .line-items-heading button:hover {
+  background: rgba(41,184,219,.28);
+  border-color: var(--teal);
+}
+
+/* Dark mode: form-actions-bar sticky footer */
+[data-theme="dark"] .form-actions-bar {
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+/* Dark mode: AI autofill box */
+[data-theme="dark"] .ai-autofill-box {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+[data-theme="dark"] .ai-autofill-box-heading {
+  color: var(--ink);
+}
+[data-theme="dark"] .ai-autofill-textarea {
+  background: var(--surface-3);
+  border-color: var(--border);
+  color: var(--ink);
+}
+
+/* Dark mode: pax modal */
+[data-theme="dark"] .pax-modal {
+  background: var(--surface);
+  border-color: var(--border);
+}
+[data-theme="dark"] .pax-modal-header {
+  background: var(--surface-2);
+  border-bottom-color: var(--border);
+  color: var(--ink);
+}
+
+/* Dark mode: voucher day builder */
+[data-theme="dark"] .voucher-day-row {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+[data-theme="dark"] .voucher-day-header {
+  background: var(--surface-3);
+  border-bottom-color: var(--border);
+  color: var(--ink);
+}
+
+/* Dark mode: breakdown tier config */
+[data-theme="dark"] .breakdown-tier-config {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+/* Dark mode: custom select dropdown */
+[data-theme="dark"] .custom-select-menu {
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--sh);
+}
+[data-theme="dark"] .custom-select-trigger {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--ink);
+}
+[data-theme="dark"] .custom-select-option-label {
+  color: var(--ink);
+}
+[data-theme="dark"] .custom-select-option-label:hover,
+[data-theme="dark"] .custom-select-option-label.active {
+  background: var(--teal-light);
+  color: var(--teal);
+}
+[data-theme="dark"] .custom-select-add {
+  color: var(--teal);
+  border-top-color: var(--border);
+}
+
 /* --- Reset --------------------------------------------------- */
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
