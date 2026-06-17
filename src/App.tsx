@@ -878,7 +878,7 @@ function App() {
       { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: '', nettCost: '', isPackageRow: true }
     ]
     const initialBreakdown: BreakdownLineItem[] = [
-      { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false, sendToPO: false, isPackageRow: true }
+      { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: true, sendToPO: false, isPackageRow: true }
     ]
     freshForm.invoiceLineItemsJson = JSON.stringify(initialInvoice)
     freshForm.breakdownLineItemsJson = JSON.stringify(initialBreakdown)
@@ -905,7 +905,7 @@ function App() {
     }
     if (!normalized.breakdownLineItemsJson) {
       const fallbackBrk: BreakdownLineItem[] = [
-        { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: normalized.unitPrice || normalized.sellingPrice, nettCost: normalized.nettCost || '0', sendToInvoice: false, sendToPO: false, isPackageRow: true }
+        { id: createLineItemId(), description: 'Group Package', quantity: '1', unitPrice: normalized.unitPrice || normalized.sellingPrice, nettCost: normalized.nettCost || '0', sendToInvoice: true, sendToPO: false, isPackageRow: true }
       ]
       normalized.breakdownLineItemsJson = JSON.stringify(fallbackBrk)
     }
@@ -988,7 +988,7 @@ function App() {
     return readBreakdownItems(bookingForm).map((item) => ({
       ...item,
       id: item.id || createLineItemId(),
-      ...(item.isPackageRow ? { quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : {}),
+      ...(item.isPackageRow ? { quantity: '1', unitPrice: String(invoiceTotal) } : {}),
     }))
   }
 
@@ -1007,7 +1007,7 @@ function App() {
         const brkItems = readBreakdownItems(updated)
         const invPackageRow = normalizedItems.find(i => i.isPackageRow)
         const nextBrk = brkItems.map((item) =>
-          item.isPackageRow ? { ...item, id: item.id || createLineItemId(), description: invPackageRow?.description || item.description || 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : { ...item, id: item.id || createLineItemId() },
+          item.isPackageRow ? { ...item, id: item.id || createLineItemId(), description: invPackageRow?.description || item.description || 'Group Package', quantity: '1', unitPrice: String(invoiceTotal) } : { ...item, id: item.id || createLineItemId() },
         )
         updated.breakdownLineItemsJson = JSON.stringify(nextBrk)
       } catch(e){}
@@ -1022,7 +1022,7 @@ function App() {
       const normalizedBreakdown = items.map((item) => ({
         ...item,
         id: item.id || createLineItemId(),
-        ...(item.isPackageRow ? { quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : {}),
+        ...(item.isPackageRow ? { quantity: '1', unitPrice: String(invoiceTotal) } : {}),
       }))
       // Sync the invoice package row description from the breakdown package row description
       const brkPackageRow = normalizedBreakdown.find(i => i.isPackageRow)
@@ -1033,7 +1033,7 @@ function App() {
           : item
         )
       const breakdownInvoiceItems: InvoiceLineItem[] = normalizedBreakdown
-        .filter((item) => item.sendToInvoice && !item.isPackageRow)
+        .filter((item) => item.isPackageRow || (item.sendToInvoice && !item.isPackageRow))
         .map((item) => {
           const paxTotal = sumPaxBreakdown(readPaxBreakdown(item.paxBreakdown))
           return {
@@ -1830,11 +1830,13 @@ function App() {
                       />
                       <button
                         type="button"
-                        className={`send-to-invoice-btn ${item.sendToInvoice ? 'active' : ''}`}
-                        onClick={() => changeBreakdownItemField(index, 'sendToInvoice', !item.sendToInvoice)}
+                        className={`send-to-invoice-btn ${item.isPackageRow ? 'active' : item.sendToInvoice ? 'active' : ''}`}
+                        onClick={() => !item.isPackageRow && changeBreakdownItemField(index, 'sendToInvoice', !item.sendToInvoice)}
+                        disabled={item.isPackageRow}
+                        title={item.isPackageRow ? 'Package name is always sent to invoice & quotation' : undefined}
                       >
-                        {item.sendToInvoice ? <Eye size={14} /> : <EyeOff size={14} />}
-                        <span>{item.sendToInvoice ? 'Showing' : 'Hidden'}</span>
+                        {(item.isPackageRow || item.sendToInvoice) ? <Eye size={14} /> : <EyeOff size={14} />}
+                        <span>{item.isPackageRow ? 'Always on' : item.sendToInvoice ? 'Showing' : 'Hidden'}</span>
                       </button>
                       <button
                         type="button"
