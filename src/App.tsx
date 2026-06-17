@@ -425,7 +425,7 @@ function mapInvoiceItemsToBookingLines(items: InvoiceLineItem[], packageName = '
     const u = parseAmount(it.unitPrice)
     const n = it.isPackageRow ? 0 : parseAmount(it.nettCost)
     return {
-      description: it.isPackageRow ? packageName || 'Basic Package' : it.description,
+      description: it.description || (it.isPackageRow ? packageName || 'Basic Package' : 'Item'),
       quantity: q,
       unitPrice: u,
       nettCost: n,
@@ -442,7 +442,7 @@ function mapBreakdownItemsToBookingLines(items: BreakdownLineItem[], packageName
     const u = parseAmount(it.unitPrice)
     const n = parseAmount(it.nettCost)
     return {
-      description: it.isPackageRow ? packageName || 'Basic Package' : it.description,
+      description: it.description || (it.isPackageRow ? packageName || 'Basic Package' : 'Item'),
       quantity: q,
       unitPrice: u,
       nettCost: n,
@@ -464,7 +464,7 @@ function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
 
   return [
     {
-      description: booking.packageName || 'Basic Package',
+      description: readBreakdownItems(booking).find(i => i.isPackageRow)?.description || booking.packageName || 'Basic Package',
       quantity,
       unitPrice,
       nettCost: 0,
@@ -899,7 +899,7 @@ function App() {
     // Fallback parsing if JSON objects don't exist yet
     if (!normalized.invoiceLineItemsJson) {
       const fallbackInv: InvoiceLineItem[] = [
-        { id: createLineItemId(), description: normalized.packageName, quantity: normalized.quantity || '1', unitPrice: normalized.unitPrice || normalized.sellingPrice, nettCost: '0', isPackageRow: true }
+        { id: createLineItemId(), description: normalized.packageName || 'Group Package', quantity: normalized.quantity || '1', unitPrice: normalized.unitPrice || normalized.sellingPrice, nettCost: '0', isPackageRow: true }
       ]
       normalized.invoiceLineItemsJson = JSON.stringify(fallbackInv)
     }
@@ -929,9 +929,9 @@ function App() {
           const invItems: InvoiceLineItem[] = readInvoiceItems(updated)
           const brkItems: BreakdownLineItem[] = readBreakdownItems(updated)
           
-          const nextInv = invItems.map(item => item.isPackageRow ? { ...item, description: updated.packageName, quantity: updated.quantity || '1', unitPrice: updated.unitPrice } : item)
+          const nextInv = invItems.map(item => item.isPackageRow ? { ...item, quantity: updated.quantity || '1', unitPrice: updated.unitPrice } : item)
           const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(nextInv, updated.packageName), 'total')
-          const nextBrk = brkItems.map(item => item.isPackageRow ? { ...item, description: 'Group Package', quantity: '1', unitPrice: String(invoiceTotal) } : item)
+          const nextBrk = brkItems.map(item => item.isPackageRow ? { ...item, quantity: '1', unitPrice: String(invoiceTotal) } : item)
           
           updated.invoiceLineItemsJson = JSON.stringify(nextInv)
           updated.breakdownLineItemsJson = JSON.stringify(nextBrk)
@@ -979,7 +979,7 @@ function App() {
     return readInvoiceItems(bookingForm).map((item) => ({
       ...item,
       id: item.id || createLineItemId(),
-      description: item.isPackageRow ? bookingForm.packageName : item.description,
+      description: item.description,
     }))
   }
 
@@ -988,7 +988,7 @@ function App() {
     return readBreakdownItems(bookingForm).map((item) => ({
       ...item,
       id: item.id || createLineItemId(),
-      ...(item.isPackageRow ? { description: 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : {}),
+      ...(item.isPackageRow ? { quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : {}),
     }))
   }
 
@@ -1021,7 +1021,7 @@ function App() {
       const normalizedBreakdown = items.map((item) => ({
         ...item,
         id: item.id || createLineItemId(),
-        ...(item.isPackageRow ? { description: 'Group Package', quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : {}),
+        ...(item.isPackageRow ? { quantity: '1', unitPrice: String(invoiceTotal), sendToInvoice: false } : {}),
       }))
       const manualInvoiceItems = invoiceItems.filter((item) => item.source !== 'breakdown')
       const breakdownInvoiceItems: InvoiceLineItem[] = normalizedBreakdown
@@ -1114,7 +1114,7 @@ function App() {
 
   function validateBookingForm() {
     if (!bookingForm.clientName.trim()) return 'Enter the client name before saving.'
-    if (!bookingForm.packageName.trim()) return 'Enter the package or project name before saving.'
+    // packageName is optional — section 05 package row drives document labels
     return ''
   }
 
@@ -1667,12 +1667,10 @@ function App() {
               </div>
               <div className="line-items-table">
                 <div className="line-items-row header">
-                  <span>Package name</span>
                   <span>Qty</span>
                   <span>Client price (PHP)</span>
                 </div>
                 <div className="line-items-row">
-                  <input disabled value={bookingForm.packageName || '(Set package name in section 02)'} className="disabled-field" />
                   <input
                     type="number" min="1"
                     value={bookingForm.quantity || '1'}
@@ -1748,7 +1746,12 @@ function App() {
                         placeholder="GCash, Bank Transfer…"
                       />
                       {item.isPackageRow ? (
-                        <input disabled className="disabled-field" value={`Auto: ${bookingForm.packageName || 'Basic Package'}`} />
+                        <input
+                          type="text"
+                          value={item.description}
+                          onChange={(e) => changeBreakdownItemField(index, 'description', e.target.value)}
+                          placeholder="e.g. 3D2N Boracay Package"
+                        />
                       ) : customBreakdownRowIndex === index ? (
                         <input
                           autoFocus
@@ -2138,7 +2141,7 @@ function App() {
         {/* PAX MODAL */}
         {paxModalIndex >= 0 && (() => {
           const item = currentBreakdownItems[paxModalIndex]
-          const label = item?.isPackageRow ? (bookingForm.packageName || 'Package') : item?.description
+          const label = item?.description || (item?.isPackageRow ? 'Package' : '')
           return (
             <div className="pax-modal-overlay" onClick={() => setPaxModalIndex(-1)}>
               <div className="pax-modal" onClick={(e) => e.stopPropagation()}>
@@ -3128,7 +3131,7 @@ function App() {
 
     const renderPODocument = (item: BreakdownLineItem, itemIndex: number, isLast: boolean) => {
       const paxLabel = formatPaxBreakdownLabel(readPaxBreakdown(item.paxBreakdown)) || item.quantity || '1'
-      const itemDescription = item.isPackageRow ? (selectedBooking.packageName || 'Basic Package') : item.description
+      const itemDescription = item.description || (item.isPackageRow ? selectedBooking.packageName || 'Basic Package' : 'Item')
       const poUnitPrice = parseAmount(item.nettCost) || parseAmount(item.unitPrice)
       const poAmount = poUnitPrice * parseQuantity(item.quantity)
 
