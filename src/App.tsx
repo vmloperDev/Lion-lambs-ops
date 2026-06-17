@@ -652,6 +652,39 @@ function App() {
   const [chatUploadProgress, setChatUploadProgress] = useState(0)
   const chatFileInputRef = useRef<HTMLInputElement>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
+  const chatPanelRef = useRef<HTMLDivElement>(null)
+  const chatDragState = useRef<{ dragging: boolean; startX: number; startY: number; origRight: number; origBottom: number }>({
+    dragging: false, startX: 0, startY: 0, origRight: 24, origBottom: 24,
+  })
+  const [chatPos, setChatPos] = useState<{ right: number; bottom: number }>({ right: 24, bottom: 24 })
+
+  function onChatHeaderMouseDown(e: React.MouseEvent) {
+    if ((e.target as HTMLElement).closest('button')) return
+    e.preventDefault()
+    const state = chatDragState.current
+    state.dragging = true
+    state.startX = e.clientX
+    state.startY = e.clientY
+    state.origRight = chatPos.right
+    state.origBottom = chatPos.bottom
+
+    function onMouseMove(ev: MouseEvent) {
+      if (!state.dragging) return
+      const dx = ev.clientX - state.startX
+      const dy = ev.clientY - state.startY
+      setChatPos({
+        right: Math.max(8, state.origRight - dx),
+        bottom: Math.max(8, state.origBottom - dy),
+      })
+    }
+    function onMouseUp() {
+      state.dragging = false
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
   const [invoiceEditorReturnScreen, setInvoiceEditorReturnScreen] = useState<Screen>('booking-detail')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('vmloper.dev@gmail.com')
@@ -773,7 +806,10 @@ function App() {
         setDataError('')
       },
       () => {
-        setDataError('Could not load cloud bookings. Check Firestore setup and rules.')
+        // Delay the error so transient permission checks don't flash a false alarm
+        setTimeout(() => {
+          setDataError('Could not load cloud bookings. Check Firestore setup and rules.')
+        }, 5000)
       },
     )
   }, [authUser])
@@ -4368,8 +4404,8 @@ function App() {
 
       {/* CHAT PANEL */}
       {isChatOpen && (
-        <div className="chat-panel">
-          <div className="chat-panel-header">
+        <div className="chat-panel" ref={chatPanelRef} style={{ right: chatPos.right, bottom: chatPos.bottom }}>
+          <div className="chat-panel-header" onMouseDown={onChatHeaderMouseDown} style={{ cursor: 'grab' }}>
             <MessageSquare size={16} />
             <strong>Team Chat</strong>
             <div className="chat-header-nexus-badge">

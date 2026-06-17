@@ -2126,7 +2126,7 @@ input, select, textarea { font: inherit; }
 }
 .chat-active { background: var(--teal-light) !important; border-color: var(--teal) !important; color: var(--teal-dark) !important; }
 .chat-panel {
-  position: fixed; bottom: 24px; right: 24px; z-index: 200;
+  position: fixed; z-index: 200;
   width: 320px; height: 480px;
   display: flex; flex-direction: column;
   background: var(--surface);
