@@ -628,6 +628,9 @@ function App() {
   const [isPdfExporting, setIsPdfExporting] = useState(false)
   const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
+  // Holds the exact booking object built at save-time so templates always
+  // reflect the latest saved data regardless of Firestore snapshot timing.
+  const lastSavedBookingRef = useRef<BookingRecord | null>(null)
   const [invoiceForm, setInvoiceForm] = useState({
     paymentMethod: '',
     paymentRecords: '',
@@ -705,12 +708,17 @@ function App() {
     return onSnapshot(
       bookingsQuery,
       (snapshot) => {
-        const firestoreBookings = snapshot.docs.map((bookingDoc) =>
-          normalizeBooking({
+        const firestoreBookings = snapshot.docs.map((bookingDoc) => {
+          const normalized = normalizeBooking({
             ...(bookingDoc.data() as BookingRecord),
             id: bookingDoc.id,
-          }),
-        )
+          })
+          // If this doc was just saved locally, prefer the local version so
+          // the template screens always reflect the user's latest changes
+          // even if the Firestore snapshot arrives slightly behind.
+          const saved = lastSavedBookingRef.current
+          return (saved && saved.id === normalized.id) ? saved : normalized
+        })
         setBookings(firestoreBookings)
         setDataError('')
       },
@@ -880,7 +888,7 @@ function App() {
   }
 
   function handleEditBooking() {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
     if (!selectedBooking) {
       setScreen('home')
       return
@@ -1133,6 +1141,10 @@ function App() {
       createdAt: bookings.find((currentBooking) => currentBooking.id === editingBookingId)?.createdAt || new Date().toISOString(),
     }
 
+    // Pin the exact saved booking so templates read fresh data immediately,
+    // before the Firestore onSnapshot has a chance to overwrite bookings state.
+    lastSavedBookingRef.current = booking
+
     setBookings((currentBookings) =>
       isEditing
         ? currentBookings.map((currentBooking) => currentBooking.id === booking.id ? booking : currentBooking)
@@ -1190,7 +1202,7 @@ function App() {
   function openQuotationPreview() { setScreen('quotation-preview') }
   
   function openInvoiceEditor() {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
     if (!selectedBooking) {
       setScreen('home')
       return
@@ -1262,7 +1274,7 @@ function App() {
   }
 
   async function handleDeleteBooking() {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
     if (!selectedBooking) { setScreen('home'); return }
 
     const confirmed = window.confirm(`Delete ${selectedBooking.packageName || 'this project'}? This cannot be undone.`)
@@ -2158,7 +2170,7 @@ function App() {
   }
 
   if (screen === 'booking-detail') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
@@ -2340,7 +2352,7 @@ function App() {
   }
 
   if (screen === 'document-folder') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
@@ -2496,7 +2508,7 @@ function App() {
   }
 
   if (screen === 'quotation-preview') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
@@ -2672,7 +2684,7 @@ function App() {
   }
 
   if (screen === 'invoice-editor') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
@@ -2859,7 +2871,7 @@ function App() {
   }
 
   if (screen === 'invoice-preview') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
@@ -3089,7 +3101,7 @@ function App() {
   }
 
   if (screen === 'purchase-order-preview') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
@@ -3298,7 +3310,7 @@ function App() {
   }
 
   if (screen === 'voucher-preview') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
@@ -3512,7 +3524,7 @@ function App() {
   }
 
   if (screen === 'breakdown-preview') {
-    const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId)
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
     if (!selectedBooking) {
       return (
