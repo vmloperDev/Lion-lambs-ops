@@ -643,6 +643,7 @@ function App() {
     seenBy?: string[]
     isNexus?: boolean
     isNexusThinking?: boolean
+    unsent?: boolean
   }>>([])
   const [chatInput, setChatInput] = useState('')
   const [unreadCount, setUnreadCount] = useState(0)
