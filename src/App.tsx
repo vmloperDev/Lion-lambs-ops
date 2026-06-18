@@ -489,7 +489,7 @@ function mapBreakdownItemsToBookingLines(items: BreakdownLineItem[], packageName
   return items.map((it) => {
     const q = parseQuantity(it.quantity)
     const u = parseAmount(it.unitPrice)
-    const n = parseAmount(it.nettCost)
+    const n = it.isPackageRow ? 0 : parseAmount(it.nettCost)
     return {
       description: it.description || (it.isPackageRow ? packageName || 'Basic Package' : 'Item'),
       quantity: q,
@@ -2546,9 +2546,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                       />
                       <input
                         type="text"
-                        value={item.nettCost}
+                        className={item.isPackageRow ? 'disabled-field' : undefined}
+                        value={item.isPackageRow ? '' : item.nettCost}
                         onChange={(e) => changeBreakdownItemField(index, 'nettCost', e.target.value)}
-                        placeholder="0.00"
+                        placeholder={item.isPackageRow ? 'N/A' : '0.00'}
+                        disabled={item.isPackageRow}
+                        title={item.isPackageRow ? 'Package row has no supplier nett — it\'s the client-facing package price, always sent to the invoice' : undefined}
                       />
                       <button
                         type="button"
@@ -4661,16 +4664,100 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               />
             </div>
 
-            <div className="dtr-print-header print-only">
-              <img src={logo} alt="" />
-              <div>
-                <h2>Lion and Lamb Travel</h2>
-                <p>Daily Time Record</p>
+            {/* ── PRINT-ONLY: Full government-style DTR template ── */}
+            <div className="dtr-print-doc print-only">
+              <div className="dtr-print-doc-header">
+                <img src={logo} alt="Lion and Lamb Travel" className="dtr-print-doc-logo" />
+                <div className="dtr-print-doc-title">
+                  <h1>Lion and Lamb Travel &amp; Tours</h1>
+                  <p className="dtr-print-doc-subtitle">DAILY TIME RECORD</p>
+                </div>
+                <div className="dtr-print-doc-form-no">
+                  <span>Form No.</span>
+                  <strong>DTR-001</strong>
+                </div>
               </div>
-            </div>
-            <div className="dtr-print-meta print-only">
-              <span><strong>Employee:</strong> {dtrNameFilter === 'All' ? 'All team members' : dtrNameFilter}</span>
-              <span><strong>Period:</strong> {new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
+
+              <div className="dtr-print-doc-meta-row">
+                <div className="dtr-print-doc-meta-field">
+                  <span className="dtr-print-doc-meta-label">Employee Name</span>
+                  <strong className="dtr-print-doc-meta-value">
+                    {dtrNameFilter === 'All' ? 'All Team Members' : dtrNameFilter}
+                  </strong>
+                </div>
+                <div className="dtr-print-doc-meta-field">
+                  <span className="dtr-print-doc-meta-label">Period Covered</span>
+                  <strong className="dtr-print-doc-meta-value">
+                    {new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                  </strong>
+                </div>
+                <div className="dtr-print-doc-meta-field">
+                  <span className="dtr-print-doc-meta-label">Position / Dept.</span>
+                  <strong className="dtr-print-doc-meta-value dtr-print-blank-line">&nbsp;</strong>
+                </div>
+              </div>
+
+              <table className="dtr-print-table">
+                <thead>
+                  <tr>
+                    <th rowSpan={2} className="dtr-print-th-date">Day</th>
+                    <th rowSpan={2} className="dtr-print-th-day">Weekday</th>
+                    <th colSpan={2} className="dtr-print-th-group">A.M.</th>
+                    <th colSpan={2} className="dtr-print-th-group">P.M.</th>
+                    <th rowSpan={2} className="dtr-print-th-total">Total Hours</th>
+                    <th rowSpan={2} className="dtr-print-th-notes">Remarks</th>
+                  </tr>
+                  <tr>
+                    <th className="dtr-print-th-sub">Time In</th>
+                    <th className="dtr-print-th-sub">Time Out</th>
+                    <th className="dtr-print-th-sub">Time In</th>
+                    <th className="dtr-print-th-sub">Time Out</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleEntries.length === 0 ? (
+                    Array.from({ length: 12 }, (_, i) => (
+                      <tr key={i} className="dtr-print-tr-empty">
+                        <td className="dtr-print-td-date">&nbsp;</td>
+                        <td className="dtr-print-td-day">&nbsp;</td>
+                        <td /><td /><td /><td />
+                        <td /><td />
+                      </tr>
+                    ))
+                  ) : (
+                    visibleEntries.map((entry) => {
+                      const d = new Date(`${entry.date}T00:00:00`)
+                      const minutes = getDtrEntryMinutes(entry)
+                      return (
+                        <tr key={entry.id} className="dtr-print-tr">
+                          <td className="dtr-print-td-date">{d.getDate()}</td>
+                          <td className="dtr-print-td-day">{d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase()}</td>
+                          <td className="dtr-print-td-time">{formatTimeForDisplay(entry.amIn)}</td>
+                          <td className="dtr-print-td-time">{formatTimeForDisplay(entry.amOut)}</td>
+                          <td className="dtr-print-td-time">{formatTimeForDisplay(entry.pmIn)}</td>
+                          <td className="dtr-print-td-time">{formatTimeForDisplay(entry.pmOut)}</td>
+                          <td className="dtr-print-td-total">{minutes > 0 ? formatMinutesAsHm(minutes) : ''}</td>
+                          <td className="dtr-print-td-notes">{entry.notes || ''}</td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+                <tfoot>
+                  <tr className="dtr-print-tfoot-summary">
+                    <td colSpan={6} className="dtr-print-tfoot-label">
+                      <span>Days Logged: <strong>{daysLoggedVisible}</strong></span>
+                      <span>Avg / Day: <strong>{daysLoggedVisible > 0 ? formatMinutesAsHm(Math.round(totalMinutesVisible / daysLoggedVisible)) : '—'}</strong></span>
+                    </td>
+                    <td className="dtr-print-tfoot-total">{formatMinutesAsHm(totalMinutesVisible)}</td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+
+              <div className="dtr-print-doc-certification">
+                <p>I hereby certify, on my honor, that the above is a true and correct record of the hours of work performed, record of which was made daily at the time of arrival at and departure from the office.</p>
+              </div>
             </div>
 
             <div className="dtr-summary-strip">
@@ -4736,9 +4823,22 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               )}
             </div>
 
-            <div className="dtr-print-signoff print-only">
-              <div><span /><p>Employee signature</p></div>
-              <div><span /><p>Supervisor signature</p></div>
+            <div className="dtr-print-doc-signoff print-only">
+              <div className="dtr-print-signoff-block">
+                <div className="dtr-print-sig-line" />
+                <p className="dtr-print-sig-name">&nbsp;</p>
+                <p className="dtr-print-sig-label">Employee Signature &amp; Date</p>
+              </div>
+              <div className="dtr-print-signoff-block">
+                <div className="dtr-print-sig-line" />
+                <p className="dtr-print-sig-name">&nbsp;</p>
+                <p className="dtr-print-sig-label">Supervisor / Manager</p>
+              </div>
+              <div className="dtr-print-signoff-block">
+                <div className="dtr-print-sig-line" />
+                <p className="dtr-print-sig-name">&nbsp;</p>
+                <p className="dtr-print-sig-label">Verified By &amp; Date</p>
+              </div>
             </div>
           </section>
         </div>
