@@ -732,7 +732,7 @@ function App() {
   }, [isDark])
 
   const [isPdfExporting, setIsPdfExporting] = useState(false)
-  const [bookings, setBookings] = useState<BookingRecord[]>(() => getStoredBookings())
+  const [bookings, setBookings] = useState<BookingRecord[]>([])
   const pendingDeleteIds = useRef<Set<string>>(new Set())
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
   // Holds the exact booking object built at save-time so templates always
@@ -794,15 +794,12 @@ function App() {
     return onAuthStateChanged(auth, (user: FirebaseUser | null) => {
       setAuthUser(user)
       if (user?.emailVerified) {
-        setBookings(getStoredBookings(bookingStorageKey, false))
+        // Firestore onSnapshot will populate bookings — clear stale localStorage
+        window.localStorage.removeItem(bookingStorageKey)
       }
       setIsAuthLoading(false)
     })
   }, [])
-
-  useEffect(() => {
-    window.localStorage.setItem(bookingStorageKey, JSON.stringify(bookings))
-  }, [authUser?.uid, bookings])
 
   useEffect(() => {
     if (!authUser?.emailVerified) {
