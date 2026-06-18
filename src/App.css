@@ -2287,6 +2287,22 @@ input, select, textarea { font: inherit; }
   30% { transform: translateY(-6px); opacity: 1; }
 }
 
+.chat-sender-me-dev {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 0.62rem; font-weight: 700;
+  color: var(--teal-dark, #0d766b);
+  margin-bottom: 2px;
+  justify-content: flex-end;
+}
+.chat-dev-tag {
+  display: inline-flex; align-items: center;
+  padding: 1px 5px; border-radius: 4px;
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
+  color: #fff; font-size: 0.55rem; font-weight: 900;
+  letter-spacing: .06em; line-height: 1.4;
+  vertical-align: middle;
+}
+
 /* Unsent message */
 .chat-unsent {
   opacity: 0.5;

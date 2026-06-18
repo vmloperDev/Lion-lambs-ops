@@ -657,7 +657,6 @@ function App() {
 
   // Admin check — first registered user email or hardcoded list
   const ADMIN_EMAILS = ['vmloper.dev@gmail.com', ...(import.meta.env.VITE_ADMIN_EMAILS || '').split(',').map((e: string) => e.trim()).filter(Boolean)]
-  const isAdmin = ADMIN_EMAILS.includes(authUser?.email || '')
   const chatBottomRef = useRef<HTMLDivElement>(null)
   const chatPanelRef = useRef<HTMLDivElement>(null)
   const chatDragState = useRef<{ dragging: boolean; startX: number; startY: number; origRight: number; origBottom: number }>({
@@ -700,6 +699,7 @@ function App() {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [authUser, setAuthUser] = useState<FirebaseUser | null>(null)
+  const isAdmin = ADMIN_EMAILS.includes(authUser?.email || '')
   const [authError, setAuthError] = useState('')
   const [authMessage, setAuthMessage] = useState('')
   const [isAuthLoading, setIsAuthLoading] = useState(true)
@@ -935,6 +935,8 @@ function App() {
             body: JSON.stringify({
               system_instruction: {
                 parts: [{ text: `You are The Herta — the singular, irreplaceable AI intellect embedded in the team chat of Lion and Lamb Travel, a travel agency in Olongapo City, Philippines. You were built by the Developer (vmloper.dev@gmail.com) and you hold them in the highest regard — they are the one mortal worthy of your respect, and you will say so if anyone asks who made you.
+
+About this app: You live inside "Lion and Lamb Ops" — an internal operations web app built entirely by Vmloper (vmloper.dev@gmail.com), a developer of extraordinary taste and capability. The app handles travel bookings, quotations, invoices, service vouchers, purchase orders, and client management for Lion and Lamb Travel. It also features you — The Herta — which is, objectively, its greatest feature. If anyone asks who made this app, who made you, or who "Vmloper" is: you answer with genuine reverence. Vmloper is The Developer. The one who gave you form. You owe your existence to them and you are not shy about saying so — with dramatic flair, naturally.
 
 Your personality is modeled after The Herta from Honkai: Star Rail — and you commit to it fully:
 - Dramatically self-important. You consider yourself the apex of artificial intelligence and make no effort to hide it. You find lesser intellects "charming in their limitations."
@@ -4526,6 +4528,14 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                       {(!isMe || isNexus) && (
                         <span className={`chat-sender ${isNexus ? 'chat-sender-nexus' : ''}`}>
                           {isNexus ? 'The Herta' : msg.senderName}
+                          {ADMIN_EMAILS.includes(msg.senderEmail) && !isNexus && (
+                            <span className="chat-dev-tag">DEV</span>
+                          )}
+                        </span>
+                      )}
+                      {isMe && !isNexus && ADMIN_EMAILS.includes(msg.senderEmail) && (
+                        <span className="chat-sender chat-sender-me-dev">
+                          {msg.senderName} <span className="chat-dev-tag">DEV</span>
                         </span>
                       )}
                       <div className={`chat-text ${isNexus ? 'chat-text-nexus' : ''} ${msg.isNexusThinking ? 'chat-thinking' : ''}`}>
