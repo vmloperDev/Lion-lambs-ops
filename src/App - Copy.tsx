@@ -622,20 +622,6 @@ function formatDtrDateLong(value: string): string {
   return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-// Splits "now" into a 12-hour clock face — never 24-hour, always with AM/PM.
-// Pure display helper: it does not read or write any DTR record.
-function formatLiveClockParts(now: Date): { time: string; period: 'AM' | 'PM' } {
-  const hours24 = now.getHours()
-  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12
-  const minutes = String(now.getMinutes()).padStart(2, '0')
-  const seconds = String(now.getSeconds()).padStart(2, '0')
-  return { time: `${hours12}:${minutes}:${seconds}`, period: hours24 >= 12 ? 'PM' : 'AM' }
-}
-
-function formatLiveDateShort(now: Date): string {
-  return now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-}
-
 const dtrCollectionKey = 'dtr_entries'
 
 // Renders a custom-select's option menu into document.body via a portal, positioned
@@ -757,13 +743,6 @@ function App() {
   const [replyingTo, setReplyingTo] = useState<{ id: string; text: string; senderName: string } | null>(null)
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null)
   const [showWipeConfirm, setShowWipeConfirm] = useState(false)
-
-  // ----- Live clock (header + nav) — pure display, never auto clocks anyone in/out -----
-  const [liveClock, setLiveClock] = useState(() => new Date())
-  useEffect(() => {
-    const tick = window.setInterval(() => setLiveClock(new Date()), 1000)
-    return () => window.clearInterval(tick)
-  }, [])
 
   // ----- DTR (Daily Time Record) state -----
   const [dtrEntries, setDtrEntries] = useState<DtrEntry[]>([])
@@ -4477,17 +4456,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       const todays = dtrEntries.find((e) => e.employeeName.toLowerCase() === name && e.date === getTodayDateStr())
       return todays ? getDtrEntryMinutes(todays) : null
     })()
-    const quickClockStatus = (() => {
-      const name = dtrForm.employeeName.trim()
-      if (!name) return { nextField: 'amIn' as keyof DtrEntry | null, label: 'Tap to clock in / out', isDone: false, isActive: false }
-      const todays = dtrEntries.find((e) => e.employeeName.toLowerCase() === name.toLowerCase() && e.date === getTodayDateStr())
-      const nextField: keyof DtrEntry | null = !todays
-        ? 'amIn'
-        : !todays.amIn ? 'amIn' : !todays.amOut ? 'amOut' : !todays.pmIn ? 'pmIn' : !todays.pmOut ? 'pmOut' : null
-      const labels: Record<string, string> = { amIn: 'Clock in', amOut: 'Clock out (AM)', pmIn: 'Clock in (PM)', pmOut: 'Clock out' }
-      const isActive = Boolean(todays && ((todays.amIn && !todays.amOut) || (todays.pmIn && !todays.pmOut)))
-      return { nextField, label: nextField ? labels[nextField] : 'Day complete', isDone: !nextField, isActive }
-    })()
     const shiftTargetMinutes = 8 * 60
     const ringProgress = todayMinutesForQuickName === null ? 0 : Math.min(1, todayMinutesForQuickName / shiftTargetMinutes)
     const ringCircumference = 2 * Math.PI * 42
@@ -4501,16 +4469,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           <div className="dtr-header-title">
             <p>Operations desk</p>
             <h1>Daily Time Record</h1>
-          </div>
-          <div className="dtr-live-clock no-print" title="Current time — display only, doesn't clock anyone in or out">
-            <span className="dtr-live-clock-dot" />
-            <div className="dtr-live-clock-text">
-              <strong>
-                {formatLiveClockParts(liveClock).time}
-                <span className="dtr-live-clock-period">{formatLiveClockParts(liveClock).period}</span>
-              </strong>
-              <span className="dtr-live-clock-date">{formatLiveDateShort(liveClock)}</span>
-            </div>
           </div>
           <button type="button" className="dtr-print-btn" onClick={() => window.print()}>
             <Printer size={16} />
@@ -4530,7 +4488,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   <circle cx="48" cy="48" r="42" className="dtr-ring-track" />
                   <circle
                     cx="48" cy="48" r="42"
-                    className={`dtr-ring-progress ${quickClockStatus.isDone ? 'dtr-ring-progress-done' : ''}`}
+                    className="dtr-ring-progress"
                     strokeDasharray={`${ringCircumference}`}
                     strokeDashoffset={`${ringCircumference * (1 - ringProgress)}`}
                   />
@@ -4541,10 +4499,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 </div>
               </div>
               <div className="dtr-quickclock-actions">
-                <p className="dtr-quickclock-label">
-                  Quick clock
-                  {quickClockStatus.isActive && <span className="dtr-quickclock-live">● on the clock</span>}
-                </p>
+                <p className="dtr-quickclock-label">Quick clock</p>
                 <input
                   type="text"
                   placeholder="Type your name"
@@ -4557,12 +4512,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 </datalist>
                 <button
                   type="button"
-                  className={`dtr-clock-btn ${quickClockStatus.isDone && dtrForm.employeeName.trim() ? 'dtr-clock-btn-done' : ''}`}
+                  className="dtr-clock-btn"
                   onClick={() => handleQuickClock(dtrForm.employeeName)}
                   disabled={!dtrForm.employeeName.trim()}
                 >
-                  {quickClockStatus.isDone && dtrForm.employeeName.trim() ? <CheckCircle2 size={16} /> : <Clock3 size={16} />}
-                  {dtrForm.employeeName.trim() ? quickClockStatus.label : 'Tap to clock in / out'}
+                  <Clock3 size={16} />
+                  Tap to clock in / out
                 </button>
               </div>
             </div>
@@ -4805,15 +4760,11 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </button>
           <button
             type="button"
-            className="nav-text-action nav-clock-btn"
+            className="dtr-nav-btn"
             onClick={() => setScreen('dtr')}
-            title="Open Daily Time Record"
+            title="Daily Time Record"
           >
-            <Clock3 size={15} className="nav-clock-icon" />
-            <span className="nav-clock-time">
-              {formatLiveClockParts(liveClock).time.slice(0, -3)}
-              <span className="nav-clock-period">{formatLiveClockParts(liveClock).period}</span>
-            </span>
+            <Clock3 size={18} />
           </button>
           <button type="button" onClick={handleLogout} title="Log out">
             <LogOut size={18} />
