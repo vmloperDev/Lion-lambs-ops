@@ -180,6 +180,7 @@ type BookingFormData = {
 type BookingRecord = BookingFormData & {
   id: string
   createdAt: string
+  ownerId?: string // uid of the account whose subcollection this booking actually lives in
 }
 
 type BookingLineItem = {
@@ -523,6 +524,15 @@ function getUserBookingsCollectionPath(userId: string) {
   return `users/${userId}/bookings`
 }
 
+// Bookings can belong to a different teammate's subcollection (everyone shares
+// one database via collectionGroup). Always update/delete at the path the
+// document actually lives at — its saved ownerId — not the current user's path,
+// or the write/delete silently no-ops (or worse, creates a brand-new sparse
+// duplicate at the wrong path) and the original is never actually touched.
+function getBookingOwnerPath(booking: BookingRecord | undefined | null, fallbackUserId: string) {
+  return getUserBookingsCollectionPath(booking?.ownerId || fallbackUserId)
+}
+
 function formatProjectDate(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) {
@@ -804,9 +814,15 @@ function App() {
       bookingsQuery,
       (snapshot) => {
         const firestoreBookings = snapshot.docs.map((bookingDoc) => {
+          const data = bookingDoc.data() as BookingRecord
+          // Older bookings were saved before ownerId existed — derive it from
+          // the actual Firestore path (users/{uid}/bookings/{id}) so delete and
+          // update routing still resolves correctly for pre-existing records.
+          const derivedOwnerId = data.ownerId || bookingDoc.ref.parent.parent?.id
           const normalized = normalizeBooking({
-            ...(bookingDoc.data() as BookingRecord),
+            ...data,
             id: bookingDoc.id,
+            ownerId: derivedOwnerId,
           })
           const saved = lastSavedBookingRef.current
           return (saved && saved.id === normalized.id) ? saved : normalized
@@ -1470,13 +1486,18 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const baseInvRow = finalInvoiceList.find(i => i.isPackageRow)
     const calculatedUnitPrice = baseInvRow ? parseAmount(baseInvRow.unitPrice) : parseAmount(bookingForm.unitPrice)
     
+    const existingBooking = isEditing
+      ? ((lastSavedBookingRef.current?.id === editingBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((currentBooking) => currentBooking.id === editingBookingId))
+      : null
+
     const booking: BookingRecord = {
       ...bookingForm,
       unitPrice: String(calculatedUnitPrice),
       sellingPrice: String(getBookingClientTotal(bookingForm)),
       id: editingBookingId || `BK-${Date.now()}`,
-      createdAt: bookings.find((currentBooking) => currentBooking.id === editingBookingId)?.createdAt || new Date().toISOString(),
+      createdAt: existingBooking?.createdAt || new Date().toISOString(),
       createdByName: bookingForm.createdByName || authUser?.displayName || '',
+      ownerId: existingBooking?.ownerId || authUser?.uid,
     }
 
     // Pin the exact saved booking so templates read fresh data immediately,
@@ -1491,12 +1512,11 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
     try {
       if (!authUser) throw new Error('Missing signed-in user')
-      await setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), booking.id), {
+      await setDoc(doc(db, getBookingOwnerPath(booking, authUser.uid), booking.id), {
         ...booking,
-        ownerId: authUser.uid,
-        createdBy: authUser.uid,
-        createdByEmail: authUser.email || '',
-        createdByName: authUser.displayName || booking.createdByName || '',
+        createdBy: existingBooking ? (existingBooking as any).createdBy || authUser.uid : authUser.uid,
+        createdByEmail: existingBooking ? (existingBooking as any).createdByEmail || authUser.email || '' : authUser.email || '',
+        createdByName: existingBooking?.createdByName || authUser.displayName || booking.createdByName || '',
         updatedAt: new Date().toISOString(),
       }, { merge: true })
       
@@ -1520,6 +1540,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
   }
 
   function updateSelectedBookingStatus(status: BookingStatus) {
+    const targetBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
+
     setBookings((currentBookings) =>
       currentBookings.map((booking) => booking.id === selectedBookingId ? { ...booking, status } : booking)
     )
@@ -1529,7 +1551,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         setDataError('Log in again before updating cloud records.')
         return
       }
-      void setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId), {
+      void setDoc(doc(db, getBookingOwnerPath(targetBooking, authUser.uid), selectedBookingId), {
         status,
         updatedAt: new Date().toISOString(),
       }, { merge: true }).catch(() => {
@@ -1658,15 +1680,20 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
   async function handleSaveInvoiceUpdate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const targetBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
+
     setBookings((currentBookings) =>
       currentBookings.map((booking) =>
         booking.id === selectedBookingId ? { ...booking, ...invoiceForm, status: 'Invoice' } : booking
       )
     )
+    if (lastSavedBookingRef.current?.id === selectedBookingId) {
+      lastSavedBookingRef.current = { ...lastSavedBookingRef.current, ...invoiceForm, status: 'Invoice' }
+    }
 
     try {
       if (!authUser) throw new Error('Missing signed-in user')
-      await setDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId), {
+      await setDoc(doc(db, getBookingOwnerPath(targetBooking, authUser.uid), selectedBookingId), {
         ...invoiceForm,
         status: 'Invoice',
         updatedAt: new Date().toISOString(),
@@ -1691,7 +1718,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     setBookings((currentBookings) => currentBookings.filter((booking) => booking.id !== selectedBookingId))
     try {
       if (!authUser) throw new Error('Missing signed-in user')
-      await deleteDoc(doc(db, getUserBookingsCollectionPath(authUser.uid), selectedBookingId))
+      await deleteDoc(doc(db, getBookingOwnerPath(selectedBooking, authUser.uid), selectedBookingId))
       setDataError('')
       setDataMessage('Project deleted successfully.')
     } catch {
