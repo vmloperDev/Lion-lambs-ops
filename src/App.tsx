@@ -84,28 +84,11 @@ type Screen =
   | 'purchase-order-preview'
   | 'voucher-preview'
   | 'breakdown-preview'
-  | 'dtr-list'
-  | 'dtr-detail'
+  | 'dtr'
 
 type PasswordStrength = {
   label: 'Weak' | 'Fair' | 'Strong'
   score: 1 | 2 | 3
-}
-
-type DtrEntry = {
-  id: string
-  date: string
-  startTime: string
-  endTime: string
-  minutesWorked: number
-}
-
-type DtrProject = {
-  id: string
-  name: string
-  createdAt: string
-  ownerId: string
-  entries: DtrEntry[]
 }
 
 type BookingStatus = 'Inquiry' | 'Breakdown' | 'Quotation' | 'Purchase Order' | 'Invoice' | 'Confirmed'
@@ -209,6 +192,21 @@ type BookingLineItem = {
   total: number
   nettTotal: number
   profit: number
+}
+
+// Daily Time Record — one shared collection, any team member can log/edit any entry.
+type DtrEntry = {
+  id: string
+  employeeName: string
+  date: string // YYYY-MM-DD
+  amIn: string // HH:mm, 24h storage, displayed 12h
+  amOut: string
+  pmIn: string
+  pmOut: string
+  notes: string
+  createdAt: string
+  updatedAt: string
+  loggedBy: string
 }
 
 const bookingStorageKey = 'lion-lamb-bookings'
@@ -563,6 +561,69 @@ function formatProjectDate(value: string) {
   })
 }
 
+// ----- DTR (Daily Time Record) helpers -----
+
+// "HH:mm" -> total minutes since midnight. Returns null if blank/invalid.
+function timeStrToMinutes(value: string): number | null {
+  if (!value) return null
+  const match = value.match(/^(\d{1,2}):(\d{2})$/)
+  if (!match) return null
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null
+  return hours * 60 + minutes
+}
+
+// Minutes worked for one in/out pair, 0 if either side is missing or out is before in.
+function pairMinutes(inTime: string, outTime: string): number {
+  const inMin = timeStrToMinutes(inTime)
+  const outMin = timeStrToMinutes(outTime)
+  if (inMin === null || outMin === null || outMin <= inMin) return 0
+  return outMin - inMin
+}
+
+function getDtrEntryMinutes(entry: Pick<DtrEntry, 'amIn' | 'amOut' | 'pmIn' | 'pmOut'>): number {
+  return pairMinutes(entry.amIn, entry.amOut) + pairMinutes(entry.pmIn, entry.pmOut)
+}
+
+// 95 -> "1h 35m"
+function formatMinutesAsHm(totalMinutes: number): string {
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  if (hours === 0) return `${minutes}m`
+  if (minutes === 0) return `${hours}h`
+  return `${hours}h ${minutes}m`
+}
+
+// "14:30" -> "2:30 PM" for display; blank stays blank.
+function formatTimeForDisplay(value: string): string {
+  const totalMinutes = timeStrToMinutes(value)
+  if (totalMinutes === null) return '—'
+  const hours24 = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  const period = hours24 >= 12 ? 'PM' : 'AM'
+  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12
+  return `${hours12}:${String(minutes).padStart(2, '0')} ${period}`
+}
+
+function getCurrentTimeStr(): string {
+  const now = new Date()
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+}
+
+function getTodayDateStr(): string {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
+function formatDtrDateLong(value: string): string {
+  const date = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+const dtrCollectionKey = 'dtr_entries'
+
 // Renders a custom-select's option menu into document.body via a portal, positioned
 // with fixed coordinates computed from the trigger button's real on-screen position.
 // This is what makes the menu escape any ancestor's `overflow: hidden`/`overflow-x: auto`
@@ -683,6 +744,23 @@ function App() {
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null)
   const [showWipeConfirm, setShowWipeConfirm] = useState(false)
 
+  // ----- DTR (Daily Time Record) state -----
+  const [dtrEntries, setDtrEntries] = useState<DtrEntry[]>([])
+  const [dtrNameFilter, setDtrNameFilter] = useState('All')
+  const [dtrMonthFilter, setDtrMonthFilter] = useState(() => getTodayDateStr().slice(0, 7)) // YYYY-MM
+  const [dtrEditingId, setDtrEditingId] = useState<string | null>(null)
+  const [dtrError, setDtrError] = useState('')
+  const [dtrMessage, setDtrMessage] = useState('')
+  const [dtrForm, setDtrForm] = useState<Omit<DtrEntry, 'id' | 'createdAt' | 'updatedAt' | 'loggedBy'>>({
+    employeeName: '',
+    date: getTodayDateStr(),
+    amIn: '',
+    amOut: '',
+    pmIn: '',
+    pmOut: '',
+    notes: '',
+  })
+
   // Admin check — first registered user email or hardcoded list
   const ADMIN_EMAILS = ['vmloper.dev@gmail.com', ...(import.meta.env.VITE_ADMIN_EMAILS || '').split(',').map((e: string) => e.trim()).filter(Boolean)]
   const chatBottomRef = useRef<HTMLDivElement>(null)
@@ -692,14 +770,6 @@ function App() {
   })
   const [chatPos, setChatPos] = useState<{ right: number; bottom: number }>({ right: 24, bottom: 24 })
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
-
-  // DTR state
-  const [dtrProjects, setDtrProjects] = useState<DtrProject[]>([])
-  const [selectedDtrId, setSelectedDtrId] = useState('')
-  const [newDtrName, setNewDtrName] = useState('')
-  const [showNewDtrModal, setShowNewDtrModal] = useState(false)
-  const [dtrEntryForm, setDtrEntryForm] = useState({ date: new Date().toISOString().slice(0, 10), startTime: '', endTime: '' })
-  const [dtrEntryError, setDtrEntryError] = useState('')
   const chatInputRef = useRef<HTMLInputElement>(null)
 
   function onChatHeaderMouseDown(e: React.MouseEvent) {
@@ -758,8 +828,7 @@ function App() {
   }, [isDark])
 
   const [isPdfExporting, setIsPdfExporting] = useState(false)
-  const [bookings, setBookings] = useState<BookingRecord[]>([])
-  const pendingDeleteIds = useRef<Set<string>>(new Set())
+  const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
   // Holds the exact booking object built at save-time so templates always
   // reflect the latest saved data regardless of Firestore snapshot timing.
@@ -820,12 +889,15 @@ function App() {
     return onAuthStateChanged(auth, (user: FirebaseUser | null) => {
       setAuthUser(user)
       if (user?.emailVerified) {
-        // Firestore onSnapshot will populate bookings — clear stale localStorage
-        window.localStorage.removeItem(bookingStorageKey)
+        setBookings(getStoredBookings(bookingStorageKey, false))
       }
       setIsAuthLoading(false)
     })
   }, [])
+
+  useEffect(() => {
+    window.localStorage.setItem(bookingStorageKey, JSON.stringify(bookings))
+  }, [authUser?.uid, bookings])
 
   useEffect(() => {
     if (!authUser?.emailVerified) {
@@ -852,9 +924,7 @@ function App() {
           return (saved && saved.id === normalized.id) ? saved : normalized
         }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         console.log('[DEBUG snapshot]', firestoreBookings.map(b => ({ id: b.id, ownerId: b.ownerId, packageName: b.packageName })))
-        const pending = [...pendingDeleteIds.current]
-        if (pending.length > 0) console.log('[DEBUG snapshot] filtering out pending deletes:', pending)
-        setBookings(firestoreBookings.filter(b => !pendingDeleteIds.current.has(b.id)))
+        setBookings(firestoreBookings)
         setDataError('')
       },
       () => {
@@ -893,74 +963,123 @@ function App() {
     })
   }, [authUser])
 
-  // DTR Firestore listener
+  // DTR real-time listener — one shared collection, everyone reads/writes everything
   useEffect(() => {
     if (!authUser?.emailVerified) return
-    const q = query(collection(db, `users/${authUser.uid}/dtr_projects`), orderBy('createdAt', 'desc'))
-    return onSnapshot(q, (snap) => {
-      setDtrProjects(snap.docs.map(d => ({ id: d.id, ...d.data() as any })))
+    const dtrQuery = query(collection(db, dtrCollectionKey), orderBy('date', 'desc'))
+    return onSnapshot(dtrQuery, (snap) => {
+      const entries = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as DtrEntry[]
+      setDtrEntries(entries)
+    }, () => {
+      setDtrError('Could not load DTR records. Check your connection and try again.')
     })
   }, [authUser])
 
-  async function createDtrProject() {
-    if (!newDtrName.trim() || !authUser) return
-    const project: Omit<DtrProject, 'id'> = {
-      name: newDtrName.trim(),
-      createdAt: new Date().toISOString(),
-      ownerId: authUser.uid,
-      entries: [],
-    }
-    const ref = await addDoc(collection(db, `users/${authUser.uid}/dtr_projects`), project)
-    setSelectedDtrId(ref.id)
-    setNewDtrName('')
-    setShowNewDtrModal(false)
-    setScreen('dtr-detail')
-  }
-
-  async function addDtrEntry() {
-    const { date, startTime, endTime } = dtrEntryForm
-    if (!date || !startTime || !endTime || !authUser || !selectedDtrId) return
-    const start = new Date(`${date}T${startTime}`)
-    const end = new Date(`${date}T${endTime}`)
-    const minutes = Math.round((end.getTime() - start.getTime()) / 60000)
-    if (minutes <= 0) { setDtrEntryError('End time must be after start time.'); return }
-    setDtrEntryError('')
-    const project = dtrProjects.find(p => p.id === selectedDtrId)
-    if (!project) return
-    const entry: DtrEntry = {
-      id: `entry-${Date.now()}`,
-      date,
-      startTime,
-      endTime,
-      minutesWorked: minutes,
-    }
-    const updatedEntries = [...(project.entries || []), entry].sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime))
-    await setDoc(doc(db, `users/${authUser.uid}/dtr_projects`, selectedDtrId), { entries: updatedEntries }, { merge: true })
-    setDtrEntryForm({ date: new Date().toISOString().slice(0, 10), startTime: '', endTime: '' })
-  }
-
-  async function deleteDtrEntry(entryId: string) {
-    if (!authUser || !selectedDtrId) return
-    const project = dtrProjects.find(p => p.id === selectedDtrId)
-    if (!project) return
-    const updatedEntries = (project.entries || []).filter(e => e.id !== entryId)
-    await setDoc(doc(db, `users/${authUser.uid}/dtr_projects`, selectedDtrId), { entries: updatedEntries }, { merge: true })
-  }
-
-  async function deleteDtrProject(projectId: string) {
+  async function handleSaveDtrEntry(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
     if (!authUser) return
-    const confirmed = window.confirm('Delete this DTR project? This cannot be undone.')
-    if (!confirmed) return
-    await deleteDoc(doc(db, `users/${authUser.uid}/dtr_projects`, projectId))
-    if (selectedDtrId === projectId) { setSelectedDtrId(''); setScreen('dtr-list') }
+    if (!dtrForm.employeeName.trim()) {
+      setDtrError('Enter the employee name.')
+      return
+    }
+    if (!dtrForm.date) {
+      setDtrError('Pick a date.')
+      return
+    }
+    const nowIso = new Date().toISOString()
+    const payload = {
+      ...dtrForm,
+      employeeName: dtrForm.employeeName.trim(),
+      updatedAt: nowIso,
+      loggedBy: authUser.displayName || authUser.email || 'Team member',
+    }
+    try {
+      if (dtrEditingId) {
+        await setDoc(doc(db, dtrCollectionKey, dtrEditingId), payload, { merge: true })
+        setDtrMessage('Entry updated.')
+      } else {
+        await addDoc(collection(db, dtrCollectionKey), { ...payload, createdAt: nowIso })
+        setDtrMessage('Time logged.')
+      }
+      setDtrError('')
+      setDtrEditingId(null)
+      setDtrForm({ employeeName: dtrForm.employeeName, date: dtrForm.date, amIn: '', amOut: '', pmIn: '', pmOut: '', notes: '' })
+    } catch {
+      setDtrError('Could not save this entry. Check your connection and try again.')
+      setDtrMessage('')
+    }
   }
 
-  function formatMinutes(total: number) {
-    const h = Math.floor(total / 60)
-    const m = total % 60
-    if (h === 0) return `${m}m`
-    if (m === 0) return `${h}h`
-    return `${h}h ${m}m`
+  function startEditDtrEntry(entry: DtrEntry) {
+    setDtrEditingId(entry.id)
+    setDtrForm({
+      employeeName: entry.employeeName,
+      date: entry.date,
+      amIn: entry.amIn,
+      amOut: entry.amOut,
+      pmIn: entry.pmIn,
+      pmOut: entry.pmOut,
+      notes: entry.notes || '',
+    })
+    setDtrError('')
+    setDtrMessage('')
+  }
+
+  function cancelEditDtrEntry() {
+    setDtrEditingId(null)
+    setDtrForm({ employeeName: '', date: getTodayDateStr(), amIn: '', amOut: '', pmIn: '', pmOut: '', notes: '' })
+    setDtrError('')
+  }
+
+  async function handleDeleteDtrEntry(entryId: string) {
+    if (!window.confirm('Delete this time record? This cannot be undone.')) return
+    try {
+      await deleteDoc(doc(db, dtrCollectionKey, entryId))
+      setDtrMessage('Entry deleted.')
+      setDtrError('')
+    } catch {
+      setDtrError('Could not delete this entry. Check your connection and try again.')
+    }
+  }
+
+  // One-tap clock in/out: finds (or starts) today's entry for the given name and
+  // fills the next empty time slot in sequence (AM in -> AM out -> PM in -> PM out).
+  async function handleQuickClock(employeeName: string) {
+    const name = employeeName.trim()
+    if (!name || !authUser) return
+    const today = getTodayDateStr()
+    const existing = dtrEntries.find((e) => e.employeeName.toLowerCase() === name.toLowerCase() && e.date === today)
+    const nowTime = getCurrentTimeStr()
+    const nowIso = new Date().toISOString()
+    const loggedBy = authUser.displayName || authUser.email || 'Team member'
+
+    if (!existing) {
+      try {
+        await addDoc(collection(db, dtrCollectionKey), {
+          employeeName: name, date: today, amIn: nowTime, amOut: '', pmIn: '', pmOut: '', notes: '',
+          createdAt: nowIso, updatedAt: nowIso, loggedBy,
+        })
+        setDtrMessage(`Clocked in: ${formatTimeForDisplay(nowTime)}`)
+        setDtrError('')
+      } catch {
+        setDtrError('Could not clock in. Check your connection and try again.')
+      }
+      return
+    }
+
+    const nextField: keyof DtrEntry | null = !existing.amIn ? 'amIn' : !existing.amOut ? 'amOut' : !existing.pmIn ? 'pmIn' : !existing.pmOut ? 'pmOut' : null
+    if (!nextField) {
+      setDtrMessage(`${name} already completed today's record.`)
+      return
+    }
+    try {
+      await setDoc(doc(db, dtrCollectionKey, existing.id), { [nextField]: nowTime, updatedAt: nowIso, loggedBy }, { merge: true })
+      const labels: Record<string, string> = { amIn: 'Clocked in (AM)', amOut: 'Clocked out (AM)', pmIn: 'Clocked in (PM)', pmOut: 'Clocked out (PM)' }
+      setDtrMessage(`${labels[nextField]}: ${formatTimeForDisplay(nowTime)}`)
+      setDtrError('')
+    } catch {
+      setDtrError('Could not record time. Check your connection and try again.')
+    }
   }
 
   async function sendChatMessage() {
@@ -1822,31 +1941,25 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const confirmed = window.confirm(`Delete ${selectedBooking.packageName || 'this project'}? This cannot be undone.`)
     if (!confirmed) return
 
-    // Mark as pending so the snapshot listener does not restore it
-    pendingDeleteIds.current.add(selectedBookingId)
     setBookings((currentBookings) => currentBookings.filter((booking) => booking.id !== selectedBookingId))
-    setSelectedBookingId('')
-    setScreen('home')
-
     try {
       if (!authUser) throw new Error('Missing signed-in user')
       const resolvedPath = getBookingOwnerPath(selectedBooking, authUser.uid)
-      console.log('[DELETE] Attempting deleteDoc at:', resolvedPath, selectedBookingId)
+      console.log('[DEBUG delete]', {
+        selectedBookingId,
+        authUid: authUser.uid,
+        selectedBookingOwnerId: selectedBooking.ownerId,
+        resolvedPath,
+      })
       await deleteDoc(doc(db, resolvedPath, selectedBookingId))
-      console.log('[DELETE] Success')
       setDataError('')
       setDataMessage('Project deleted successfully.')
-    } catch (err) {
-      // Delete failed — remove from pending so snapshot can restore it
-      pendingDeleteIds.current.delete(selectedBookingId)
-      const reason = err instanceof Error ? err.message : 'Unknown error'
-      console.error('[DELETE] Failed:', reason)
-      setDataError(`Cloud delete failed: ${reason}. Check Firestore rules.`)
+    } catch {
+      setDataError('Project deleted locally, but cloud delete failed.')
       setDataMessage('')
-    } finally {
-      // Clean up after a safe delay (snapshot should have fired by now)
-      setTimeout(() => pendingDeleteIds.current.delete(selectedBookingId), 5000)
     }
+    setSelectedBookingId('')
+    setScreen('home')
   }
 
   function openPurchaseOrderPreview() { setScreen('purchase-order-preview') }
@@ -4329,164 +4442,233 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     )
   }
 
-  // ── DTR List screen ──
-  if (screen === 'dtr-list') {
+  if (screen === 'dtr') {
+    const knownNames = Array.from(new Set(dtrEntries.map((e) => e.employeeName))).sort((a, b) => a.localeCompare(b))
+    const monthEntries = dtrEntries.filter((e) => e.date.startsWith(dtrMonthFilter))
+    const visibleEntries = (dtrNameFilter === 'All' ? monthEntries : monthEntries.filter((e) => e.employeeName === dtrNameFilter))
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date) || a.employeeName.localeCompare(b.employeeName))
+    const totalMinutesVisible = visibleEntries.reduce((sum, e) => sum + getDtrEntryMinutes(e), 0)
+    const daysLoggedVisible = new Set(visibleEntries.map((e) => e.date)).size
+    const todayMinutesForQuickName = (() => {
+      const name = dtrForm.employeeName.trim().toLowerCase()
+      if (!name) return null
+      const todays = dtrEntries.find((e) => e.employeeName.toLowerCase() === name && e.date === getTodayDateStr())
+      return todays ? getDtrEntryMinutes(todays) : null
+    })()
+    const shiftTargetMinutes = 8 * 60
+    const ringProgress = todayMinutesForQuickName === null ? 0 : Math.min(1, todayMinutesForQuickName / shiftTargetMinutes)
+    const ringCircumference = 2 * Math.PI * 42
+
     return (
       <main className="dtr-screen">
-        <nav className="dtr-nav">
-          <button type="button" className="back-btn" onClick={() => setScreen('home')}>
-            <ArrowRight size={16} style={{ transform: 'rotate(180deg)' }} /> Back
+        <header className="dtr-header">
+          <button type="button" className="dtr-back-btn" onClick={() => setScreen('home')} title="Back">
+            <CornerUpLeft size={18} />
           </button>
-          <h1 className="dtr-title"><Clock3 size={20} /> Daily Time Record</h1>
-          <button type="button" className="create-project-btn dtr-new-btn" onClick={() => setShowNewDtrModal(true)}>
-            <Plus size={18} /> New Project
+          <div className="dtr-header-title">
+            <p>Operations desk</p>
+            <h1>Daily Time Record</h1>
+          </div>
+          <button type="button" className="dtr-print-btn" onClick={() => window.print()}>
+            <Printer size={16} />
+            Print
           </button>
-        </nav>
+        </header>
 
-        {showNewDtrModal && (
-          <div className="modal-overlay" onClick={() => setShowNewDtrModal(false)}>
-            <div className="modal-card dtr-modal" onClick={e => e.stopPropagation()}>
-              <h2>New DTR Project</h2>
-              <p className="dtr-modal-hint">Give it a name — e.g. "June 2025" or "Lion &amp; Lamb Ops"</p>
-              <input
-                className="dtr-name-input"
-                placeholder="Project name…"
-                value={newDtrName}
-                onChange={e => setNewDtrName(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') void createDtrProject() }}
-                autoFocus
-              />
-              <div className="dtr-modal-actions">
-                <button type="button" className="create-project-btn" onClick={() => void createDtrProject()} disabled={!newDtrName.trim()}>
-                  Create
-                </button>
-                <button type="button" className="cancel-btn" onClick={() => { setShowNewDtrModal(false); setNewDtrName('') }}>
-                  Cancel
+        {dtrError && <div className="dtr-banner dtr-banner-error">{dtrError}</div>}
+        {dtrMessage && !dtrError && <div className="dtr-banner dtr-banner-ok">{dtrMessage}</div>}
+
+        <div className="dtr-body">
+          {/* LEFT — quick clock + manual entry form */}
+          <section className="dtr-panel dtr-form-panel no-print">
+            <div className="dtr-quickclock-card">
+              <div className="dtr-ring-wrap">
+                <svg viewBox="0 0 96 96" className="dtr-ring">
+                  <circle cx="48" cy="48" r="42" className="dtr-ring-track" />
+                  <circle
+                    cx="48" cy="48" r="42"
+                    className="dtr-ring-progress"
+                    strokeDasharray={`${ringCircumference}`}
+                    strokeDashoffset={`${ringCircumference * (1 - ringProgress)}`}
+                  />
+                </svg>
+                <div className="dtr-ring-center">
+                  <strong>{todayMinutesForQuickName === null ? '—' : formatMinutesAsHm(todayMinutesForQuickName)}</strong>
+                  <span>today</span>
+                </div>
+              </div>
+              <div className="dtr-quickclock-actions">
+                <p className="dtr-quickclock-label">Quick clock</p>
+                <input
+                  type="text"
+                  placeholder="Type your name"
+                  value={dtrForm.employeeName}
+                  onChange={(e) => setDtrForm((f) => ({ ...f, employeeName: e.target.value }))}
+                  list="dtr-known-names"
+                />
+                <datalist id="dtr-known-names">
+                  {knownNames.map((name) => <option key={name} value={name} />)}
+                </datalist>
+                <button
+                  type="button"
+                  className="dtr-clock-btn"
+                  onClick={() => handleQuickClock(dtrForm.employeeName)}
+                  disabled={!dtrForm.employeeName.trim()}
+                >
+                  <Clock3 size={16} />
+                  Tap to clock in / out
                 </button>
               </div>
             </div>
-          </div>
-        )}
 
-        {dtrProjects.length === 0 ? (
-          <div className="dtr-empty">
-            <Clock3 size={40} />
-            <p>No DTR projects yet.</p>
-            <button type="button" className="create-project-btn" onClick={() => setShowNewDtrModal(true)}>
-              <Plus size={16} /> Create your first project
-            </button>
-          </div>
-        ) : (
-          <div className="dtr-project-list">
-            {dtrProjects.map(p => {
-              const totalMin = (p.entries || []).reduce((s, e) => s + e.minutesWorked, 0)
-              const days = new Set((p.entries || []).map(e => e.date)).size
-              return (
-                <div key={p.id} className="dtr-project-card" onClick={() => { setSelectedDtrId(p.id); setScreen('dtr-detail') }}>
-                  <div className="dtr-project-info">
-                    <span className="dtr-project-name">{p.name}</span>
-                    <span className="dtr-project-meta">{days} day{days !== 1 ? 's' : ''} · {formatMinutes(totalMin)} total</span>
-                  </div>
-                  <div className="dtr-project-actions" onClick={e => e.stopPropagation()}>
-                    <button type="button" className="dtr-delete-btn" title="Delete project" onClick={() => void deleteDtrProject(p.id)}>
-                      <Trash2 size={14} />
-                    </button>
-                    <ChevronRight size={18} className="dtr-chevron" />
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </main>
-    )
-  }
+            <form className="dtr-manual-form" onSubmit={handleSaveDtrEntry}>
+              <p className="dtr-form-heading">{dtrEditingId ? 'Edit entry' : 'Manual entry'}</p>
+              <label>
+                Employee name
+                <input
+                  type="text"
+                  value={dtrForm.employeeName}
+                  onChange={(e) => setDtrForm((f) => ({ ...f, employeeName: e.target.value }))}
+                  placeholder="e.g. Maria Santos"
+                  required
+                />
+              </label>
+              <label>
+                Date
+                <input
+                  type="date"
+                  value={dtrForm.date}
+                  onChange={(e) => setDtrForm((f) => ({ ...f, date: e.target.value }))}
+                  required
+                />
+              </label>
+              <div className="dtr-time-grid">
+                <label>
+                  AM time in
+                  <input type="time" value={dtrForm.amIn} onChange={(e) => setDtrForm((f) => ({ ...f, amIn: e.target.value }))} />
+                </label>
+                <label>
+                  AM time out
+                  <input type="time" value={dtrForm.amOut} onChange={(e) => setDtrForm((f) => ({ ...f, amOut: e.target.value }))} />
+                </label>
+                <label>
+                  PM time in
+                  <input type="time" value={dtrForm.pmIn} onChange={(e) => setDtrForm((f) => ({ ...f, pmIn: e.target.value }))} />
+                </label>
+                <label>
+                  PM time out
+                  <input type="time" value={dtrForm.pmOut} onChange={(e) => setDtrForm((f) => ({ ...f, pmOut: e.target.value }))} />
+                </label>
+              </div>
+              <label>
+                Notes <span className="dtr-optional">(optional)</span>
+                <input
+                  type="text"
+                  value={dtrForm.notes}
+                  onChange={(e) => setDtrForm((f) => ({ ...f, notes: e.target.value }))}
+                  placeholder="e.g. Half day, field visit"
+                />
+              </label>
+              <div className="dtr-form-actions">
+                {dtrEditingId && (
+                  <button type="button" className="dtr-cancel-btn" onClick={cancelEditDtrEntry}>Cancel</button>
+                )}
+                <button type="submit" className="dtr-save-btn">
+                  <Save size={15} />
+                  {dtrEditingId ? 'Save changes' : 'Log entry'}
+                </button>
+              </div>
+            </form>
+          </section>
 
-  // ── DTR Detail screen ──
-  if (screen === 'dtr-detail') {
-    const project = dtrProjects.find(p => p.id === selectedDtrId)
-    if (!project) { setScreen('dtr-list'); return null }
-    const entries = project.entries || []
-    const totalMinAll = entries.reduce((s, e) => s + e.minutesWorked, 0)
-
-    // Group by date
-    const byDate: Record<string, DtrEntry[]> = {}
-    entries.forEach(e => { byDate[e.date] = [...(byDate[e.date] || []), e] })
-
-    return (
-      <main className="dtr-screen">
-        <nav className="dtr-nav">
-          <button type="button" className="back-btn" onClick={() => setScreen('dtr-list')}>
-            <ArrowRight size={16} style={{ transform: 'rotate(180deg)' }} /> Back
-          </button>
-          <h1 className="dtr-title"><Clock3 size={20} /> {project.name}</h1>
-          <span className="dtr-total-badge">{formatMinutes(totalMinAll)} total</span>
-        </nav>
-
-        {/* Add entry form */}
-        <section className="dtr-form-card">
-          <h3>Log Time</h3>
-          <div className="dtr-form-row">
-            <div className="dtr-field">
-              <label>Date</label>
-              <input type="date" className="dtr-input" value={dtrEntryForm.date}
-                onChange={e => setDtrEntryForm(f => ({ ...f, date: e.target.value }))} />
+          {/* RIGHT — the printable ledger */}
+          <section className="dtr-panel dtr-ledger-panel">
+            <div className="dtr-ledger-controls no-print">
+              <select className="dtr-select" value={dtrNameFilter} onChange={(e) => setDtrNameFilter(e.target.value)}>
+                <option value="All">All employees</option>
+                {knownNames.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+              <input
+                type="month"
+                className="dtr-month-input"
+                value={dtrMonthFilter}
+                onChange={(e) => setDtrMonthFilter(e.target.value)}
+              />
             </div>
-            <div className="dtr-field">
-              <label>Start Time</label>
-              <input type="time" className="dtr-input" value={dtrEntryForm.startTime}
-                onChange={e => setDtrEntryForm(f => ({ ...f, startTime: e.target.value }))} />
-            </div>
-            <div className="dtr-field">
-              <label>End Time</label>
-              <input type="time" className="dtr-input" value={dtrEntryForm.endTime}
-                onChange={e => setDtrEntryForm(f => ({ ...f, endTime: e.target.value }))} />
-            </div>
-            <button
-              type="button"
-              className="dtr-add-btn"
-              disabled={!dtrEntryForm.startTime || !dtrEntryForm.endTime}
-              onClick={() => void addDtrEntry()}
-            >
-              <Plus size={16} /> Add
-            </button>
-          </div>
-          {dtrEntryError && <p className="dtr-error">{dtrEntryError}</p>}
-        </section>
 
-        {/* Entries grouped by date */}
-        {Object.keys(byDate).length === 0 ? (
-          <div className="dtr-empty dtr-empty-sm">
-            <p>No entries yet. Log your first time above.</p>
-          </div>
-        ) : (
-          <div className="dtr-entries">
-            {Object.entries(byDate).sort(([a], [b]) => a.localeCompare(b)).map(([date, dayEntries]) => {
-              const dayTotal = dayEntries.reduce((s, e) => s + e.minutesWorked, 0)
-              return (
-                <div key={date} className="dtr-day-group">
-                  <div className="dtr-day-header">
-                    <span className="dtr-day-date">{new Date(date + 'T12:00:00').toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                    <span className="dtr-day-total">{formatMinutes(dayTotal)}</span>
-                  </div>
-                  {dayEntries.map(entry => (
-                    <div key={entry.id} className="dtr-entry-row">
-                      <span className="dtr-entry-time">{entry.startTime} – {entry.endTime}</span>
-                      <span className="dtr-entry-duration">{formatMinutes(entry.minutesWorked)}</span>
-                      <button type="button" className="dtr-delete-btn" title="Remove entry" onClick={() => void deleteDtrEntry(entry.id)}>
-                        <Trash2 size={13} />
-                      </button>
+            <div className="dtr-print-header print-only">
+              <img src={logo} alt="" />
+              <div>
+                <h2>Lion and Lamb Travel</h2>
+                <p>Daily Time Record</p>
+              </div>
+            </div>
+            <div className="dtr-print-meta print-only">
+              <span><strong>Employee:</strong> {dtrNameFilter === 'All' ? 'All team members' : dtrNameFilter}</span>
+              <span><strong>Period:</strong> {new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
+            </div>
+
+            <div className="dtr-summary-strip">
+              <div className="dtr-summary-stat">
+                <span>{daysLoggedVisible}</span>
+                <p>Days logged</p>
+              </div>
+              <div className="dtr-summary-divider" />
+              <div className="dtr-summary-stat">
+                <span>{formatMinutesAsHm(totalMinutesVisible)}</span>
+                <p>Total hours</p>
+              </div>
+              <div className="dtr-summary-divider" />
+              <div className="dtr-summary-stat">
+                <span>{daysLoggedVisible > 0 ? formatMinutesAsHm(Math.round(totalMinutesVisible / daysLoggedVisible)) : '—'}</span>
+                <p>Avg / day</p>
+              </div>
+            </div>
+
+            <div className="dtr-ledger">
+              {visibleEntries.length === 0 ? (
+                <p className="dtr-empty">No time records for this period yet.</p>
+              ) : (
+                visibleEntries.map((entry) => {
+                  const minutes = getDtrEntryMinutes(entry)
+                  return (
+                    <div className="dtr-row" key={entry.id}>
+                      <div className="dtr-row-date">
+                        <span className="dtr-row-day">{new Date(`${entry.date}T00:00:00`).getDate()}</span>
+                        <span className="dtr-row-weekday">{new Date(`${entry.date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short' })}</span>
+                      </div>
+                      <div className="dtr-row-main">
+                        <p className="dtr-row-name">{entry.employeeName}</p>
+                        <div className="dtr-row-times">
+                          <span><em>AM</em> {formatTimeForDisplay(entry.amIn)} – {formatTimeForDisplay(entry.amOut)}</span>
+                          <span><em>PM</em> {formatTimeForDisplay(entry.pmIn)} – {formatTimeForDisplay(entry.pmOut)}</span>
+                        </div>
+                        {entry.notes && <p className="dtr-row-notes">{entry.notes}</p>}
+                      </div>
+                      <div className="dtr-row-total">
+                        <strong>{minutes > 0 ? formatMinutesAsHm(minutes) : '—'}</strong>
+                      </div>
+                      <div className="dtr-row-actions no-print">
+                        <button type="button" onClick={() => startEditDtrEntry(entry)} title="Edit">
+                          <FileText size={14} />
+                        </button>
+                        <button type="button" onClick={() => handleDeleteDtrEntry(entry.id)} title="Delete">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
-                  ))}
-                </div>
-              )
-            })}
-            <div className="dtr-grand-total">
-              <span>Total Hours Worked</span>
-              <span className="dtr-grand-value">{formatMinutes(totalMinAll)}</span>
+                  )
+                })
+              )}
             </div>
-          </div>
-        )}
+
+            <div className="dtr-print-signoff print-only">
+              <div><span /><p>Employee signature</p></div>
+              <div><span /><p>Supervisor signature</p></div>
+            </div>
+          </section>
+        </div>
       </main>
     )
   }
@@ -4548,6 +4730,14 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <MessageSquare size={18} />
             {unreadCount > 0 && <span className="chat-badge">{unreadCount}</span>}
           </button>
+          <button
+            type="button"
+            className="dtr-nav-btn"
+            onClick={() => setScreen('dtr')}
+            title="Daily Time Record"
+          >
+            <Clock3 size={18} />
+          </button>
           <button type="button" onClick={handleLogout} title="Log out">
             <LogOut size={18} />
           </button>
@@ -4577,14 +4767,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               >
                 <Plus size={20} />
                 New Inquiry
-              </button>
-              <button
-                type="button"
-                className="dtr-nav-btn"
-                onClick={() => setScreen('dtr-list')}
-              >
-                <Clock3 size={18} />
-                DTR
               </button>
             </div>
           </section>
