@@ -827,6 +827,7 @@ function App() {
           const saved = lastSavedBookingRef.current
           return (saved && saved.id === normalized.id) ? saved : normalized
         }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        console.log('[DEBUG snapshot]', firestoreBookings.map(b => ({ id: b.id, ownerId: b.ownerId, packageName: b.packageName })))
         setBookings(firestoreBookings)
         setDataError('')
       },
@@ -1693,7 +1694,17 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
     try {
       if (!authUser) throw new Error('Missing signed-in user')
-      await setDoc(doc(db, getBookingOwnerPath(targetBooking, authUser.uid), selectedBookingId), {
+      const resolvedPath = getBookingOwnerPath(targetBooking, authUser.uid)
+      console.log('[DEBUG invoice-save]', {
+        selectedBookingId,
+        authUid: authUser.uid,
+        targetBookingFound: Boolean(targetBooking),
+        targetBookingId: targetBooking?.id,
+        targetBookingOwnerId: targetBooking?.ownerId,
+        resolvedPath,
+        bookingsArrayLength: bookings.length,
+      })
+      await setDoc(doc(db, resolvedPath, selectedBookingId), {
         ...invoiceForm,
         status: 'Invoice',
         updatedAt: new Date().toISOString(),
@@ -1718,7 +1729,14 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     setBookings((currentBookings) => currentBookings.filter((booking) => booking.id !== selectedBookingId))
     try {
       if (!authUser) throw new Error('Missing signed-in user')
-      await deleteDoc(doc(db, getBookingOwnerPath(selectedBooking, authUser.uid), selectedBookingId))
+      const resolvedPath = getBookingOwnerPath(selectedBooking, authUser.uid)
+      console.log('[DEBUG delete]', {
+        selectedBookingId,
+        authUid: authUser.uid,
+        selectedBookingOwnerId: selectedBooking.ownerId,
+        resolvedPath,
+      })
+      await deleteDoc(doc(db, resolvedPath, selectedBookingId))
       setDataError('')
       setDataMessage('Project deleted successfully.')
     } catch {
