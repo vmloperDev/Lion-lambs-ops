@@ -646,8 +646,6 @@ function App() {
   }>>([])
   const [chatInput, setChatInput] = useState('')
   const [unreadCount, setUnreadCount] = useState(0)
-  const [chatFileUploading] = useState(false)
-  const [chatUploadError] = useState('')
   const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
   const chatPanelRef = useRef<HTMLDivElement>(null)
@@ -952,6 +950,16 @@ function App() {
         })
       }
     }
+  }
+
+  async function unsendMessage(msgId: string) {
+    if (!authUser) return
+    const msg = chatMessages.find(m => m.id === msgId)
+    if (!msg || msg.senderEmail !== authUser.email) return
+    await setDoc(doc(db, 'team_chat', msgId), {
+      text: '',
+      unsent: true,
+    }, { merge: true })
   }
 
   async function toggleReaction(msgId: string, emoji: string) {
@@ -4181,7 +4189,7 @@ function App() {
           <button
             type="button"
             className={`chat-nav-btn ${isChatOpen ? 'chat-active' : ''}`}
-            onClick={() => { setIsChatOpen(o => { isChatOpenRef.current = !o; if (!o) { setUnreadCount(0); void markMessagesSeen() } return !o }) }}
+            onClick={() => { setIsChatOpen(o => { isChatOpenRef.current = !o; if (!o) { setUnreadCount(0); void markMessagesSeen(); setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'instant' }), 80) } return !o }) }}
             title="Team chat"
           >
             <MessageSquare size={18} />
@@ -4428,6 +4436,7 @@ function App() {
               const seenBy = (msg.seenBy || []) as string[]
               const seenByOthers = seenBy.filter((e: string) => e !== authUser?.email)
               const showSeen = isMe && isLast && seenByOthers.length > 0
+              const isUnsent = !!msg.unsent
               return (
                 <div key={msg.id} className={`chat-bubble-row ${isNexus ? 'row-nexus' : isMe ? 'row-mine' : 'row-theirs'}`}>
                   {(!isMe || isNexus) && (
@@ -4436,28 +4445,40 @@ function App() {
                     </div>
                   )}
                   <div className="chat-bubble-wrap">
-                    <div className={`chat-bubble ${isNexus ? 'chat-nexus' : isMe ? 'chat-mine' : 'chat-theirs'}`}
-                      onMouseEnter={() => {}}
-                    >
+                    <div className={`chat-bubble ${isNexus ? 'chat-nexus' : isMe ? 'chat-mine' : 'chat-theirs'} ${isUnsent ? 'chat-unsent' : ''}`}>
                       {(!isMe || isNexus) && (
                         <span className={`chat-sender ${isNexus ? 'chat-sender-nexus' : ''}`}>
                           {isNexus ? 'Nexus AI' : msg.senderName}
                         </span>
                       )}
                       <div className={`chat-text ${isNexus ? 'chat-text-nexus' : ''} ${msg.isNexusThinking ? 'chat-thinking' : ''}`}>
-                        {msg.isNexusThinking ? (
+                        {isUnsent ? (
+                          <span className="chat-unsent-label">You unsent a message</span>
+                        ) : msg.isNexusThinking ? (
                           <span className="chat-thinking-dots"><span/><span/><span/></span>
                         ) : msg.text}
                       </div>
                       <span className="chat-time">{time}</span>
                     </div>
-                    {/* Reaction add button */}
-                    <button
-                      type="button"
-                      className="chat-react-trigger"
-                      title="React"
-                      onClick={(e) => { e.stopPropagation(); setReactionPickerFor(reactionPickerFor === msg.id ? null : msg.id) }}
-                    >＋😊</button>
+                    {/* Reaction + Unsend triggers — only on non-unsent messages */}
+                    {!isUnsent && (
+                      <>
+                        <button
+                          type="button"
+                          className="chat-react-trigger"
+                          title="React"
+                          onClick={(e) => { e.stopPropagation(); setReactionPickerFor(reactionPickerFor === msg.id ? null : msg.id) }}
+                        >＋😊</button>
+                        {isMe && !isNexus && (
+                          <button
+                            type="button"
+                            className="chat-unsend-trigger"
+                            title="Unsend"
+                            onClick={(e) => { e.stopPropagation(); void unsendMessage(msg.id) }}
+                          >↩</button>
+                        )}
+                      </>
+                    )}
                     {/* Reaction mini picker */}
                     {reactionPickerFor === msg.id && (
                       <div className={`chat-reaction-picker ${isMe ? 'picker-left' : 'picker-right'}`} onClick={e => e.stopPropagation()}>
@@ -4494,21 +4515,6 @@ function App() {
             })}
             <div ref={chatBottomRef} />
           </div>
-
-          {/* Upload progress */}
-          {chatFileUploading && (
-            <div className="chat-upload-progress">
-              <div className="chat-upload-bar" style={{ width: `${chatUploadProgress}%` }} />
-              <span>Uploading… {chatUploadProgress}%</span>
-            </div>
-          )}
-
-          {/* Upload error */}
-          {chatUploadError && (
-            <div className="chat-upload-error">
-              ⚠️ {chatUploadError}
-            </div>
-          )}
 
           {/* Emoji Picker */}
           {showEmojiPicker && (
@@ -4567,7 +4573,7 @@ function App() {
               type="button"
               className={`chat-send-btn ${chatInput.trim() ? 'active' : ''}`}
               onClick={() => void sendChatMessage()}
-              disabled={!chatInput.trim() || chatFileUploading}
+              disabled={!chatInput.trim()}
               title="Send"
             >
               <Send size={16} />

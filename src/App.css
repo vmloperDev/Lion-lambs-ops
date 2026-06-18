@@ -2287,6 +2287,29 @@ input, select, textarea { font: inherit; }
   30% { transform: translateY(-6px); opacity: 1; }
 }
 
+/* Unsent message */
+.chat-unsent {
+  opacity: 0.55;
+  border-style: dashed !important;
+}
+.chat-unsent-label {
+  font-style: italic; font-size: 0.78rem; color: var(--muted);
+}
+.chat-unsend-trigger {
+  opacity: 0; pointer-events: none;
+  position: absolute; top: 50%; transform: translateY(-50%);
+  background: #fff3f3; border: 1px solid #fecaca;
+  border-radius: 999px; padding: 2px 7px;
+  font-size: 0.68rem; cursor: pointer; white-space: nowrap;
+  color: #b91c1c; font-weight: 700;
+  box-shadow: 0 1px 4px rgba(0,0,0,.1);
+  transition: opacity .15s;
+  z-index: 10;
+}
+[data-theme="dark"] .chat-unsend-trigger { background: #450a0a; border-color: #7f1d1d; color: #fca5a5; }
+.row-mine .chat-unsend-trigger { right: calc(100% + 40px); }
+.chat-bubble-wrap:hover .chat-unsend-trigger { opacity: 1; pointer-events: auto; }
+
 /* ── Reaction system ── */
 .chat-bubble-wrap {
   display: flex; flex-direction: column;
