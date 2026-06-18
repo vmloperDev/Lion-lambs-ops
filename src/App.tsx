@@ -4016,8 +4016,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
     const brkItems = readBreakdownItems(selectedBooking)
 
-    // Parse pax-tier column labels (default matches the reference image)
-    let colLabels = ['2 PAX', '5 PAX', 'PAX AND ABOVE', 'INFANT']
+    // Parse pax-tier column labels (default matches the Data Gathering form's
+    // fixed Adult / Child / Senior / Infant categories)
+    let colLabels = ['ADULT', 'CHILD', 'SENIOR', 'INFANT']
     try {
       const parsed = JSON.parse(selectedBooking.breakdownColLabels)
       if (Array.isArray(parsed) && parsed.length === 4) colLabels = parsed
