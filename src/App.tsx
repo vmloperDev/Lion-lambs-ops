@@ -732,7 +732,7 @@ function App() {
   }, [isDark])
 
   const [isPdfExporting, setIsPdfExporting] = useState(false)
-  const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
+  const pendingDeleteIds = useRef<Set<string>>(new Set())
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
   // Holds the exact booking object built at save-time so templates always
   // reflect the latest saved data regardless of Firestore snapshot timing.
@@ -828,7 +828,7 @@ function App() {
           return (saved && saved.id === normalized.id) ? saved : normalized
         }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         console.log('[DEBUG snapshot]', firestoreBookings.map(b => ({ id: b.id, ownerId: b.ownerId, packageName: b.packageName })))
-        setBookings(firestoreBookings)
+        setBookings(firestoreBookings.filter(b => !pendingDeleteIds.current.has(b.id)))
         setDataError('')
       },
       () => {
@@ -1726,25 +1726,28 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const confirmed = window.confirm(`Delete ${selectedBooking.packageName || 'this project'}? This cannot be undone.`)
     if (!confirmed) return
 
+    // Mark as pending so the snapshot listener does not restore it
+    pendingDeleteIds.current.add(selectedBookingId)
     setBookings((currentBookings) => currentBookings.filter((booking) => booking.id !== selectedBookingId))
+    setSelectedBookingId('')
+    setScreen('home')
+
     try {
       if (!authUser) throw new Error('Missing signed-in user')
       const resolvedPath = getBookingOwnerPath(selectedBooking, authUser.uid)
-      console.log('[DEBUG delete]', {
-        selectedBookingId,
-        authUid: authUser.uid,
-        selectedBookingOwnerId: selectedBooking.ownerId,
-        resolvedPath,
-      })
       await deleteDoc(doc(db, resolvedPath, selectedBookingId))
       setDataError('')
       setDataMessage('Project deleted successfully.')
-    } catch {
-      setDataError('Project deleted locally, but cloud delete failed.')
+    } catch (err) {
+      // Delete failed — remove from pending so snapshot can restore it
+      pendingDeleteIds.current.delete(selectedBookingId)
+      const reason = err instanceof Error ? err.message : 'Unknown error'
+      setDataError(`Cloud delete failed: ${reason}. Check Firestore rules.`)
       setDataMessage('')
+    } finally {
+      // Clean up after a safe delay (snapshot should have fired by now)
+      setTimeout(() => pendingDeleteIds.current.delete(selectedBookingId), 5000)
     }
-    setSelectedBookingId('')
-    setScreen('home')
   }
 
   function openPurchaseOrderPreview() { setScreen('purchase-order-preview') }
