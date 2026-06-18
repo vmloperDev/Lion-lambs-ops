@@ -828,6 +828,8 @@ function App() {
           return (saved && saved.id === normalized.id) ? saved : normalized
         }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         console.log('[DEBUG snapshot]', firestoreBookings.map(b => ({ id: b.id, ownerId: b.ownerId, packageName: b.packageName })))
+        const pending = [...pendingDeleteIds.current]
+        if (pending.length > 0) console.log('[DEBUG snapshot] filtering out pending deletes:', pending)
         setBookings(firestoreBookings.filter(b => !pendingDeleteIds.current.has(b.id)))
         setDataError('')
       },
@@ -1735,13 +1737,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     try {
       if (!authUser) throw new Error('Missing signed-in user')
       const resolvedPath = getBookingOwnerPath(selectedBooking, authUser.uid)
+      console.log('[DELETE] Attempting deleteDoc at:', resolvedPath, selectedBookingId)
       await deleteDoc(doc(db, resolvedPath, selectedBookingId))
+      console.log('[DELETE] Success')
       setDataError('')
       setDataMessage('Project deleted successfully.')
     } catch (err) {
       // Delete failed — remove from pending so snapshot can restore it
       pendingDeleteIds.current.delete(selectedBookingId)
       const reason = err instanceof Error ? err.message : 'Unknown error'
+      console.error('[DELETE] Failed:', reason)
       setDataError(`Cloud delete failed: ${reason}. Check Firestore rules.`)
       setDataMessage('')
     } finally {
