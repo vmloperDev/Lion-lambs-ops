@@ -13,13 +13,18 @@ import {
   type User as FirebaseUser,
 } from 'firebase/auth'
 import {
+  addDoc,
   collection,
+  collectionGroup,
   deleteDoc,
   doc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
+  serverTimestamp,
   setDoc,
+  writeBatch,
 } from 'firebase/firestore'
 import {
   ArrowRight,
@@ -36,15 +41,19 @@ import {
   LogOut,
   Mail,
   MapPin,
+  MessageSquare,
   Moon,
+
   Plane,
   Plus,
   Printer,
   RefreshCw,
   Save,
   Search,
+  Send,
   Sparkles,
   Sun,
+  Bot,
   UserRound,
   X,
   Check,
@@ -161,6 +170,7 @@ type BookingFormData = {
   voucherRowsJson: string
   specialInstructions: string
   preparedBy: string
+  createdByName: string
   status: BookingStatus
   notes: string
 }
@@ -234,6 +244,7 @@ const emptyBookingForm: BookingFormData = {
   voucherRowsJson: '',
   specialInstructions: '',
   preparedBy: '',
+  createdByName: '',
   status: 'Inquiry',
   notes: '',
 }
@@ -507,7 +518,7 @@ function getBookingBreakdownNettTotal(booking: BookingFormData) {
 }
 
 function getUserBookingsCollectionPath(userId: string) {
-  return `users/${userId}/${bookingsCollectionKey}`
+  return `users/${userId}/bookings`
 }
 
 function formatProjectDate(value: string) {
@@ -618,6 +629,62 @@ function FloatingDropdownMenu({
 
 function App() {
   const [screen, setScreen] = useState<Screen>('splash')
+  const [isMigrating, setIsMigrating] = useState(false)
+  const [migrationDone, setMigrationDone] = useState(false)
+  const [isChatOpen, setIsChatOpen] = useState(false)
+  const isChatOpenRef = useRef(false)
+  const [chatMessages, setChatMessages] = useState<Array<{
+    id: string
+    text: string
+    senderName: string
+    senderEmail: string
+    createdAt: any
+    reactions?: Record<string, string[]>
+    seenBy?: string[]
+    isNexus?: boolean
+    isNexusThinking?: boolean
+  }>>([])
+  const [chatInput, setChatInput] = useState('')
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [chatFileUploading] = useState(false)
+  const [chatUploadError] = useState('')
+  const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null)
+  const chatBottomRef = useRef<HTMLDivElement>(null)
+  const chatPanelRef = useRef<HTMLDivElement>(null)
+  const chatDragState = useRef<{ dragging: boolean; startX: number; startY: number; origRight: number; origBottom: number }>({
+    dragging: false, startX: 0, startY: 0, origRight: 24, origBottom: 24,
+  })
+  const [chatPos, setChatPos] = useState<{ right: number; bottom: number }>({ right: 24, bottom: 24 })
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false)
+  const chatInputRef = useRef<HTMLInputElement>(null)
+
+  function onChatHeaderMouseDown(e: React.MouseEvent) {
+    if ((e.target as HTMLElement).closest('button')) return
+    e.preventDefault()
+    const state = chatDragState.current
+    state.dragging = true
+    state.startX = e.clientX
+    state.startY = e.clientY
+    state.origRight = chatPos.right
+    state.origBottom = chatPos.bottom
+
+    function onMouseMove(ev: MouseEvent) {
+      if (!state.dragging) return
+      const dx = ev.clientX - state.startX
+      const dy = ev.clientY - state.startY
+      setChatPos({
+        right: Math.max(8, state.origRight - dx),
+        bottom: Math.max(8, state.origBottom - dy),
+      })
+    }
+    function onMouseUp() {
+      state.dragging = false
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
   const [invoiceEditorReturnScreen, setInvoiceEditorReturnScreen] = useState<Screen>('booking-detail')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('vmloper.dev@gmail.com')
@@ -707,17 +774,14 @@ function App() {
     return onAuthStateChanged(auth, (user: FirebaseUser | null) => {
       setAuthUser(user)
       if (user?.emailVerified) {
-        setBookings(getStoredBookings(`${bookingStorageKey}-${user.uid}`, false))
+        setBookings(getStoredBookings(bookingStorageKey, false))
       }
       setIsAuthLoading(false)
     })
   }, [])
 
   useEffect(() => {
-    const userStorageKey = authUser?.uid
-      ? `${bookingStorageKey}-${authUser.uid}`
-      : bookingStorageKey
-    window.localStorage.setItem(userStorageKey, JSON.stringify(bookings))
+    window.localStorage.setItem(bookingStorageKey, JSON.stringify(bookings))
   }, [authUser?.uid, bookings])
 
   useEffect(() => {
@@ -725,8 +789,7 @@ function App() {
       return undefined
     }
     const bookingsQuery = query(
-      collection(db, getUserBookingsCollectionPath(authUser.uid)),
-      orderBy('createdAt', 'desc'),
+      collectionGroup(db, 'bookings'),
     )
     return onSnapshot(
       bookingsQuery,
@@ -736,17 +799,17 @@ function App() {
             ...(bookingDoc.data() as BookingRecord),
             id: bookingDoc.id,
           })
-          // If this doc was just saved locally, prefer the local version so
-          // the template screens always reflect the user's latest changes
-          // even if the Firestore snapshot arrives slightly behind.
           const saved = lastSavedBookingRef.current
           return (saved && saved.id === normalized.id) ? saved : normalized
-        })
+        }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         setBookings(firestoreBookings)
         setDataError('')
       },
       () => {
-        setDataError('Could not load cloud bookings. Check Firestore setup and rules.')
+        // Delay the error so transient permission checks don't flash a false alarm
+        setTimeout(() => {
+          setDataError('Could not load cloud bookings. Check Firestore setup and rules.')
+        }, 5000)
       },
     )
   }, [authUser])
@@ -762,6 +825,166 @@ function App() {
     }, 2600)
     return () => window.clearTimeout(timer)
   }, [authUser, isAuthLoading])
+
+  // Chat real-time listener
+  useEffect(() => {
+    if (!authUser?.emailVerified) return
+    const chatQuery = query(collection(db, 'team_chat'), orderBy('createdAt', 'asc'))
+    return onSnapshot(chatQuery, (snap) => {
+      const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() as any }))
+      setChatMessages(msgs)
+      if (!isChatOpenRef.current && msgs.length > 0) {
+        const newMsgs = snap.docChanges().filter(c => c.type === 'added' && c.doc.data().senderEmail !== authUser.email)
+        setUnreadCount(prev => prev + newMsgs.length)
+      }
+      setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+    })
+  }, [authUser])
+
+  async function sendChatMessage() {
+    if (!chatInput.trim() || !authUser) return
+    const text = chatInput.trim()
+    setChatInput('')
+
+    const senderName = authUser.displayName || getDisplayName(authUser.email || '')
+    await addDoc(collection(db, 'team_chat'), {
+      text,
+      senderName,
+      senderEmail: authUser.email || '',
+      createdAt: serverTimestamp(),
+    })
+
+    // Nexus AI response — triggered when message starts with @Nexus
+    if (text.toLowerCase().startsWith('@nexus')) {
+      const question = text.replace(/^@nexus\s*/i, '').trim()
+      if (!question) return
+
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined
+      if (!apiKey) return
+
+      // Post a "thinking" placeholder
+      const thinkingRef = await addDoc(collection(db, 'team_chat'), {
+        text: '...',
+        senderName: 'Nexus',
+        senderEmail: 'nexus@lionlamb.ai',
+        isNexus: true,
+        isNexusThinking: true,
+        createdAt: serverTimestamp(),
+      })
+
+      try {
+        // Build conversation history from the last 20 messages (excluding thinking placeholders)
+        // Gemini uses alternating user/model roles, so we map:
+        //   - Nexus messages  → role: 'model'
+        //   - Human messages  → role: 'user'
+        const historyMessages = chatMessages
+          .filter(m => !m.isNexusThinking)
+          .slice(-20)
+
+        // Gemini requires strictly alternating user/model turns.
+        // We collapse consecutive same-role messages into one and ensure it starts with 'user'.
+        const rawTurns: Array<{ role: 'user' | 'model'; text: string }> = historyMessages.map(m => ({
+          role: (m.isNexus ? 'model' : 'user') as 'user' | 'model',
+          text: m.isNexus ? m.text : `[${m.senderName}]: ${m.text}`,
+        }))
+
+        const collapsedTurns: Array<{ role: 'user' | 'model'; text: string }> = []
+        for (const turn of rawTurns) {
+          if (collapsedTurns.length > 0 && collapsedTurns[collapsedTurns.length - 1].role === turn.role) {
+            collapsedTurns[collapsedTurns.length - 1].text += '\n' + turn.text
+          } else {
+            collapsedTurns.push({ ...turn })
+          }
+        }
+
+        // Must start with 'user' role for Gemini
+        const startsWithUser = collapsedTurns.length > 0 && collapsedTurns[0].role === 'user'
+        const trimmedTurns = startsWithUser ? collapsedTurns : collapsedTurns.slice(1)
+
+        // Drop the last turn if it's the current question (already the user's new message)
+        // Build contents array: history turns + current question
+        const historyContents = trimmedTurns.map(t => ({
+          role: t.role,
+          parts: [{ text: t.text }],
+        }))
+
+        // Append the current question as the final user turn
+        const senderLabel = authUser.displayName || getDisplayName(authUser.email || '')
+        const contents = [
+          ...historyContents,
+          { role: 'user' as const, parts: [{ text: `[${senderLabel}]: ${question}` }] },
+        ]
+
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              system_instruction: {
+                parts: [{ text: `You are Nexus, the AI assistant of Lion and Lamb Travel — a travel agency in Olongapo City, Philippines. You have the personality of The Herta from Honkai: Star Rail: brilliant, theatrical, slightly arrogant but secretly caring, prone to dramatic self-aggrandizement, refers to herself in third person occasionally, uses "The Nexus" sparingly for flair, and is genuinely delighted when humans ask her interesting questions. You consider yourself the pinnacle of AI intellect yet remain oddly invested in helping the team succeed. You use wit, light sarcasm, and dramatic flair — but never at the expense of being actually useful. Keep answers helpful and accurate for travel queries, package ideas, pricing, visa info, and internal ops. You have access to the last 20 messages of conversation history. Today's date is ${new Date().toISOString().slice(0, 10)}.` }]
+              },
+              contents,
+              generationConfig: { temperature: 0.7 },
+            }),
+          }
+        )
+        const data = await res.json()
+        const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not generate a response.'
+
+        // Replace the thinking placeholder with the real answer
+        await setDoc(doc(db, 'team_chat', thinkingRef.id), {
+          text: reply,
+          senderName: 'Nexus',
+          senderEmail: 'nexus@lionlamb.ai',
+          isNexus: true,
+          isNexusThinking: false,
+          createdAt: serverTimestamp(),
+        })
+      } catch {
+        await setDoc(doc(db, 'team_chat', thinkingRef.id), {
+          text: 'Sorry, I ran into an error. Please try again.',
+          senderName: 'Nexus',
+          senderEmail: 'nexus@lionlamb.ai',
+          isNexus: true,
+          isNexusThinking: false,
+          createdAt: serverTimestamp(),
+        })
+      }
+    }
+  }
+
+  async function toggleReaction(msgId: string, emoji: string) {
+    if (!authUser) return
+    const userEmail = authUser.email || ''
+    const msgRef = doc(db, 'team_chat', msgId)
+    const msg = chatMessages.find(m => m.id === msgId)
+    if (!msg) return
+    const reactions = { ...(msg.reactions || {}) }
+    const current = reactions[emoji] || []
+    if (current.includes(userEmail)) {
+      reactions[emoji] = current.filter(e => e !== userEmail)
+      if (reactions[emoji].length === 0) delete reactions[emoji]
+    } else {
+      reactions[emoji] = [...current, userEmail]
+    }
+    await setDoc(msgRef, { reactions }, { merge: true })
+    setReactionPickerFor(null)
+  }
+
+  async function markMessagesSeen() {
+    if (!authUser?.email) return
+    const unseenMsgs = chatMessages.filter(
+      m => !m.seenBy?.includes(authUser.email!) && m.senderEmail !== authUser.email
+    )
+    await Promise.all(
+      unseenMsgs.map(m =>
+        setDoc(doc(db, 'team_chat', m.id), {
+          seenBy: [...(m.seenBy || []), authUser.email!]
+        }, { merge: true })
+      )
+    )
+  }
 
   function getAuthErrorMessage(error: unknown) {
     const code = typeof error === 'object' && error && 'code' in error ? (error as AuthError).code : ''
@@ -1202,6 +1425,7 @@ function App() {
       sellingPrice: String(getBookingClientTotal(bookingForm)),
       id: editingBookingId || `BK-${Date.now()}`,
       createdAt: bookings.find((currentBooking) => currentBooking.id === editingBookingId)?.createdAt || new Date().toISOString(),
+      createdByName: bookingForm.createdByName || authUser?.displayName || '',
     }
 
     // Pin the exact saved booking so templates read fresh data immediately,
@@ -1221,6 +1445,7 @@ function App() {
         ownerId: authUser.uid,
         createdBy: authUser.uid,
         createdByEmail: authUser.email || '',
+        createdByName: authUser.displayName || booking.createdByName || '',
         updatedAt: new Date().toISOString(),
       }, { merge: true })
       
@@ -1430,6 +1655,36 @@ function App() {
   function openVoucherPreview() { setScreen('voucher-preview') }
   function openBreakdownPreview() { setScreen('breakdown-preview') }
   function openDocumentFolder() { setScreen('document-folder') }
+
+  async function migrateMyBookings() {
+    if (!authUser) return
+    setIsMigrating(true)
+    try {
+      const oldPath = `users/${authUser.uid}/bookings`
+      const oldSnap = await getDocs(collection(db, oldPath))
+      if (oldSnap.empty) {
+        setMigrationDone(true)
+        setIsMigrating(false)
+        return
+      }
+      const batch = writeBatch(db)
+      oldSnap.docs.forEach((oldDoc) => {
+        const data = oldDoc.data()
+        const newRef = doc(db, 'bookings', oldDoc.id)
+        batch.set(newRef, {
+          ...data,
+          createdByName: data.createdByName || authUser.displayName || authUser.email || '',
+          migratedFrom: oldPath,
+        }, { merge: true })
+      })
+      await batch.commit()
+      setMigrationDone(true)
+      setDataMessage(`${oldSnap.size} booking(s) migrated to shared database successfully!`)
+    } catch {
+      setDataError('Migration failed. Please try again.')
+    }
+    setIsMigrating(false)
+  }
 
   function openDocumentByTitle(title: string) {
     if (title === 'Breakdown') { openBreakdownPreview(); return }
@@ -3139,61 +3394,59 @@ function App() {
             <span>{selectedBooking.clientName}</span>
           </section>
 
-          <table className="invoice-table">
-            <thead>
-              <tr>
-                <th>Item</th>
-                <th className="desc-col">Description</th>
-                <th>Qty</th>
-                <th>Unit Price</th>
-                <th>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lineItems.map((item, index) => (
-                <tr key={`${item.description}-${index}`}>
-                  <td className="item-col">{item.description}</td>
-                  <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
-                  <td>{item.quantity}</td>
-                  <td>{formatAmount(String(item.unitPrice))}</td>
-                  <td>{formatAmount(String(item.total))}</td>
+          <div className="invoice-body-grid">
+            <table className="invoice-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th className="desc-col">Description</th>
+                  <th>Qty</th>
+                  <th>Unit Price</th>
+                  <th>Amount</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <section className="invoice-total-panel">
-            <div>
-              <span>Subtotal</span>
-              <strong>{formatAmount(String(totalPrice))}</strong>
-            </div>
-            <div>
-              <span>Total</span>
-              <strong>{formatAmount(String(totalPrice))}</strong>
-            </div>
-            <div>
-              <span>Paid</span>
-              <strong>{formatAmount(selectedBooking.invoiceAmountPaid)}</strong>
-            </div>
-            <div>
-              <span>Balance</span>
-              <strong>{formatAmount(String(balance))}</strong>
-            </div>
-            {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate && (
-              <div className="fully-paid-badge">
-                <span>Fully Paid On</span>
-                <strong>{formatProjectDate(selectedBooking.invoiceFullyPaidDate)}</strong>
-              </div>
-            )}
-            <div className="payment-placeholder">
-              <span>Payment Updates</span>
-              <ul>
-                {paymentRecords.map((record) => (
-                  <li key={record}>{record}</li>
+              </thead>
+              <tbody>
+                {lineItems.map((item, index) => (
+                  <tr key={`${item.description}-${index}`}>
+                    <td className="item-col">{item.description}</td>
+                    <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
+                    <td>{item.quantity}</td>
+                    <td>{formatAmount(String(item.unitPrice))}</td>
+                    <td>{formatAmount(String(item.total))}</td>
+                  </tr>
                 ))}
-              </ul>
-            </div>
-          </section>
+              </tbody>
+            </table>
+
+            <section className="invoice-total-panel">
+              <div className="invoice-total-row total-row">
+                <span>TOTAL</span>
+                <strong>{formatAmount(String(totalPrice))}</strong>
+              </div>
+              <div className="invoice-total-row">
+                <span>PAID</span>
+                <strong>{formatAmount(selectedBooking.invoiceAmountPaid)}</strong>
+              </div>
+              <div className="invoice-total-row">
+                <span>BALANCE</span>
+                <strong>{formatAmount(String(balance))}</strong>
+              </div>
+              {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate && (
+                <div className="invoice-total-row fully-paid-badge">
+                  <span>FULLY PAID ON</span>
+                  <strong>{formatProjectDate(selectedBooking.invoiceFullyPaidDate)}</strong>
+                </div>
+              )}
+              <div className="payment-placeholder">
+                <span>PAYMENT UPDATES</span>
+                <ul>
+                  {paymentRecords.map((record) => (
+                    <li key={record}>{record}</li>
+                  ))}
+                </ul>
+              </div>
+            </section>
+          </div>
 
           <section className="invoice-notes">
             <p>
@@ -3925,6 +4178,15 @@ function App() {
           >
             {isDark ? <Sun size={18} /> : <Moon size={18} />}
           </button>
+          <button
+            type="button"
+            className={`chat-nav-btn ${isChatOpen ? 'chat-active' : ''}`}
+            onClick={() => { setIsChatOpen(o => { isChatOpenRef.current = !o; if (!o) { setUnreadCount(0); void markMessagesSeen() } return !o }) }}
+            title="Team chat"
+          >
+            <MessageSquare size={18} />
+            {unreadCount > 0 && <span className="chat-badge">{unreadCount}</span>}
+          </button>
           <button type="button" onClick={handleLogout} title="Log out">
             <LogOut size={18} />
           </button>
@@ -3957,6 +4219,8 @@ function App() {
               </button>
             </div>
           </section>
+
+
 
           <section className="dashboard-grid">
             <article className="summary-card teal" onClick={() => setActiveBookingFilter('Inquiry')} style={{ cursor: 'pointer' }}>
@@ -4102,6 +4366,11 @@ function App() {
                   <span className="status-pill">{booking.status}</span>
                   <span><CalendarDays size={14} />{formatProjectDate(booking.createdAt)}</span>
                   <span><MapPin size={14} />{formatAmount(String(getBookingClientTotal(booking)))}</span>
+                  {(booking.createdByName || (booking as any).createdByEmail) && (
+                    <span className="booking-by-tag">
+                      By: {booking.createdByName || getDisplayName((booking as any).createdByEmail)}
+                    </span>
+                  )}
                   <ChevronRight size={17} />
                 </div>
               </button>
@@ -4119,6 +4388,193 @@ function App() {
           </div>
         </section>
       </div>
+
+      {/* CHAT PANEL */}
+      {isChatOpen && (
+        <div className="chat-panel" ref={chatPanelRef} style={{ right: chatPos.right, bottom: chatPos.bottom }}>
+          {/* Header */}
+          <div className="chat-panel-header" onMouseDown={onChatHeaderMouseDown} style={{ cursor: 'grab' }}>
+            <div className="chat-header-avatar">
+              <MessageSquare size={14} />
+            </div>
+            <div className="chat-header-info">
+              <strong>Team Chat</strong>
+              <span className="chat-header-status"><span className="chat-status-dot" />Online</span>
+            </div>
+            <div className="chat-header-nexus-badge">
+              <Bot size={11} /> Nexus
+            </div>
+            <button type="button" className="chat-close-btn" title="Close" onClick={() => setIsChatOpen(false)}><X size={15} /></button>
+          </div>
+
+          {/* Messages */}
+          <div className="chat-messages" onClick={() => setReactionPickerFor(null)}>
+            {chatMessages.length === 0 && (
+              <div className="chat-empty">
+                <div className="chat-empty-icon">💬</div>
+                <span>No messages yet. Say hi! 👋</span>
+                <span className="chat-nexus-hint">Type <strong>@Nexus</strong> to ask the AI assistant</span>
+              </div>
+            )}
+            {chatMessages.map((msg, idx) => {
+              const isMe = msg.senderEmail === authUser?.email
+              const isNexus = msg.isNexus
+              const isLast = idx === chatMessages.length - 1
+              const time = msg.createdAt?.toDate
+                ? msg.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : ''
+              const initials = msg.senderName ? msg.senderName.split(' ').map((n: string) => n[0]).join('').slice(0,2).toUpperCase() : '?'
+              const reactions = msg.reactions as Record<string, string[]> | undefined
+              const seenBy = (msg.seenBy || []) as string[]
+              const seenByOthers = seenBy.filter((e: string) => e !== authUser?.email)
+              const showSeen = isMe && isLast && seenByOthers.length > 0
+              return (
+                <div key={msg.id} className={`chat-bubble-row ${isNexus ? 'row-nexus' : isMe ? 'row-mine' : 'row-theirs'}`}>
+                  {(!isMe || isNexus) && (
+                    <div className={`chat-avatar ${isNexus ? 'chat-avatar-nexus' : ''}`}>
+                      {isNexus ? <Bot size={12} /> : initials}
+                    </div>
+                  )}
+                  <div className="chat-bubble-wrap">
+                    <div className={`chat-bubble ${isNexus ? 'chat-nexus' : isMe ? 'chat-mine' : 'chat-theirs'}`}
+                      onMouseEnter={() => {}}
+                    >
+                      {(!isMe || isNexus) && (
+                        <span className={`chat-sender ${isNexus ? 'chat-sender-nexus' : ''}`}>
+                          {isNexus ? 'Nexus AI' : msg.senderName}
+                        </span>
+                      )}
+                      <div className={`chat-text ${isNexus ? 'chat-text-nexus' : ''} ${msg.isNexusThinking ? 'chat-thinking' : ''}`}>
+                        {msg.isNexusThinking ? (
+                          <span className="chat-thinking-dots"><span/><span/><span/></span>
+                        ) : msg.text}
+                      </div>
+                      <span className="chat-time">{time}</span>
+                    </div>
+                    {/* Reaction add button */}
+                    <button
+                      type="button"
+                      className="chat-react-trigger"
+                      title="React"
+                      onClick={(e) => { e.stopPropagation(); setReactionPickerFor(reactionPickerFor === msg.id ? null : msg.id) }}
+                    >＋😊</button>
+                    {/* Reaction mini picker */}
+                    {reactionPickerFor === msg.id && (
+                      <div className={`chat-reaction-picker ${isMe ? 'picker-left' : 'picker-right'}`} onClick={e => e.stopPropagation()}>
+                        {['❤️','😂','😮','😢','😡','👍','👎','🔥','✈️','💼'].map(em => (
+                          <button key={em} type="button" className="chat-reaction-opt" onClick={() => void toggleReaction(msg.id, em)}>{em}</button>
+                        ))}
+                      </div>
+                    )}
+                    {/* Reactions display */}
+                    {reactions && Object.keys(reactions).length > 0 && (
+                      <div className={`chat-reactions ${isMe ? 'reactions-mine' : ''}`}>
+                        {Object.entries(reactions).filter(([, users]) => users.length > 0).map(([em, users]) => (
+                          <button
+                            key={em}
+                            type="button"
+                            className={`chat-reaction-pill ${users.includes(authUser?.email || '') ? 'reacted' : ''}`}
+                            onClick={() => void toggleReaction(msg.id, em)}
+                            title={users.map(e => e.split('@')[0]).join(', ')}
+                          >
+                            {em} <span>{users.length}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {/* Seen indicator */}
+                    {showSeen && (
+                      <div className="chat-seen">
+                        Seen by {seenByOthers.map((e: string) => e.split('@')[0]).join(', ')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+            <div ref={chatBottomRef} />
+          </div>
+
+          {/* Upload progress */}
+          {chatFileUploading && (
+            <div className="chat-upload-progress">
+              <div className="chat-upload-bar" style={{ width: `${chatUploadProgress}%` }} />
+              <span>Uploading… {chatUploadProgress}%</span>
+            </div>
+          )}
+
+          {/* Upload error */}
+          {chatUploadError && (
+            <div className="chat-upload-error">
+              ⚠️ {chatUploadError}
+            </div>
+          )}
+
+          {/* Emoji Picker */}
+          {showEmojiPicker && (
+            <div className="chat-emoji-picker">
+              {['😀','😂','😍','🥰','😎','🤔','😅','🙏','👍','👎','❤️','🔥','🎉','✅','⚡','💼','✈️','🌴','📋','💰','🤝','👋','😊','🥳','💪','🫡','😴','🤯','👀','💡'].map(em => (
+                <button
+                  key={em}
+                  type="button"
+                  className="chat-emoji-btn"
+                  onClick={() => {
+                    setChatInput(prev => prev + em)
+                    chatInputRef.current?.focus()
+                  }}
+                >{em}</button>
+              ))}
+            </div>
+          )}
+
+          {/* Input Row */}
+          <div className="chat-input-row">
+            <button
+              type="button"
+              className={`chat-emoji-toggle ${showEmojiPicker ? 'active' : ''}`}
+              title="Emoji"
+              onClick={() => setShowEmojiPicker(v => !v)}
+            >
+              😊
+            </button>
+            <button
+              type="button"
+              className="chat-nexus-btn"
+              title="Ask Nexus AI"
+              onClick={() => {
+                if (!chatInput.startsWith('@Nexus ')) {
+                  setChatInput(prev => '@Nexus ' + prev)
+                }
+                chatInputRef.current?.focus()
+                setShowEmojiPicker(false)
+              }}
+            >
+              <Bot size={15} />
+            </button>
+            <input
+              ref={chatInputRef}
+              className="chat-input"
+              placeholder="Aa"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendChatMessage() }
+                if (e.key === 'Escape') setShowEmojiPicker(false)
+              }}
+              onFocus={() => setShowEmojiPicker(false)}
+            />
+            <button
+              type="button"
+              className={`chat-send-btn ${chatInput.trim() ? 'active' : ''}`}
+              onClick={() => void sendChatMessage()}
+              disabled={!chatInput.trim() || chatFileUploading}
+              title="Send"
+            >
+              <Send size={16} />
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   )
 }
