@@ -732,6 +732,7 @@ function App() {
   }, [isDark])
 
   const [isPdfExporting, setIsPdfExporting] = useState(false)
+  const [bookings, setBookings] = useState<BookingRecord[]>(() => getStoredBookings())
   const pendingDeleteIds = useRef<Set<string>>(new Set())
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
   // Holds the exact booking object built at save-time so templates always
