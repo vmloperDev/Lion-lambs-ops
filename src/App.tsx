@@ -60,7 +60,8 @@ import {
   EyeOff,
   Trash2,
   CornerUpLeft,
-  Eye
+  Eye,
+  Download
 } from 'lucide-react'
 import { auth, db } from './firebase'
 import agencySeal from './assets/brand/agency-seal.png'
@@ -614,6 +615,27 @@ function getCurrentTimeStr(): string {
 function getTodayDateStr(): string {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
+// Returns "YYYY-Www" ISO week key (Mon–Sun) for a YYYY-MM-DD string
+function getIsoWeekKey(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00`)
+  const day = d.getDay() === 0 ? 7 : d.getDay() // Mon=1 … Sun=7
+  const thursday = new Date(d)
+  thursday.setDate(d.getDate() + (4 - day)) // nearest Thursday
+  const yearStart = new Date(thursday.getFullYear(), 0, 1)
+  const weekNum = Math.ceil(((thursday.getTime() - yearStart.getTime()) / 86400000 + 1) / 7)
+  return `${thursday.getFullYear()}-W${String(weekNum).padStart(2, '0')}`
+}
+
+// Returns the Mon–Sun date range label for a YYYY-MM-DD string
+function getWeekRangeLabel(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00`)
+  const day = d.getDay() === 0 ? 7 : d.getDay()
+  const mon = new Date(d); mon.setDate(d.getDate() - (day - 1))
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
+  const fmt = (x: Date) => x.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return `${fmt(mon)} – ${fmt(sun)}`
 }
 
 function formatDtrDateLong(value: string): string {
@@ -2027,15 +2049,34 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
   }
 
   async function handlePrintPreview() {
-    const printableArea = document.querySelector<HTMLElement>('.print-document')
-    if (!printableArea) { window.print(); return }
+    const isDtrScreen = screen === 'dtr'
+    let printableArea: HTMLElement | null = null
+    let restoreFn: (() => void) | null = null
+
+    if (isDtrScreen) {
+      const docEl = document.querySelector<HTMLElement>('.dtr-print-doc')
+      if (!docEl) { window.print(); return }
+      // Temporarily render the hidden DTR doc off-screen so html2canvas can capture it
+      const saved = { display: docEl.style.display, visibility: docEl.style.visibility, position: docEl.style.position, left: docEl.style.left, top: docEl.style.top, width: docEl.style.width, padding: docEl.style.padding, background: docEl.style.background }
+      docEl.style.cssText += ';display:block!important;visibility:visible!important;position:absolute!important;left:-9999px!important;top:0!important;width:794px!important;padding:32px!important;background:#fff!important;'
+      await new Promise((r) => requestAnimationFrame(r))
+      await new Promise((r) => requestAnimationFrame(r))
+      printableArea = docEl
+      restoreFn = () => Object.assign(docEl.style, saved)
+    } else {
+      printableArea = document.querySelector<HTMLElement>('.print-document')
+      if (!printableArea) { window.print(); return }
+    }
+
     try {
       setIsPdfExporting(true)
       const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
         import('html2canvas'),
         import('jspdf'),
       ])
-      const canvas = await html2canvas(printableArea, { backgroundColor: '#ffffff', scale: 2, useCORS: true })
+      const canvas = await html2canvas(printableArea, { backgroundColor: '#ffffff', scale: 2, useCORS: true, logging: false, windowWidth: isDtrScreen ? 860 : undefined })
+      restoreFn?.()
+
       const pdf = new jsPDF('p', 'mm', 'a4')
       const pageWidth = pdf.internal.pageSize.getWidth()
       const pageHeight = pdf.internal.pageSize.getHeight()
@@ -2044,7 +2085,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       const imageData = canvas.toDataURL('image/png')
       let remainingHeight = imgHeight
       let yPosition = 0
-
       pdf.addImage(imageData, 'PNG', 0, yPosition, imgWidth, imgHeight)
       remainingHeight -= pageHeight
       while (remainingHeight > 0) {
@@ -2053,11 +2093,19 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         pdf.addImage(imageData, 'PNG', 0, yPosition, imgWidth, imgHeight)
         remainingHeight -= pageHeight
       }
-      const currentBooking = bookings.find((booking) => booking.id === selectedBookingId)
-      const fileName = `${currentBooking?.quotationNo || currentBooking?.id || 'lion-lamb-document'}.pdf`
+
+      let fileName: string
+      if (isDtrScreen) {
+        const emp = dtrNameFilter === 'All' ? 'all-staff' : dtrNameFilter.replace(/\s+/g, '-').toLowerCase()
+        fileName = `DTR_${emp}_${dtrMonthFilter}.pdf`
+      } else {
+        const currentBooking = bookings.find((b) => b.id === selectedBookingId)
+        fileName = `${currentBooking?.quotationNo || currentBooking?.id || 'lion-lamb-document'}.pdf`
+      }
       pdf.save(fileName.replace(/[^\w.-]+/g, '_'))
     } catch {
-      setDataError('PDF download failed. Use Ctrl+P and turn off browser headers and footers.')
+      restoreFn?.()
+      setDataError(isDtrScreen ? 'DTR PDF export failed. Use the Print button as a fallback.' : 'PDF download failed. Use Ctrl+P and turn off browser headers and footers.')
       window.print()
     } finally {
       setIsPdfExporting(false)
@@ -4515,10 +4563,22 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span className="dtr-live-clock-date">{formatLiveDateShort(liveClock)}</span>
             </div>
           </div>
-          <button type="button" className="dtr-print-btn" onClick={() => window.print()}>
-            <Printer size={16} />
-            Print
-          </button>
+          <div className="dtr-header-actions">
+            <button
+              type="button"
+              className="dtr-pdf-btn"
+              onClick={handlePrintPreview}
+              disabled={isPdfExporting}
+              title={isPdfExporting ? 'Preparing PDF...' : 'Download DTR as PDF'}
+            >
+              <Download size={16} />
+              <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
+            </button>
+            <button type="button" className="dtr-print-btn" onClick={() => window.print()} title="Print DTR">
+              <Printer size={16} />
+              Print
+            </button>
+          </div>
         </header>
 
         {dtrError && <div className="dtr-banner dtr-banner-error">{dtrError}</div>}
@@ -4758,6 +4818,24 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <div className="dtr-print-doc-certification">
                 <p>I hereby certify, on my honor, that the above is a true and correct record of the hours of work performed, record of which was made daily at the time of arrival at and departure from the office.</p>
               </div>
+
+              <div className="dtr-print-doc-signoff">
+                <div className="dtr-print-signoff-block">
+                  <div className="dtr-print-sig-line" />
+                  <p className="dtr-print-sig-name">&nbsp;</p>
+                  <p className="dtr-print-sig-label">Employee Signature &amp; Date</p>
+                </div>
+                <div className="dtr-print-signoff-block">
+                  <div className="dtr-print-sig-line" />
+                  <p className="dtr-print-sig-name">&nbsp;</p>
+                  <p className="dtr-print-sig-label">Supervisor / Manager</p>
+                </div>
+                <div className="dtr-print-signoff-block">
+                  <div className="dtr-print-sig-line" />
+                  <p className="dtr-print-sig-name">&nbsp;</p>
+                  <p className="dtr-print-sig-label">Verified By &amp; Date</p>
+                </div>
+              </div>
             </div>
 
             <div className="dtr-summary-strip">
@@ -4776,6 +4854,80 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <p>Avg / day</p>
               </div>
             </div>
+
+            <div className="dtr-summary-strip">
+              <div className="dtr-summary-stat">
+                <span>{daysLoggedVisible}</span>
+                <p>Days logged</p>
+              </div>
+              <div className="dtr-summary-divider" />
+              <div className="dtr-summary-stat">
+                <span>{formatMinutesAsHm(totalMinutesVisible)}</span>
+                <p>Total hours</p>
+              </div>
+              <div className="dtr-summary-divider" />
+              <div className="dtr-summary-stat">
+                <span>{daysLoggedVisible > 0 ? formatMinutesAsHm(Math.round(totalMinutesVisible / daysLoggedVisible)) : '—'}</span>
+                <p>Avg / day</p>
+              </div>
+            </div>
+
+            {/* ── Weekly hours tracker ── */}
+            {visibleEntries.length > 0 && (() => {
+              const weekTarget = 40 * 60 // 40-hour work week in minutes
+              // Group visible entries by ISO week
+              const weekMap = new Map<string, { entries: DtrEntry[]; label: string }>()
+              for (const entry of visibleEntries) {
+                const key = getIsoWeekKey(entry.date)
+                if (!weekMap.has(key)) weekMap.set(key, { entries: [], label: getWeekRangeLabel(entry.date) })
+                weekMap.get(key)!.entries.push(entry)
+              }
+              const weeks = Array.from(weekMap.entries())
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([key, { entries, label }]) => {
+                  const minutes = entries.reduce((s, e) => s + getDtrEntryMinutes(e), 0)
+                  const days = new Set(entries.map((e) => e.date)).size
+                  const pct = Math.min(100, (minutes / weekTarget) * 100)
+                  const isOver = minutes > weekTarget
+                  const today = getTodayDateStr()
+                  const isCurrentWeek = entries.some((e) => getIsoWeekKey(e.date) === getIsoWeekKey(today))
+                  return { key, label, minutes, days, pct, isOver, isCurrentWeek }
+                })
+              return (
+                <div className="dtr-weekly-tracker no-print">
+                  <div className="dtr-weekly-header">
+                    <p className="dtr-weekly-title">Weekly Hours</p>
+                    <span className="dtr-weekly-target">Target: 40h / week</span>
+                  </div>
+                  <div className="dtr-weekly-rows">
+                    {weeks.map((w) => (
+                      <div key={w.key} className={`dtr-week-row ${w.isCurrentWeek ? 'dtr-week-current' : ''}`}>
+                        <div className="dtr-week-meta">
+                          <span className="dtr-week-range">
+                            {w.label}
+                            {w.isCurrentWeek && <span className="dtr-week-now-pill">This week</span>}
+                          </span>
+                          <span className="dtr-week-stats">{w.days}d logged</span>
+                        </div>
+                        <div className="dtr-week-bar-wrap">
+                          <div className="dtr-week-bar-track">
+                            <div
+                              className={`dtr-week-bar-fill ${w.isOver ? 'dtr-week-bar-over' : w.pct >= 80 ? 'dtr-week-bar-good' : ''}`}
+                              style={{ width: `${w.pct}%` }}
+                            />
+                            <div className="dtr-week-bar-target-line" title="40h target" />
+                          </div>
+                          <span className={`dtr-week-hours ${w.isOver ? 'dtr-week-hours-over' : ''}`}>
+                            {formatMinutesAsHm(w.minutes)}
+                            {w.isOver && <span className="dtr-week-over-badge">+{formatMinutesAsHm(w.minutes - weekTarget)}</span>}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
 
             <div className="dtr-ledger">
               {visibleEntries.length === 0 ? (
@@ -4823,23 +4975,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               )}
             </div>
 
-            <div className="dtr-print-doc-signoff print-only">
-              <div className="dtr-print-signoff-block">
-                <div className="dtr-print-sig-line" />
-                <p className="dtr-print-sig-name">&nbsp;</p>
-                <p className="dtr-print-sig-label">Employee Signature &amp; Date</p>
-              </div>
-              <div className="dtr-print-signoff-block">
-                <div className="dtr-print-sig-line" />
-                <p className="dtr-print-sig-name">&nbsp;</p>
-                <p className="dtr-print-sig-label">Supervisor / Manager</p>
-              </div>
-              <div className="dtr-print-signoff-block">
-                <div className="dtr-print-sig-line" />
-                <p className="dtr-print-sig-name">&nbsp;</p>
-                <p className="dtr-print-sig-label">Verified By &amp; Date</p>
-              </div>
-            </div>
           </section>
         </div>
       </main>

@@ -2645,6 +2645,17 @@ input, select, textarea { font: inherit; }
 }
 .dtr-live-clock-period { font-size: .62rem; font-weight: 800; color: var(--teal-dark); }
 .dtr-live-clock-date { font-size: .68rem; color: var(--muted); font-weight: 600; margin-top: 1px; }
+.dtr-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.dtr-pdf-btn {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 18px; border-radius: var(--r-sm);
+  background: var(--navy); color: #fff; border: none;
+  font-weight: 600; font-size: .88rem; cursor: pointer;
+  box-shadow: var(--sh-xs); transition: var(--t);
+  flex-shrink: 0;
+}
+.dtr-pdf-btn:hover:not(:disabled) { background: #0f2f47; box-shadow: var(--sh-sm); transform: translateY(-1px); }
+.dtr-pdf-btn:disabled { opacity: .6; cursor: not-allowed; }
 .dtr-print-btn {
   display: flex; align-items: center; gap: 8px;
   padding: 10px 18px; border-radius: var(--r-sm);
@@ -2877,6 +2888,80 @@ input, select, textarea { font: inherit; }
 .dtr-row-actions button:hover { background: var(--teal-light); color: var(--teal-dark); border-color: var(--teal-mid); }
 .dtr-row-actions button:last-child:hover { background: var(--red-light); color: var(--red); border-color: var(--red-mid); }
 
+/* ---- Weekly hours tracker ---- */
+.dtr-weekly-tracker {
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.dtr-weekly-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 16px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.dtr-weekly-title {
+  margin: 0; font-weight: 800; font-size: .78rem; text-transform: uppercase;
+  letter-spacing: .07em; color: var(--navy);
+}
+.dtr-weekly-target {
+  font-size: .72rem; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .05em;
+}
+.dtr-weekly-rows { display: flex; flex-direction: column; }
+.dtr-week-row {
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border);
+  transition: background var(--t);
+}
+.dtr-week-row:last-child { border-bottom: none; }
+.dtr-week-row:hover { background: var(--teal-light); }
+.dtr-week-current { background: var(--gold-light) !important; }
+.dtr-week-current:hover { background: #fef3cd !important; }
+.dtr-week-meta {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 7px;
+}
+.dtr-week-range {
+  font-size: .82rem; font-weight: 700; color: var(--ink);
+  display: flex; align-items: center; gap: 8px;
+}
+.dtr-week-now-pill {
+  font-size: .6rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em;
+  background: var(--gold); color: var(--navy);
+  padding: 2px 7px; border-radius: 999px;
+}
+.dtr-week-stats { font-size: .72rem; color: var(--muted); font-weight: 600; }
+.dtr-week-bar-wrap { display: flex; align-items: center; gap: 12px; }
+.dtr-week-bar-track {
+  flex: 1; height: 8px; border-radius: 999px;
+  background: var(--surface-3); position: relative; overflow: visible;
+}
+.dtr-week-bar-fill {
+  height: 100%; border-radius: 999px; background: var(--teal-mid);
+  transition: width .4s cubic-bezier(.4,0,.2,1);
+  min-width: 4px;
+}
+.dtr-week-bar-good { background: var(--teal); }
+.dtr-week-bar-over { background: #4ade80; }
+/* thin vertical line at the 100% mark to show target */
+.dtr-week-bar-target-line {
+  position: absolute; top: -3px; bottom: -3px; right: 0; width: 2px;
+  background: var(--border-mid); border-radius: 2px;
+}
+.dtr-week-hours {
+  font-family: 'Space Mono', monospace; font-size: .82rem; font-weight: 700;
+  color: var(--navy); min-width: 58px; text-align: right;
+  display: flex; align-items: center; gap: 6px; justify-content: flex-end;
+}
+.dtr-week-hours-over { color: #16a34a; }
+.dtr-week-over-badge {
+  font-size: .62rem; font-weight: 800; background: #dcfce7; color: #15803d;
+  padding: 1px 6px; border-radius: 999px; white-space: nowrap;
+}
+
 /* ---- Print ---- */
 @media print {
   /* Reset page */
@@ -2899,6 +2984,7 @@ input, select, textarea { font: inherit; }
     color: #000;
     width: 100%;
   }
+  .dtr-print-doc-signoff { display: flex !important; }
 
   /* ── Header ── */
   .dtr-print-doc-header {
@@ -3024,7 +3110,6 @@ input, select, textarea { font: inherit; }
 }
 .print-only { display: none; }
 .dtr-print-doc { display: none; }
-.dtr-print-doc-signoff { display: none; }
 
 @media (max-width: 900px) {
   .dtr-body { grid-template-columns: 1fr; }
