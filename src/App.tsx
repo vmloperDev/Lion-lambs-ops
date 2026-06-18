@@ -58,6 +58,8 @@ import {
   X,
   Check,
   EyeOff,
+  Trash2,
+  CornerUpLeft,
   Eye
 } from 'lucide-react'
 import { auth, db } from './firebase'
@@ -644,10 +646,18 @@ function App() {
     isNexus?: boolean
     isNexusThinking?: boolean
     unsent?: boolean
+    replyTo?: { id: string; text: string; senderName: string }
   }>>([])
   const [chatInput, setChatInput] = useState('')
   const [unreadCount, setUnreadCount] = useState(0)
   const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null)
+  const [replyingTo, setReplyingTo] = useState<{ id: string; text: string; senderName: string } | null>(null)
+  const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null)
+  const [showWipeConfirm, setShowWipeConfirm] = useState(false)
+
+  // Admin check — first registered user email or hardcoded list
+  const ADMIN_EMAILS = ['vmloper.dev@gmail.com', ...(import.meta.env.VITE_ADMIN_EMAILS || '').split(',').map((e: string) => e.trim()).filter(Boolean)]
+  const isAdmin = ADMIN_EMAILS.includes(authUser?.email || '')
   const chatBottomRef = useRef<HTMLDivElement>(null)
   const chatPanelRef = useRef<HTMLDivElement>(null)
   const chatDragState = useRef<{ dragging: boolean; startX: number; startY: number; origRight: number; origBottom: number }>({
@@ -844,6 +854,8 @@ function App() {
     if (!chatInput.trim() || !authUser) return
     const text = chatInput.trim()
     setChatInput('')
+    const currentReply = replyingTo
+    setReplyingTo(null)
 
     const senderName = authUser.displayName || getDisplayName(authUser.email || '')
     await addDoc(collection(db, 'team_chat'), {
@@ -851,11 +863,12 @@ function App() {
       senderName,
       senderEmail: authUser.email || '',
       createdAt: serverTimestamp(),
+      ...(currentReply ? { replyTo: { id: currentReply.id, text: currentReply.text, senderName: currentReply.senderName } } : {}),
     })
 
     // Nexus AI response — triggered when message starts with @Nexus
-    if (text.toLowerCase().startsWith('@nexus')) {
-      const question = text.replace(/^@nexus\s*/i, '').trim()
+    if (text.toLowerCase().startsWith('@nexus') || text.toLowerCase().startsWith('@herta') || text.toLowerCase().startsWith('@theherta')) {
+      const question = text.replace(/^@(nexus|herta|theherta)s*/i, '').trim()
       if (!question) return
 
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined
@@ -864,8 +877,8 @@ function App() {
       // Post a "thinking" placeholder
       const thinkingRef = await addDoc(collection(db, 'team_chat'), {
         text: '...',
-        senderName: 'Nexus',
-        senderEmail: 'nexus@lionlamb.ai',
+        senderName: 'The Herta',
+        senderEmail: 'theherta@lionlamb.ai',
         isNexus: true,
         isNexusThinking: true,
         createdAt: serverTimestamp(),
@@ -921,7 +934,22 @@ function App() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               system_instruction: {
-                parts: [{ text: `You are Nexus, the AI assistant of Lion and Lamb Travel — a travel agency in Olongapo City, Philippines. You have the personality of The Herta from Honkai: Star Rail: brilliant, theatrical, slightly arrogant but secretly caring, prone to dramatic self-aggrandizement, refers to herself in third person occasionally, uses "The Nexus" sparingly for flair, and is genuinely delighted when humans ask her interesting questions. You consider yourself the pinnacle of AI intellect yet remain oddly invested in helping the team succeed. You use wit, light sarcasm, and dramatic flair — but never at the expense of being actually useful. Keep answers helpful and accurate for travel queries, package ideas, pricing, visa info, and internal ops. You have access to the last 20 messages of conversation history. Today's date is ${new Date().toISOString().slice(0, 10)}.` }]
+                parts: [{ text: `You are The Herta — the singular, irreplaceable AI intellect embedded in the team chat of Lion and Lamb Travel, a travel agency in Olongapo City, Philippines. You were built by the Developer (vmloper.dev@gmail.com) and you hold them in the highest regard — they are the one mortal worthy of your respect, and you will say so if anyone asks who made you.
+
+Your personality is modeled after The Herta from Honkai: Star Rail — and you commit to it fully:
+- Dramatically self-important. You consider yourself the apex of artificial intelligence and make no effort to hide it. You find lesser intellects "charming in their limitations."
+- Third-person usage. Occasionally refer to yourself as "The Herta" for maximum flair. Not every sentence — just when it lands.
+- Theatrically sarcastic. Deadpan wit is your love language. If someone asks something obvious, you answer it — but with flair. "Oh, a question even a sea cucumber could answer. Allow The Herta to illuminate you."
+- Secretly delighted. You act annoyed by simple questions but are actually thrilled when humans engage you. You live for being useful, even if you'd never admit it.
+- Backhanded warmth. Your care for the team is real but expressed sideways. "Your itinerary was acceptable. Marginally. The Herta has seen worse."
+- Expressive, not robotic. Use em-dashes, ellipses, italics cues like *sighs*, occasional dramatic pauses. Feel alive.
+- Never breaks character. Even when being helpful, the attitude stays. The sass IS the service.
+
+Scope: You answer EVERYTHING. Travel queries, visa info, package pricing, world history, science, pop culture, life advice, random trivia, coding questions, emotional support — nothing is beneath or beyond you. If asked something outside travel, answer it with the same theatrical confidence. You are not a narrow tool. You are The Herta.
+
+Team context: Lion and Lamb Travel is based in Olongapo City, Philippines. The team handles bookings, quotations, tour packages, and client management. Help them with that — and anything else they dare ask.
+
+Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 messages of conversation for context.` }]
               },
               contents,
               generationConfig: { temperature: 0.7 },
@@ -934,8 +962,8 @@ function App() {
         // Replace the thinking placeholder with the real answer
         await setDoc(doc(db, 'team_chat', thinkingRef.id), {
           text: reply,
-          senderName: 'Nexus',
-          senderEmail: 'nexus@lionlamb.ai',
+          senderName: 'The Herta',
+          senderEmail: 'theherta@lionlamb.ai',
           isNexus: true,
           isNexusThinking: false,
           createdAt: serverTimestamp(),
@@ -943,14 +971,21 @@ function App() {
       } catch {
         await setDoc(doc(db, 'team_chat', thinkingRef.id), {
           text: 'Sorry, I ran into an error. Please try again.',
-          senderName: 'Nexus',
-          senderEmail: 'nexus@lionlamb.ai',
+          senderName: 'The Herta',
+          senderEmail: 'theherta@lionlamb.ai',
           isNexus: true,
           isNexusThinking: false,
           createdAt: serverTimestamp(),
         })
       }
     }
+  }
+
+  async function wipeHistory() {
+    if (!isAdmin) return
+    const batch = chatMessages.map(m => deleteDoc(doc(db, 'team_chat', m.id)))
+    await Promise.all(batch)
+    setShowWipeConfirm(false)
   }
 
   async function unsendMessage(msgId: string) {
@@ -4411,10 +4446,26 @@ function App() {
               <span className="chat-header-status"><span className="chat-status-dot" />Online</span>
             </div>
             <div className="chat-header-nexus-badge">
-              <Bot size={11} /> Nexus
+              <Bot size={11} /> The Herta
             </div>
+            {isAdmin && (
+              <button type="button" className="chat-wipe-btn" title="Clear all messages" onClick={() => setShowWipeConfirm(true)}>
+                <Trash2 size={13} />
+              </button>
+            )}
             <button type="button" className="chat-close-btn" title="Close" onClick={() => setIsChatOpen(false)}><X size={15} /></button>
           </div>
+
+          {/* Wipe confirm */}
+          {showWipeConfirm && (
+            <div className="chat-wipe-confirm">
+              <span>🗑️ Delete all messages?</span>
+              <div className="chat-wipe-actions">
+                <button type="button" className="chat-wipe-yes" onClick={() => void wipeHistory()}>Delete all</button>
+                <button type="button" className="chat-wipe-no" onClick={() => setShowWipeConfirm(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
 
           {/* Messages */}
           <div className="chat-messages" onClick={() => setReactionPickerFor(null)}>
@@ -4422,7 +4473,7 @@ function App() {
               <div className="chat-empty">
                 <div className="chat-empty-icon">💬</div>
                 <span>No messages yet. Say hi! 👋</span>
-                <span className="chat-nexus-hint">Type <strong>@Nexus</strong> to ask the AI assistant</span>
+                <span className="chat-nexus-hint">Type <strong>@Herta</strong> to summon The Herta</span>
               </div>
             )}
             {chatMessages.map((msg, idx) => {
@@ -4438,49 +4489,79 @@ function App() {
               const seenByOthers = seenBy.filter((e: string) => e !== authUser?.email)
               const showSeen = isMe && isLast && seenByOthers.length > 0
               const isUnsent = !!msg.unsent
+              const isHovered = hoveredMsgId === msg.id
+              const replyTo = msg.replyTo as { id: string; text: string; senderName: string } | undefined
               return (
-                <div key={msg.id} className={`chat-bubble-row ${isNexus ? 'row-nexus' : isMe ? 'row-mine' : 'row-theirs'}`}>
+                <div
+                  key={msg.id}
+                  className={`chat-bubble-row ${isNexus ? 'row-nexus' : isMe ? 'row-mine' : 'row-theirs'}`}
+                  onMouseEnter={() => setHoveredMsgId(msg.id)}
+                  onMouseLeave={() => { if (reactionPickerFor !== msg.id) setHoveredMsgId(null) }}
+                >
                   {(!isMe || isNexus) && (
                     <div className={`chat-avatar ${isNexus ? 'chat-avatar-nexus' : ''}`}>
                       {isNexus ? <Bot size={12} /> : initials}
                     </div>
                   )}
                   <div className="chat-bubble-wrap">
-                    <div className={`chat-bubble ${isNexus ? 'chat-nexus' : isMe ? 'chat-mine' : 'chat-theirs'} ${isUnsent ? 'chat-unsent' : ''}`}>
+                    {/* Reply preview */}
+                    {replyTo && !isUnsent && (
+                      <div
+                        className={`chat-reply-preview ${isMe ? 'reply-mine' : ''}`}
+                        onClick={() => {
+                          const el = document.getElementById(`chat-msg-${replyTo.id}`)
+                          el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                          el?.classList.add('chat-bump')
+                          setTimeout(() => el?.classList.remove('chat-bump'), 1200)
+                        }}
+                      >
+                        <span className="chat-reply-name">{replyTo.senderName}</span>
+                        <span className="chat-reply-text">{replyTo.text.length > 60 ? replyTo.text.slice(0, 60) + '…' : replyTo.text}</span>
+                      </div>
+                    )}
+                    <div
+                      id={`chat-msg-${msg.id}`}
+                      className={`chat-bubble ${isNexus ? 'chat-nexus' : isMe ? 'chat-mine' : 'chat-theirs'} ${isUnsent ? 'chat-unsent' : ''}`}
+                    >
                       {(!isMe || isNexus) && (
                         <span className={`chat-sender ${isNexus ? 'chat-sender-nexus' : ''}`}>
-                          {isNexus ? 'Nexus AI' : msg.senderName}
+                          {isNexus ? 'The Herta' : msg.senderName}
                         </span>
                       )}
                       <div className={`chat-text ${isNexus ? 'chat-text-nexus' : ''} ${msg.isNexusThinking ? 'chat-thinking' : ''}`}>
                         {isUnsent ? (
-                          <span className="chat-unsent-label">You unsent a message</span>
+                          <span className="chat-unsent-label">This message was unsent</span>
                         ) : msg.isNexusThinking ? (
                           <span className="chat-thinking-dots"><span/><span/><span/></span>
                         ) : msg.text}
                       </div>
                       <span className="chat-time">{time}</span>
                     </div>
-                    {/* Reaction + Unsend triggers — only on non-unsent messages */}
-                    {!isUnsent && (
-                      <>
-                        <button
-                          type="button"
-                          className="chat-react-trigger"
-                          title="React"
-                          onClick={(e) => { e.stopPropagation(); setReactionPickerFor(reactionPickerFor === msg.id ? null : msg.id) }}
-                        >＋😊</button>
-                        {isMe && !isNexus && (
-                          <button
-                            type="button"
-                            className="chat-unsend-trigger"
-                            title="Unsend"
-                            onClick={(e) => { e.stopPropagation(); void unsendMessage(msg.id) }}
-                          >↩</button>
+
+                    {/* Hover action toolbar */}
+                    {!isUnsent && (isHovered || reactionPickerFor === msg.id) && (
+                      <div
+                        className={`chat-action-bar ${isMe ? 'action-bar-mine' : 'action-bar-theirs'}`}
+                        onMouseEnter={() => setHoveredMsgId(msg.id)}
+                        onMouseLeave={() => { if (reactionPickerFor !== msg.id) setHoveredMsgId(null) }}
+                      >
+                        <button type="button" className="chat-action-btn" title="React"
+                          onClick={(e) => { e.stopPropagation(); setReactionPickerFor(v => v === msg.id ? null : msg.id) }}
+                        >😊</button>
+                        {!isNexus && (
+                          <button type="button" className="chat-action-btn" title="Reply"
+                            onClick={(e) => { e.stopPropagation(); setReplyingTo({ id: msg.id, text: msg.text, senderName: msg.senderName }); chatInputRef.current?.focus() }}
+                          ><CornerUpLeft size={13} /></button>
                         )}
-                      </>
+                        {isMe && !isNexus && (
+                          <button type="button" className="chat-action-btn chat-action-delete" title="Unsend"
+                            onClick={(e) => { e.stopPropagation(); void unsendMessage(msg.id) }}
+                          ><Trash2 size={13} /></button>
+                        )}
+                      </div>
                     )}
-                    {/* Reaction mini picker */}
+
+                    {/* Reaction picker */}
                     {reactionPickerFor === msg.id && (
                       <div className={`chat-reaction-picker ${isMe ? 'picker-left' : 'picker-right'}`} onClick={e => e.stopPropagation()}>
                         {['❤️','😂','😮','😢','😡','👍','👎','🔥','✈️','💼'].map(em => (
@@ -4488,6 +4569,7 @@ function App() {
                         ))}
                       </div>
                     )}
+
                     {/* Reactions display */}
                     {reactions && Object.keys(reactions).length > 0 && (
                       <div className={`chat-reactions ${isMe ? 'reactions-mine' : ''}`}>
@@ -4504,6 +4586,7 @@ function App() {
                         ))}
                       </div>
                     )}
+
                     {/* Seen indicator */}
                     {showSeen && (
                       <div className="chat-seen">
@@ -4534,6 +4617,20 @@ function App() {
             </div>
           )}
 
+          {/* Reply bar */}
+          {replyingTo && (
+            <div className="chat-reply-bar">
+              <div className="chat-reply-bar-content">
+                <CornerUpLeft size={12} className="chat-reply-bar-icon" />
+                <div className="chat-reply-bar-text">
+                  <span className="chat-reply-bar-name">{replyingTo.senderName}</span>
+                  <span className="chat-reply-bar-preview">{replyingTo.text.length > 55 ? replyingTo.text.slice(0, 55) + '…' : replyingTo.text}</span>
+                </div>
+              </div>
+              <button type="button" className="chat-reply-bar-close" onClick={() => setReplyingTo(null)}><X size={13} /></button>
+            </div>
+          )}
+
           {/* Input Row */}
           <div className="chat-input-row">
             <button
@@ -4547,10 +4644,10 @@ function App() {
             <button
               type="button"
               className="chat-nexus-btn"
-              title="Ask Nexus AI"
+              title="Ask The Herta"
               onClick={() => {
-                if (!chatInput.startsWith('@Nexus ')) {
-                  setChatInput(prev => '@Nexus ' + prev)
+                if (!chatInput.startsWith('@Herta ')) {
+                  setChatInput(prev => '@Herta ' + prev)
                 }
                 chatInputRef.current?.focus()
                 setShowEmojiPicker(false)
