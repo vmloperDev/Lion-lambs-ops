@@ -134,6 +134,7 @@ type BookingFormData = {
   clientName: string
   contactNumber: string
   clientEmail: string
+  currency: string
   packageName: string
   destination: string
   travelStart: string
@@ -227,6 +228,7 @@ const emptyBookingForm: BookingFormData = {
   clientName: '',
   contactNumber: '',
   clientEmail: '',
+  currency: 'PHP',
   packageName: '',
   destination: '',
   travelStart: '',
@@ -352,12 +354,12 @@ function normalizeBooking(booking: BookingRecord): BookingRecord {
   }
 }
 
-function formatAmount(value?: string) {
+function formatAmount(value?: string, currency = 'PHP') {
   const amount = parseAmount(value)
   if (!Number.isFinite(amount) || amount <= 0) {
-    return 'PHP 0.00'
+    return `${currency} 0.00`
   }
-  return `PHP ${amount.toLocaleString('en-PH', {
+  return `${currency} ${amount.toLocaleString('en-PH', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`
@@ -876,6 +878,72 @@ function App() {
   // Holds the exact booking object built at save-time so templates always
   // reflect the latest saved data regardless of Firestore snapshot timing.
   const lastSavedBookingRef = useRef<BookingRecord | null>(null)
+
+  // ── Currency & exchange rate ──────────────────────────────────────────────
+  const SUPPORTED_CURRENCIES = [
+    'PHP','USD','EUR','GBP','JPY','AUD','CAD','CHF','CNY','HKD','SGD','KRW',
+    'THB','MYR','IDR','VND','INR','AED','SAR','QAR','KWD','BHD','OMR',
+    'NZD','NOK','SEK','DKK','ZAR','MXN','BRL','TWD',
+  ]
+  const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({})
+  const [ratesLoadedAt, setRatesLoadedAt] = useState<Date | null>(null)
+  const [ratesLoading, setRatesLoading] = useState(false)
+  const [ratesClock, setRatesClock] = useState(0) // ticks every second on data-form
+
+  // Fetch rates from open.er-api.com (free, no key, supports PHP as base)
+  useEffect(() => {
+    let cancelled = false
+    async function fetchRates() {
+      setRatesLoading(true)
+      try {
+        const res = await fetch('https://open.er-api.com/v6/latest/PHP')
+        if (!res.ok) throw new Error('rate fetch failed')
+        const data = await res.json()
+        if (!cancelled && data.result === 'success') {
+          setExchangeRates(data.rates) // already includes PHP: 1
+          setRatesLoadedAt(new Date())
+        }
+      } catch {
+        // silently fall back — rates stay empty, UI shows n/a
+      } finally {
+        if (!cancelled) setRatesLoading(false)
+      }
+    }
+    fetchRates()
+    // Refresh every 10 minutes
+    const interval = setInterval(fetchRates, 10 * 60 * 1000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [])
+
+  // Tick ratesClock every second so the "X seconds ago" freshness counter is live
+  useEffect(() => {
+    if (screen !== 'data-form') return
+    const t = setInterval(() => setRatesClock((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [screen])
+
+  const currentCurrency = bookingForm.currency || 'PHP'
+  const rateFromPHP = exchangeRates[currentCurrency] ?? null // null = not loaded yet
+
+  // Format an amount that is already in the booking's chosen currency — no conversion needed.
+  // convertAndFormat: just labels the number with the right currency code.
+  function convertAndFormat(amount: number, currency: string, _rates?: Record<string, number>) {
+    return formatAmount(String(amount), currency || 'PHP')
+  }
+
+  // For the data-form summary totals (already in chosen currency)
+  function formatWithCurrency(amount: number) {
+    return formatAmount(String(amount), currentCurrency)
+  }
+
+  // Convert a chosen-currency amount TO PHP for reference display
+  function toPhpEquivalent(amount: number, currency: string): string {
+    if (!currency || currency === 'PHP') return ''
+    const rate = exchangeRates[currency] ?? null
+    if (rate === null || rate === 0) return ''
+    const php = amount / rate
+    return `≈ PHP ${php.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
   const [invoiceForm, setInvoiceForm] = useState({
     paymentMethod: '',
     paymentRecords: '',
@@ -1941,13 +2009,18 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     event.preventDefault()
     const targetBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
+    // Saving payment details on the invoice screen should never silently
+    // change the project's status (e.g. bump a Confirmed project back down
+    // to Invoice). Status is only ever changed by the user, either via the
+    // status dropdown in the data form or the quick-status action on the
+    // project screen — never as a side effect of saving here.
     setBookings((currentBookings) =>
       currentBookings.map((booking) =>
-        booking.id === selectedBookingId ? { ...booking, ...invoiceForm, status: 'Invoice' } : booking
+        booking.id === selectedBookingId ? { ...booking, ...invoiceForm } : booking
       )
     )
     if (lastSavedBookingRef.current?.id === selectedBookingId) {
-      lastSavedBookingRef.current = { ...lastSavedBookingRef.current, ...invoiceForm, status: 'Invoice' }
+      lastSavedBookingRef.current = { ...lastSavedBookingRef.current, ...invoiceForm }
     }
 
     try {
@@ -1964,7 +2037,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       })
       await setDoc(doc(db, resolvedPath, selectedBookingId), {
         ...invoiceForm,
-        status: 'Invoice',
         updatedAt: new Date().toISOString(),
       }, { merge: true })
       setDataError('')
@@ -2434,6 +2506,45 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </div>
             <p className="field-help">For internal use only. Track what you pay the supplier vs what you charge the client. Toggle "Send to invoice" to push a row (item name, qty, and client price) to the client invoice, or "Send to P.O." to include it on a Purchase Order.</p>
 
+            {/* Currency selector + live rate */}
+            <div className="currency-bar">
+              <label className="currency-select-label">
+                <span>Currency</span>
+                <select
+                  value={currentCurrency}
+                  onChange={(e) => updateBookingField('currency', e.target.value)}
+                >
+                  {SUPPORTED_CURRENCIES.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="rate-badge">
+                {ratesLoading && !ratesLoadedAt ? (
+                  <span className="rate-loading">Fetching live rates…</span>
+                ) : rateFromPHP !== null && currentCurrency !== 'PHP' ? (
+                  <>
+                    <span className="rate-live-dot" title="Live rate" />
+                    <span className="rate-value">
+                      1 {currentCurrency} = {(1 / rateFromPHP).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} PHP
+                    </span>
+                    {ratesLoadedAt && (() => {
+                      const secsAgo = Math.floor((Date.now() - ratesLoadedAt.getTime()) / 1000)
+                      const label = secsAgo < 60
+                        ? `${secsAgo}s ago`
+                        : `${Math.floor(secsAgo / 60)}m ${secsAgo % 60}s ago`
+                      void ratesClock // subscribe to tick
+                      return <span className="rate-time">· Updated {label}</span>
+                    })()}
+                  </>
+                ) : currentCurrency === 'PHP' ? (
+                  <span className="rate-value">🇵🇭 Philippine Peso — base currency</span>
+                ) : (
+                  <span className="rate-loading">Rate unavailable — check connection</span>
+                )}
+              </div>
+            </div>
+
             <div className="line-items-panel">
               <div className="line-items-heading">
                 <div>
@@ -2586,21 +2697,31 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                           <UserRound size={13} />
                         </button>
                       </div>
-                      <input
-                        type="text"
-                        value={item.unitPrice}
-                        onChange={(e) => changeBreakdownItemField(index, 'unitPrice', e.target.value)}
-                        placeholder="0.00"
-                      />
-                      <input
-                        type="text"
-                        className={item.isPackageRow ? 'disabled-field' : undefined}
-                        value={item.isPackageRow ? '' : item.nettCost}
-                        onChange={(e) => changeBreakdownItemField(index, 'nettCost', e.target.value)}
-                        placeholder={item.isPackageRow ? 'N/A' : '0.00'}
-                        disabled={item.isPackageRow}
-                        title={item.isPackageRow ? 'Package row has no supplier nett — it\'s the client-facing package price, always sent to the invoice' : undefined}
-                      />
+                      <div className="price-input-wrap">
+                        <input
+                          type="text"
+                          value={item.unitPrice}
+                          onChange={(e) => changeBreakdownItemField(index, 'unitPrice', e.target.value)}
+                          placeholder="0.00"
+                        />
+                        {currentCurrency !== 'PHP' && item.unitPrice && (
+                          <span className="php-equiv">{toPhpEquivalent(parseAmount(item.unitPrice), currentCurrency)}</span>
+                        )}
+                      </div>
+                      <div className="price-input-wrap">
+                        <input
+                          type="text"
+                          className={item.isPackageRow ? 'disabled-field' : undefined}
+                          value={item.isPackageRow ? '' : item.nettCost}
+                          onChange={(e) => changeBreakdownItemField(index, 'nettCost', e.target.value)}
+                          placeholder={item.isPackageRow ? 'N/A' : '0.00'}
+                          disabled={item.isPackageRow}
+                          title={item.isPackageRow ? 'Package row has no supplier nett — it\'s the client-facing package price, always sent to the invoice' : undefined}
+                        />
+                        {currentCurrency !== 'PHP' && !item.isPackageRow && item.nettCost && (
+                          <span className="php-equiv">{toPhpEquivalent(parseAmount(item.nettCost), currentCurrency)}</span>
+                        )}
+                      </div>
                       <button
                         type="button"
                         className={`send-to-invoice-btn ${item.isPackageRow || item.sendToInvoice ? 'active' : ''}`}
@@ -2636,17 +2757,20 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <div className="line-items-summary">
                 <article>
                   <span>Client total</span>
-                  <strong>{formatAmount(String(displayTotalClient))}</strong>
+                  <strong>{formatWithCurrency(displayTotalClient)}</strong>
+                  {currentCurrency !== 'PHP' && <small className="php-equiv-total">{toPhpEquivalent(displayTotalClient, currentCurrency)}</small>}
                 </article>
                 <article>
                   <span>Supplier nett</span>
-                  <strong>{formatAmount(String(displayTotalNett))}</strong>
+                  <strong>{formatWithCurrency(displayTotalNett)}</strong>
+                  {currentCurrency !== 'PHP' && <small className="php-equiv-total">{toPhpEquivalent(displayTotalNett, currentCurrency)}</small>}
                 </article>
                 <article>
                   <span>Est. profit</span>
                   <strong className={displayTotalProfit >= 0 ? 'profit-total' : 'profit-negative'}>
-                    {formatAmount(String(displayTotalProfit))}
+                    {formatWithCurrency(displayTotalProfit)}
                   </strong>
+                  {currentCurrency !== 'PHP' && <small className="php-equiv-total">{toPhpEquivalent(displayTotalProfit, currentCurrency)}</small>}
                 </article>
               </div>
             </div>
@@ -3040,11 +3164,11 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               </article>
               <article>
                 <span>Client price</span>
-                <strong>{formatAmount(String(getBookingClientTotal(selectedBooking)))}</strong>
+                <strong>{convertAndFormat(getBookingClientTotal(selectedBooking), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
               </article>
               <article className="internal-summary">
                 <span>Internal nett</span>
-                <strong>{formatAmount(String(getBookingBreakdownNettTotal(selectedBooking)))}</strong>
+                <strong>{convertAndFormat(getBookingBreakdownNettTotal(selectedBooking), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
               </article>
             </div>
 
@@ -3392,8 +3516,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   <td className="item-col">{item.description}</td>
                   <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
                   <td>{item.quantity}</td>
-                  <td>{formatAmount(String(item.unitPrice))}</td>
-                  <td>{formatAmount(String(item.total))}</td>
+                  <td>{convertAndFormat(item.unitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                  <td>{convertAndFormat(item.total, selectedBooking.currency || 'PHP', exchangeRates)}</td>
                 </tr>
               ))}
             </tbody>
@@ -3509,15 +3633,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           <section className="invoice-edit-summary">
             <article>
               <span>Total invoice</span>
-              <strong>{formatAmount(String(totalPrice))}</strong>
+              <strong>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
             </article>
             <article>
               <span>Amount paid</span>
-              <strong>{formatAmount(invoiceForm.invoiceAmountPaid)}</strong>
+              <strong>{convertAndFormat(parseAmount(invoiceForm.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
             </article>
             <article>
               <span>Balance</span>
-              <strong>{formatAmount(String(balance))}</strong>
+              <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
             </article>
           </section>
 
@@ -3639,8 +3763,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <div className="fully-paid-modal-body">
                 <p>
                   This will settle the remaining balance of{' '}
-                  <strong>{formatAmount(String(Math.max(getInvoiceEditorTotal() - parseAmount(invoiceForm.invoiceAmountPaid), 0)))}</strong>{' '}
-                  to PHP 0.00. When was it fully paid?
+                  <strong>{convertAndFormat(Math.max(getInvoiceEditorTotal() - parseAmount(invoiceForm.invoiceAmountPaid), 0), selectedBooking.currency || 'PHP', exchangeRates)}</strong>{' '}
+                  to {selectedBooking.currency || 'PHP'} 0.00. When was it fully paid?
                 </p>
                 <label className="fully-paid-date-field">
                   Date fully paid
@@ -3768,7 +3892,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </div>
             <div className="amount-due-box">
               <span>Amount Due</span>
-              <strong>{formatAmount(String(balance))}</strong>
+              <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
             </div>
           </section>
 
@@ -3794,8 +3918,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                     <td className="item-col">{item.description}</td>
                     <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
                     <td>{item.quantity}</td>
-                    <td>{formatAmount(String(item.unitPrice))}</td>
-                    <td>{formatAmount(String(item.total))}</td>
+                    <td>{convertAndFormat(item.unitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                    <td>{convertAndFormat(item.total, selectedBooking.currency || 'PHP', exchangeRates)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -3804,15 +3928,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <section className="invoice-total-panel">
               <div className="invoice-total-row total-row">
                 <span>TOTAL</span>
-                <strong>{formatAmount(String(totalPrice))}</strong>
+                <strong>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
               </div>
               <div className="invoice-total-row">
                 <span>PAID</span>
-                <strong>{formatAmount(selectedBooking.invoiceAmountPaid)}</strong>
+                <strong>{convertAndFormat(parseAmount(selectedBooking.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
               </div>
               <div className="invoice-total-row">
                 <span>BALANCE</span>
-                <strong>{formatAmount(String(balance))}</strong>
+                <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
               </div>
               {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate && (
                 <div className="invoice-total-row fully-paid-badge">
@@ -4020,15 +4144,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <td>{paxLabel}</td>
                 <td>{itemDescription}</td>
                 <td>{item.details || '—'}</td>
-                <td>{formatAmount(String(poUnitPrice))}</td>
-                <td>{formatAmount(String(poAmount))}</td>
+                <td>{convertAndFormat(poUnitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                <td>{convertAndFormat(poAmount, selectedBooking.currency || 'PHP', exchangeRates)}</td>
               </tr>
             </tbody>
           </table>
 
           <section className="po-total">
             <span>Total Amount:</span>
-            <strong>{formatAmount(String(poAmount))}</strong>
+            <strong>{convertAndFormat(poAmount, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
           </section>
 
           <section className="po-notes-grid">
@@ -4522,26 +4646,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       .sort((a, b) => a.date.localeCompare(b.date) || a.employeeName.localeCompare(b.employeeName))
     const totalMinutesVisible = visibleEntries.reduce((sum, e) => sum + getDtrEntryMinutes(e), 0)
     const daysLoggedVisible = new Set(visibleEntries.map((e) => e.date)).size
-    const todayMinutesForQuickName = (() => {
-      const name = dtrForm.employeeName.trim().toLowerCase()
-      if (!name) return null
-      const todays = dtrEntries.find((e) => e.employeeName.toLowerCase() === name && e.date === getTodayDateStr())
-      return todays ? getDtrEntryMinutes(todays) : null
-    })()
-    const quickClockStatus = (() => {
-      const name = dtrForm.employeeName.trim()
-      if (!name) return { nextField: 'amIn' as keyof DtrEntry | null, label: 'Tap to clock in / out', isDone: false, isActive: false }
-      const todays = dtrEntries.find((e) => e.employeeName.toLowerCase() === name.toLowerCase() && e.date === getTodayDateStr())
-      const nextField: keyof DtrEntry | null = !todays
-        ? 'amIn'
-        : !todays.amIn ? 'amIn' : !todays.amOut ? 'amOut' : !todays.pmIn ? 'pmIn' : !todays.pmOut ? 'pmOut' : null
-      const labels: Record<string, string> = { amIn: 'Clock in', amOut: 'Clock out (AM)', pmIn: 'Clock in (PM)', pmOut: 'Clock out' }
-      const isActive = Boolean(todays && ((todays.amIn && !todays.amOut) || (todays.pmIn && !todays.pmOut)))
-      return { nextField, label: nextField ? labels[nextField] : 'Day complete', isDone: !nextField, isActive }
-    })()
     const shiftTargetMinutes = 8 * 60
-    const ringProgress = todayMinutesForQuickName === null ? 0 : Math.min(1, todayMinutesForQuickName / shiftTargetMinutes)
-    const ringCircumference = 2 * Math.PI * 42
 
     return (
       <main className="dtr-screen">
@@ -4553,7 +4658,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <p>Operations desk</p>
             <h1>Daily Time Record</h1>
           </div>
-          <div className="dtr-live-clock no-print" title="Current time — display only, doesn't clock anyone in or out">
+          <div className="dtr-live-clock no-print">
             <span className="dtr-live-clock-dot" />
             <div className="dtr-live-clock-text">
               <strong>
@@ -4564,13 +4669,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </div>
           </div>
           <div className="dtr-header-actions">
-            <button
-              type="button"
-              className="dtr-pdf-btn"
-              onClick={handlePrintPreview}
-              disabled={isPdfExporting}
-              title={isPdfExporting ? 'Preparing PDF...' : 'Download DTR as PDF'}
-            >
+            <button type="button" className="dtr-pdf-btn" onClick={handlePrintPreview} disabled={isPdfExporting} title={isPdfExporting ? 'Preparing PDF...' : 'Download DTR as PDF'}>
               <Download size={16} />
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
             </button>
@@ -4585,53 +4684,14 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         {dtrMessage && !dtrError && <div className="dtr-banner dtr-banner-ok">{dtrMessage}</div>}
 
         <div className="dtr-body">
-          {/* LEFT — quick clock + manual entry form */}
+          {/* LEFT — entry form */}
           <section className="dtr-panel dtr-form-panel no-print">
-            <div className="dtr-quickclock-card">
-              <div className="dtr-ring-wrap">
-                <svg viewBox="0 0 96 96" className="dtr-ring">
-                  <circle cx="48" cy="48" r="42" className="dtr-ring-track" />
-                  <circle
-                    cx="48" cy="48" r="42"
-                    className={`dtr-ring-progress ${quickClockStatus.isDone ? 'dtr-ring-progress-done' : ''}`}
-                    strokeDasharray={`${ringCircumference}`}
-                    strokeDashoffset={`${ringCircumference * (1 - ringProgress)}`}
-                  />
-                </svg>
-                <div className="dtr-ring-center">
-                  <strong>{todayMinutesForQuickName === null ? '—' : formatMinutesAsHm(todayMinutesForQuickName)}</strong>
-                  <span>today</span>
-                </div>
-              </div>
-              <div className="dtr-quickclock-actions">
-                <p className="dtr-quickclock-label">
-                  Quick clock
-                  {quickClockStatus.isActive && <span className="dtr-quickclock-live">● on the clock</span>}
-                </p>
-                <input
-                  type="text"
-                  placeholder="Type your name"
-                  value={dtrForm.employeeName}
-                  onChange={(e) => setDtrForm((f) => ({ ...f, employeeName: e.target.value }))}
-                  list="dtr-known-names"
-                />
-                <datalist id="dtr-known-names">
-                  {knownNames.map((name) => <option key={name} value={name} />)}
-                </datalist>
-                <button
-                  type="button"
-                  className={`dtr-clock-btn ${quickClockStatus.isDone && dtrForm.employeeName.trim() ? 'dtr-clock-btn-done' : ''}`}
-                  onClick={() => handleQuickClock(dtrForm.employeeName)}
-                  disabled={!dtrForm.employeeName.trim()}
-                >
-                  {quickClockStatus.isDone && dtrForm.employeeName.trim() ? <CheckCircle2 size={16} /> : <Clock3 size={16} />}
-                  {dtrForm.employeeName.trim() ? quickClockStatus.label : 'Tap to clock in / out'}
-                </button>
-              </div>
+            <div className="dtr-form-panel-header">
+              <p className="dtr-form-panel-title">{dtrEditingId ? '✏️ Edit Entry' : '➕ Log Time'}</p>
+              <p className="dtr-form-panel-sub">Fill in the employee's time for the day</p>
             </div>
 
             <form className="dtr-manual-form" onSubmit={handleSaveDtrEntry}>
-              <p className="dtr-form-heading">{dtrEditingId ? 'Edit entry' : 'Manual entry'}</p>
               <label>
                 Employee name
                 <input
@@ -4639,8 +4699,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   value={dtrForm.employeeName}
                   onChange={(e) => setDtrForm((f) => ({ ...f, employeeName: e.target.value }))}
                   placeholder="e.g. Maria Santos"
+                  list="dtr-known-names"
                   required
                 />
+                <datalist id="dtr-known-names">
+                  {knownNames.map((name) => <option key={name} value={name} />)}
+                </datalist>
               </label>
               <label>
                 Date
@@ -4651,33 +4715,49 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   required
                 />
               </label>
+              <div className="dtr-time-section-label">Morning (AM)</div>
               <div className="dtr-time-grid">
                 <label>
-                  AM time in
+                  Time In
                   <input type="time" value={dtrForm.amIn} onChange={(e) => setDtrForm((f) => ({ ...f, amIn: e.target.value }))} />
                 </label>
                 <label>
-                  AM time out
+                  Time Out
                   <input type="time" value={dtrForm.amOut} onChange={(e) => setDtrForm((f) => ({ ...f, amOut: e.target.value }))} />
                 </label>
+              </div>
+              <div className="dtr-time-section-label">Afternoon (PM)</div>
+              <div className="dtr-time-grid">
                 <label>
-                  PM time in
+                  Time In
                   <input type="time" value={dtrForm.pmIn} onChange={(e) => setDtrForm((f) => ({ ...f, pmIn: e.target.value }))} />
                 </label>
                 <label>
-                  PM time out
+                  Time Out
                   <input type="time" value={dtrForm.pmOut} onChange={(e) => setDtrForm((f) => ({ ...f, pmOut: e.target.value }))} />
                 </label>
               </div>
               <label>
-                Notes <span className="dtr-optional">(optional)</span>
+                Remarks <span className="dtr-optional">(optional)</span>
                 <input
                   type="text"
                   value={dtrForm.notes}
                   onChange={(e) => setDtrForm((f) => ({ ...f, notes: e.target.value }))}
-                  placeholder="e.g. Half day, field visit"
+                  placeholder="e.g. Half day, field visit, leave"
                 />
               </label>
+
+              {/* Live hours preview */}
+              {(dtrForm.amIn || dtrForm.pmOut) && (() => {
+                const preview = getDtrEntryMinutes({ amIn: dtrForm.amIn, amOut: dtrForm.amOut, pmIn: dtrForm.pmIn, pmOut: dtrForm.pmOut })
+                return preview > 0 ? (
+                  <div className="dtr-hours-preview">
+                    <Clock3 size={13} />
+                    <span>Computed: <strong>{formatMinutesAsHm(preview)}</strong> for this entry</span>
+                  </div>
+                ) : null
+              })()}
+
               <div className="dtr-form-actions">
                 {dtrEditingId && (
                   <button type="button" className="dtr-cancel-btn" onClick={cancelEditDtrEntry}>Cancel</button>
@@ -4690,27 +4770,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </form>
           </section>
 
-          {/* RIGHT — the printable ledger */}
+          {/* RIGHT — ledger */}
           <section className="dtr-panel dtr-ledger-panel">
-            {(() => {
-              const today = getTodayDateStr()
-              const todaysEntries = dtrEntries.filter((e) => e.date === today)
-              const activeNow = todaysEntries.filter((e) => (e.amIn && !e.amOut) || (e.pmIn && !e.pmOut))
-              if (activeNow.length === 0) return null
-              return (
-                <div className="dtr-team-strip no-print">
-                  <span className="dtr-team-strip-label">Clocked in now</span>
-                  <div className="dtr-team-strip-people">
-                    {activeNow.map((e) => (
-                      <span key={e.id} className="dtr-team-chip">
-                        <span className="dtr-team-chip-dot" />
-                        {e.employeeName}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )
-            })()}
             <div className="dtr-ledger-controls no-print">
               <select className="dtr-select" value={dtrNameFilter} onChange={(e) => setDtrNameFilter(e.target.value)}>
                 <option value="All">All employees</option>
@@ -4761,10 +4822,10 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <thead>
                   <tr>
                     <th rowSpan={2} className="dtr-print-th-date">Day</th>
-                    <th rowSpan={2} className="dtr-print-th-day">Weekday</th>
-                    <th colSpan={2} className="dtr-print-th-group">A.M.</th>
-                    <th colSpan={2} className="dtr-print-th-group">P.M.</th>
-                    <th rowSpan={2} className="dtr-print-th-total">Total Hours</th>
+                    <th rowSpan={2} className="dtr-print-th-day">Day of Week</th>
+                    <th colSpan={2} className="dtr-print-th-group">Morning (A.M.)</th>
+                    <th colSpan={2} className="dtr-print-th-group">Afternoon (P.M.)</th>
+                    <th rowSpan={2} className="dtr-print-th-total">Total Hrs</th>
                     <th rowSpan={2} className="dtr-print-th-notes">Remarks</th>
                   </tr>
                   <tr>
@@ -4775,33 +4836,32 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleEntries.length === 0 ? (
-                    Array.from({ length: 12 }, (_, i) => (
-                      <tr key={i} className="dtr-print-tr-empty">
-                        <td className="dtr-print-td-date">&nbsp;</td>
-                        <td className="dtr-print-td-day">&nbsp;</td>
-                        <td /><td /><td /><td />
-                        <td /><td />
-                      </tr>
-                    ))
-                  ) : (
-                    visibleEntries.map((entry) => {
-                      const d = new Date(`${entry.date}T00:00:00`)
-                      const minutes = getDtrEntryMinutes(entry)
+                  {(() => {
+                    const [yr, mo] = dtrMonthFilter.split('-').map(Number)
+                    const daysInMonth = new Date(yr, mo, 0).getDate()
+                    const entryMap = new Map(visibleEntries.map((e) => [e.date, e]))
+                    return Array.from({ length: daysInMonth }, (_: unknown, i: number) => {
+                      const dayNum = i + 1
+                      const dateStr = `${dtrMonthFilter}-${String(dayNum).padStart(2, '0')}`
+                      const d = new Date(`${dateStr}T00:00:00`)
+                      const weekday = d.getDay() // 0=Sun, 6=Sat
+                      const isWeekend = weekday === 0 || weekday === 6
+                      const entry = entryMap.get(dateStr) as DtrEntry | undefined
+                      const minutes = entry ? getDtrEntryMinutes(entry) : 0
                       return (
-                        <tr key={entry.id} className="dtr-print-tr">
-                          <td className="dtr-print-td-date">{d.getDate()}</td>
+                        <tr key={dateStr} className={`dtr-print-tr ${isWeekend ? 'dtr-print-tr-weekend' : ''} ${entry ? 'dtr-print-tr-has-entry' : ''}`}>
+                          <td className="dtr-print-td-date">{dayNum}</td>
                           <td className="dtr-print-td-day">{d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase()}</td>
-                          <td className="dtr-print-td-time">{formatTimeForDisplay(entry.amIn)}</td>
-                          <td className="dtr-print-td-time">{formatTimeForDisplay(entry.amOut)}</td>
-                          <td className="dtr-print-td-time">{formatTimeForDisplay(entry.pmIn)}</td>
-                          <td className="dtr-print-td-time">{formatTimeForDisplay(entry.pmOut)}</td>
-                          <td className="dtr-print-td-total">{minutes > 0 ? formatMinutesAsHm(minutes) : ''}</td>
-                          <td className="dtr-print-td-notes">{entry.notes || ''}</td>
+                          <td className="dtr-print-td-time">{entry ? formatTimeForDisplay(entry.amIn) : (isWeekend ? '' : '')}</td>
+                          <td className="dtr-print-td-time">{entry ? formatTimeForDisplay(entry.amOut) : ''}</td>
+                          <td className="dtr-print-td-time">{entry ? formatTimeForDisplay(entry.pmIn) : ''}</td>
+                          <td className="dtr-print-td-time">{entry ? formatTimeForDisplay(entry.pmOut) : ''}</td>
+                          <td className="dtr-print-td-total">{minutes > 0 ? formatMinutesAsHm(minutes) : (isWeekend ? <span className="dtr-print-weekend-mark">REST</span> : '')}</td>
+                          <td className="dtr-print-td-notes">{entry?.notes || ''}</td>
                         </tr>
                       )
                     })
-                  )}
+                  })()}
                 </tbody>
                 <tfoot>
                   <tr className="dtr-print-tfoot-summary">
@@ -4835,23 +4895,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   <p className="dtr-print-sig-name">&nbsp;</p>
                   <p className="dtr-print-sig-label">Verified By &amp; Date</p>
                 </div>
-              </div>
-            </div>
-
-            <div className="dtr-summary-strip">
-              <div className="dtr-summary-stat">
-                <span>{daysLoggedVisible}</span>
-                <p>Days logged</p>
-              </div>
-              <div className="dtr-summary-divider" />
-              <div className="dtr-summary-stat">
-                <span>{formatMinutesAsHm(totalMinutesVisible)}</span>
-                <p>Total hours</p>
-              </div>
-              <div className="dtr-summary-divider" />
-              <div className="dtr-summary-stat">
-                <span>{daysLoggedVisible > 0 ? formatMinutesAsHm(Math.round(totalMinutesVisible / daysLoggedVisible)) : '—'}</span>
-                <p>Avg / day</p>
               </div>
             </div>
 
@@ -4933,8 +4976,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               {visibleEntries.length === 0 ? (
                 <div className="dtr-empty">
                   <Clock3 size={28} />
-                  <p>No time records yet for this period.</p>
-                  <span>Log a clock-in on the left, or pick a different month above.</span>
+                  <p>No time records for this period.</p>
+                  <span>Use the form on the left to log an entry, or pick a different month.</span>
                 </div>
               ) : (
                 visibleEntries.map((entry) => {
@@ -5081,31 +5124,29 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   <Plus size={20} />
                   New Inquiry
                 </button>
-                {(() => {
-                  const myName = authUser?.displayName ?? (authUser?.email ? getDisplayName(authUser.email) : '')
-                  const today = getTodayDateStr()
-                  const todays = myName
-                    ? dtrEntries.find((e) => e.employeeName.toLowerCase() === myName.toLowerCase() && e.date === today)
-                    : undefined
-                  const minutesSoFar = todays ? getDtrEntryMinutes(todays) : null
-                  const nextField: keyof DtrEntry | null = !todays
-                    ? 'amIn'
-                    : !todays.amIn ? 'amIn' : !todays.amOut ? 'amOut' : !todays.pmIn ? 'pmIn' : !todays.pmOut ? 'pmOut' : null
-                  const ctaLabels: Record<string, string> = {
-                    amIn: 'Clock in', amOut: 'Clock out (AM)', pmIn: 'Clock in (PM)', pmOut: 'Clock out',
-                  }
-                  const statusDotClass = !todays ? 'dtr-dot-off' : nextField ? 'dtr-dot-active' : 'dtr-dot-done'
-                  return (
-                    <button type="button" className="dtr-widget" onClick={() => myName ? handleQuickClock(myName) : setScreen('dtr')}>
-                      <span className={`dtr-widget-dot ${statusDotClass}`} />
-                      <span className="dtr-widget-text">
-                        <strong>{minutesSoFar !== null ? formatMinutesAsHm(minutesSoFar) : 'Not clocked in'}</strong>
-                        <span>{nextField ? ctaLabels[nextField] : 'Day complete'}</span>
-                      </span>
-                      <Clock3 size={16} className="dtr-widget-icon" />
-                    </button>
-                  )
-                })()}
+                <button
+                  type="button"
+                  className="open-dtr-btn"
+                  onClick={() => setScreen('dtr')}
+                >
+                  <Clock3 size={18} />
+                  Open Daily Time Record
+                </button>
+              </div>
+            </div>
+
+            {/* Dashboard live clock strip */}
+            <div className="dashboard-clock-strip no-print">
+              <div className="dashboard-clock-display">
+                <span className="dashboard-clock-time">
+                  {formatLiveClockParts(liveClock).time}
+                </span>
+                <span className="dashboard-clock-period">{formatLiveClockParts(liveClock).period}</span>
+              </div>
+              <div className="dashboard-clock-meta">
+                <span className="dashboard-clock-date">
+                  {liveClock.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                </span>
               </div>
             </div>
           </section>
