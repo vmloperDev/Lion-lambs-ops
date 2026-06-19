@@ -3260,3 +3260,61 @@ input, select, textarea { font: inherit; }
 }
 .ai-autofill-retry:hover { background: #dc2626 !important; }
 .ai-error-row { display: flex; align-items: center; gap: 8px; }
+
+/* ── Currency bar (section 05a) ──────────────────────────────────────────── */
+.currency-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 14px;
+  background: var(--surface-2, #f4f6f8);
+  border: 1px solid var(--border, #e2e6ea);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.currency-select-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary, #5a6a7a);
+  white-space: nowrap;
+}
+
+.currency-select-label select {
+  padding: 5px 10px;
+  border: 1px solid var(--border, #d0d7de);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  background: #fff;
+  cursor: pointer;
+  min-width: 90px;
+}
+
+.rate-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+
+.rate-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent, #2563eb);
+}
+
+.rate-time {
+  font-size: 11px;
+  color: var(--text-tertiary, #8a9ab0);
+}
+
+.rate-loading {
+  font-size: 12px;
+  color: var(--text-tertiary, #8a9ab0);
+  font-style: italic;
+}

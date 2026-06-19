@@ -134,6 +134,7 @@ type BookingFormData = {
   clientName: string
   contactNumber: string
   clientEmail: string
+  currency: string
   packageName: string
   destination: string
   travelStart: string
@@ -229,6 +230,7 @@ const emptyBookingForm: BookingFormData = {
   clientName: '',
   contactNumber: '',
   clientEmail: '',
+  currency: 'PHP',
   packageName: '',
   destination: '',
   travelStart: '',
@@ -356,12 +358,12 @@ function normalizeBooking(booking: BookingRecord): BookingRecord {
   }
 }
 
-function formatAmount(value?: string) {
+function formatAmount(value?: string, currency = 'PHP') {
   const amount = parseAmount(value)
   if (!Number.isFinite(amount) || amount <= 0) {
-    return 'PHP 0.00'
+    return `${currency} 0.00`
   }
-  return `PHP ${amount.toLocaleString('en-PH', {
+  return `${currency} ${amount.toLocaleString('en-PH', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`
@@ -882,6 +884,51 @@ function App() {
   // Holds the exact booking object built at save-time so templates always
   // reflect the latest saved data regardless of Firestore snapshot timing.
   const lastSavedBookingRef = useRef<BookingRecord | null>(null)
+
+  // ── Currency & exchange rate ──────────────────────────────────────────────
+  const SUPPORTED_CURRENCIES = [
+    'PHP','USD','EUR','GBP','JPY','AUD','CAD','CHF','CNY','HKD','SGD','KRW',
+    'THB','MYR','IDR','VND','INR','AED','SAR','QAR','KWD','BHD','OMR',
+    'NZD','NOK','SEK','DKK','ZAR','MXN','BRL','TWD',
+  ]
+  const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({})
+  const [ratesLoadedAt, setRatesLoadedAt] = useState<Date | null>(null)
+  const [ratesLoading, setRatesLoading] = useState(false)
+
+  // Fetch rates from Frankfurter (free, no key required) — PHP as base
+  useEffect(() => {
+    let cancelled = false
+    async function fetchRates() {
+      setRatesLoading(true)
+      try {
+        const res = await fetch('https://api.frankfurter.app/latest?base=PHP')
+        if (!res.ok) throw new Error('rate fetch failed')
+        const data = await res.json()
+        if (!cancelled) {
+          setExchangeRates({ PHP: 1, ...data.rates })
+          setRatesLoadedAt(new Date())
+        }
+      } catch {
+        // silently fall back — rates stay empty, UI shows n/a
+      } finally {
+        if (!cancelled) setRatesLoading(false)
+      }
+    }
+    fetchRates()
+    // Refresh every 10 minutes
+    const interval = setInterval(fetchRates, 10 * 60 * 1000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [])
+
+  const currentCurrency = bookingForm.currency || 'PHP'
+  const rateFromPHP = exchangeRates[currentCurrency] ?? null // null = not loaded yet
+
+  function formatWithCurrency(phpAmount: number) {
+    if (currentCurrency === 'PHP' || rateFromPHP === null) {
+      return formatAmount(String(phpAmount), currentCurrency)
+    }
+    return formatAmount(String(phpAmount * rateFromPHP), currentCurrency)
+  }
   const [invoiceForm, setInvoiceForm] = useState({
     paymentMethod: '',
     paymentRecords: '',
@@ -2519,6 +2566,37 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </div>
             <p className="field-help">For internal use only. Track what you pay the supplier vs what you charge the client. Toggle "Send to invoice" to push a row (item name, qty, and client price) to the client invoice, or "Send to P.O." to include it on a Purchase Order.</p>
 
+            {/* Currency selector + live rate */}
+            <div className="currency-bar">
+              <label className="currency-select-label">
+                <span>Currency</span>
+                <select
+                  value={currentCurrency}
+                  onChange={(e) => updateBookingField('currency', e.target.value)}
+                >
+                  {SUPPORTED_CURRENCIES.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="rate-badge">
+                {ratesLoading && !ratesLoadedAt ? (
+                  <span className="rate-loading">Fetching live rates…</span>
+                ) : rateFromPHP !== null && currentCurrency !== 'PHP' ? (
+                  <>
+                    <span className="rate-value">1 PHP = {rateFromPHP.toFixed(4)} {currentCurrency}</span>
+                    {ratesLoadedAt && (
+                      <span className="rate-time">Updated {ratesLoadedAt.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}</span>
+                    )}
+                  </>
+                ) : currentCurrency === 'PHP' ? (
+                  <span className="rate-value">Philippine Peso (base)</span>
+                ) : (
+                  <span className="rate-loading">Rate unavailable</span>
+                )}
+              </div>
+            </div>
+
             <div className="line-items-panel">
               <div className="line-items-heading">
                 <div>
@@ -2721,16 +2799,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <div className="line-items-summary">
                 <article>
                   <span>Client total</span>
-                  <strong>{formatAmount(String(displayTotalClient))}</strong>
+                  <strong>{formatWithCurrency(displayTotalClient)}</strong>
                 </article>
                 <article>
                   <span>Supplier nett</span>
-                  <strong>{formatAmount(String(displayTotalNett))}</strong>
+                  <strong>{formatWithCurrency(displayTotalNett)}</strong>
                 </article>
                 <article>
                   <span>Est. profit</span>
                   <strong className={displayTotalProfit >= 0 ? 'profit-total' : 'profit-negative'}>
-                    {formatAmount(String(displayTotalProfit))}
+                    {formatWithCurrency(displayTotalProfit)}
                   </strong>
                 </article>
               </div>
