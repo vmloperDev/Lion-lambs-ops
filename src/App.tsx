@@ -60,7 +60,8 @@ import {
   EyeOff,
   Trash2,
   CornerUpLeft,
-  Eye
+  Eye,
+  Download
 } from 'lucide-react'
 import { auth, db } from './firebase'
 import agencySeal from './assets/brand/agency-seal.png'
@@ -166,6 +167,8 @@ type BookingFormData = {
   flightDetails: string
   accommodation: string
   hotelAddress: string
+  hotelContact: string
+  operatorContact: string
   emergencyContact: string
   inclusions: string
   exclusions: string
@@ -256,6 +259,8 @@ const emptyBookingForm: BookingFormData = {
   flightDetails: '',
   accommodation: '',
   hotelAddress: '',
+  hotelContact: '',
+  operatorContact: '',
   emergencyContact: '',
   inclusions: '',
   exclusions: '',
@@ -489,7 +494,7 @@ function mapBreakdownItemsToBookingLines(items: BreakdownLineItem[], packageName
   return items.map((it) => {
     const q = parseQuantity(it.quantity)
     const u = parseAmount(it.unitPrice)
-    const n = parseAmount(it.nettCost)
+    const n = it.isPackageRow ? 0 : parseAmount(it.nettCost)
     return {
       description: it.description || (it.isPackageRow ? packageName || 'Basic Package' : 'Item'),
       quantity: q,
@@ -616,10 +621,45 @@ function getTodayDateStr(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
+// Returns "YYYY-Www" ISO week key (Mon–Sun) for a YYYY-MM-DD string
+function getIsoWeekKey(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00`)
+  const day = d.getDay() === 0 ? 7 : d.getDay() // Mon=1 … Sun=7
+  const thursday = new Date(d)
+  thursday.setDate(d.getDate() + (4 - day)) // nearest Thursday
+  const yearStart = new Date(thursday.getFullYear(), 0, 1)
+  const weekNum = Math.ceil(((thursday.getTime() - yearStart.getTime()) / 86400000 + 1) / 7)
+  return `${thursday.getFullYear()}-W${String(weekNum).padStart(2, '0')}`
+}
+
+// Returns the Mon–Sun date range label for a YYYY-MM-DD string
+function getWeekRangeLabel(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00`)
+  const day = d.getDay() === 0 ? 7 : d.getDay()
+  const mon = new Date(d); mon.setDate(d.getDate() - (day - 1))
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
+  const fmt = (x: Date) => x.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return `${fmt(mon)} – ${fmt(sun)}`
+}
+
 function formatDtrDateLong(value: string): string {
   const date = new Date(`${value}T00:00:00`)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+// Splits "now" into a 12-hour clock face — never 24-hour, always with AM/PM.
+// Pure display helper: it does not read or write any DTR record.
+function formatLiveClockParts(now: Date): { time: string; period: 'AM' | 'PM' } {
+  const hours24 = now.getHours()
+  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12
+  const minutes = String(now.getMinutes()).padStart(2, '0')
+  const seconds = String(now.getSeconds()).padStart(2, '0')
+  return { time: `${hours12}:${minutes}:${seconds}`, period: hours24 >= 12 ? 'PM' : 'AM' }
+}
+
+function formatLiveDateShort(now: Date): string {
+  return now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
 const dtrCollectionKey = 'dtr_entries'
@@ -743,6 +783,13 @@ function App() {
   const [replyingTo, setReplyingTo] = useState<{ id: string; text: string; senderName: string } | null>(null)
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null)
   const [showWipeConfirm, setShowWipeConfirm] = useState(false)
+
+  // ----- Live clock (header + nav) — pure display, never auto clocks anyone in/out -----
+  const [liveClock, setLiveClock] = useState(() => new Date())
+  useEffect(() => {
+    const tick = window.setInterval(() => setLiveClock(new Date()), 1000)
+    return () => window.clearInterval(tick)
+  }, [])
 
   // ----- DTR (Daily Time Record) state -----
   const [dtrEntries, setDtrEntries] = useState<DtrEntry[]>([])
@@ -2006,15 +2053,34 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
   }
 
   async function handlePrintPreview() {
-    const printableArea = document.querySelector<HTMLElement>('.print-document')
-    if (!printableArea) { window.print(); return }
+    const isDtrScreen = screen === 'dtr'
+    let printableArea: HTMLElement | null = null
+    let restoreFn: (() => void) | null = null
+
+    if (isDtrScreen) {
+      const docEl = document.querySelector<HTMLElement>('.dtr-print-doc')
+      if (!docEl) { window.print(); return }
+      // Temporarily render the hidden DTR doc off-screen so html2canvas can capture it
+      const saved = { display: docEl.style.display, visibility: docEl.style.visibility, position: docEl.style.position, left: docEl.style.left, top: docEl.style.top, width: docEl.style.width, padding: docEl.style.padding, background: docEl.style.background }
+      docEl.style.cssText += ';display:block!important;visibility:visible!important;position:absolute!important;left:-9999px!important;top:0!important;width:794px!important;padding:32px!important;background:#fff!important;'
+      await new Promise((r) => requestAnimationFrame(r))
+      await new Promise((r) => requestAnimationFrame(r))
+      printableArea = docEl
+      restoreFn = () => Object.assign(docEl.style, saved)
+    } else {
+      printableArea = document.querySelector<HTMLElement>('.print-document')
+      if (!printableArea) { window.print(); return }
+    }
+
     try {
       setIsPdfExporting(true)
       const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
         import('html2canvas'),
         import('jspdf'),
       ])
-      const canvas = await html2canvas(printableArea, { backgroundColor: '#ffffff', scale: 2, useCORS: true })
+      const canvas = await html2canvas(printableArea, { backgroundColor: '#ffffff', scale: 2, useCORS: true, logging: false, windowWidth: isDtrScreen ? 860 : undefined })
+      restoreFn?.()
+
       const pdf = new jsPDF('p', 'mm', 'a4')
       const pageWidth = pdf.internal.pageSize.getWidth()
       const pageHeight = pdf.internal.pageSize.getHeight()
@@ -2023,7 +2089,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       const imageData = canvas.toDataURL('image/png')
       let remainingHeight = imgHeight
       let yPosition = 0
-
       pdf.addImage(imageData, 'PNG', 0, yPosition, imgWidth, imgHeight)
       remainingHeight -= pageHeight
       while (remainingHeight > 0) {
@@ -2032,11 +2097,19 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         pdf.addImage(imageData, 'PNG', 0, yPosition, imgWidth, imgHeight)
         remainingHeight -= pageHeight
       }
-      const currentBooking = bookings.find((booking) => booking.id === selectedBookingId)
-      const fileName = `${currentBooking?.quotationNo || currentBooking?.id || 'lion-lamb-document'}.pdf`
+
+      let fileName: string
+      if (isDtrScreen) {
+        const emp = dtrNameFilter === 'All' ? 'all-staff' : dtrNameFilter.replace(/\s+/g, '-').toLowerCase()
+        fileName = `DTR_${emp}_${dtrMonthFilter}.pdf`
+      } else {
+        const currentBooking = bookings.find((b) => b.id === selectedBookingId)
+        fileName = `${currentBooking?.quotationNo || currentBooking?.id || 'lion-lamb-document'}.pdf`
+      }
       pdf.save(fileName.replace(/[^\w.-]+/g, '_'))
     } catch {
-      setDataError('PDF download failed. Use Ctrl+P and turn off browser headers and footers.')
+      restoreFn?.()
+      setDataError(isDtrScreen ? 'DTR PDF export failed. Use the Print button as a fallback.' : 'PDF download failed. Use Ctrl+P and turn off browser headers and footers.')
       window.print()
     } finally {
       setIsPdfExporting(false)
@@ -2525,9 +2598,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                       />
                       <input
                         type="text"
-                        value={item.nettCost}
+                        className={item.isPackageRow ? 'disabled-field' : undefined}
+                        value={item.isPackageRow ? '' : item.nettCost}
                         onChange={(e) => changeBreakdownItemField(index, 'nettCost', e.target.value)}
-                        placeholder="0.00"
+                        placeholder={item.isPackageRow ? 'N/A' : '0.00'}
+                        disabled={item.isPackageRow}
+                        title={item.isPackageRow ? 'Package row has no supplier nett — it\'s the client-facing package price, always sent to the invoice' : undefined}
                       />
                       <button
                         type="button"
@@ -2693,6 +2769,14 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <label className="textarea-field">
                 Hotel location address
                 <textarea rows={2} value={bookingForm.hotelAddress} onChange={(e) => updateBookingField('hotelAddress', e.target.value)} placeholder="Station 2, Balabag, Boracay Island, Malay, Aklan" />
+              </label>
+              <label className="textarea-field">
+                Hotel contact details
+                <textarea rows={2} value={bookingForm.hotelContact} onChange={(e) => updateBookingField('hotelContact', e.target.value)} placeholder="(036) 288-6111 / frontdesk@henann.com" />
+              </label>
+              <label className="textarea-field">
+                Operator / supplier contact
+                <textarea rows={2} value={bookingForm.operatorContact} onChange={(e) => updateBookingField('operatorContact', e.target.value)} placeholder="Juan dela Cruz · 0917-123-4567" />
               </label>
               <label className="textarea-field">
                 Emergency local contact
@@ -4174,7 +4258,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                     }`
                   : 'TBA'}
               </small>
-              <small>Flight Details: {selectedBooking.flightDetails || 'TBA'}</small>
               <small>
                 Emergency Contact #: {selectedBooking.emergencyContact || 'TBA'}
               </small>
@@ -4183,10 +4266,42 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>Client Details:</span>
               <strong>Name: {selectedBooking.clientName}</strong>
               <small>Guest Contact Number: {selectedBooking.contactNumber || 'TBA'}</small>
-              <small>
-                Accommodation:{' '}
-                {selectedBooking.accommodation || selectedBooking.packageName || 'TBA'}
-              </small>
+            </div>
+          </section>
+
+          {/* Flight Details Box */}
+          <section className="voucher-details-box">
+            <h3 className="voucher-details-box-title">✈ Flight Details</h3>
+            <div className="voucher-details-box-body">
+              {selectedBooking.flightDetails
+                ? selectedBooking.flightDetails.split('\n').map((line, i) => (
+                    <p key={i}>{line}</p>
+                  ))
+                : <p className="voucher-details-na">To be advised</p>
+              }
+            </div>
+          </section>
+
+          {/* Hotel Details Box */}
+          <section className="voucher-details-box">
+            <h3 className="voucher-details-box-title">🏨 Hotel Details</h3>
+            <div className="voucher-details-box-grid">
+              <div>
+                <span>Name of Hotel</span>
+                <strong>{selectedBooking.accommodation || 'To be advised'}</strong>
+              </div>
+              <div>
+                <span>Address</span>
+                <strong>{selectedBooking.hotelAddress || 'To be advised'}</strong>
+              </div>
+              <div>
+                <span>Hotel Contact</span>
+                <strong>{selectedBooking.hotelContact || 'To be advised'}</strong>
+              </div>
+              <div>
+                <span>Operator / Supplier Contact</span>
+                <strong>{selectedBooking.operatorContact || 'To be advised'}</strong>
+              </div>
             </div>
           </section>
 
@@ -4456,6 +4571,17 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       const todays = dtrEntries.find((e) => e.employeeName.toLowerCase() === name && e.date === getTodayDateStr())
       return todays ? getDtrEntryMinutes(todays) : null
     })()
+    const quickClockStatus = (() => {
+      const name = dtrForm.employeeName.trim()
+      if (!name) return { nextField: 'amIn' as keyof DtrEntry | null, label: 'Tap to clock in / out', isDone: false, isActive: false }
+      const todays = dtrEntries.find((e) => e.employeeName.toLowerCase() === name.toLowerCase() && e.date === getTodayDateStr())
+      const nextField: keyof DtrEntry | null = !todays
+        ? 'amIn'
+        : !todays.amIn ? 'amIn' : !todays.amOut ? 'amOut' : !todays.pmIn ? 'pmIn' : !todays.pmOut ? 'pmOut' : null
+      const labels: Record<string, string> = { amIn: 'Clock in', amOut: 'Clock out (AM)', pmIn: 'Clock in (PM)', pmOut: 'Clock out' }
+      const isActive = Boolean(todays && ((todays.amIn && !todays.amOut) || (todays.pmIn && !todays.pmOut)))
+      return { nextField, label: nextField ? labels[nextField] : 'Day complete', isDone: !nextField, isActive }
+    })()
     const shiftTargetMinutes = 8 * 60
     const ringProgress = todayMinutesForQuickName === null ? 0 : Math.min(1, todayMinutesForQuickName / shiftTargetMinutes)
     const ringCircumference = 2 * Math.PI * 42
@@ -4470,10 +4596,32 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <p>Operations desk</p>
             <h1>Daily Time Record</h1>
           </div>
-          <button type="button" className="dtr-print-btn" onClick={() => window.print()}>
-            <Printer size={16} />
-            Print
-          </button>
+          <div className="dtr-live-clock no-print" title="Current time — display only, doesn't clock anyone in or out">
+            <span className="dtr-live-clock-dot" />
+            <div className="dtr-live-clock-text">
+              <strong>
+                {formatLiveClockParts(liveClock).time}
+                <span className="dtr-live-clock-period">{formatLiveClockParts(liveClock).period}</span>
+              </strong>
+              <span className="dtr-live-clock-date">{formatLiveDateShort(liveClock)}</span>
+            </div>
+          </div>
+          <div className="dtr-header-actions">
+            <button
+              type="button"
+              className="dtr-pdf-btn"
+              onClick={handlePrintPreview}
+              disabled={isPdfExporting}
+              title={isPdfExporting ? 'Preparing PDF...' : 'Download DTR as PDF'}
+            >
+              <Download size={16} />
+              <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
+            </button>
+            <button type="button" className="dtr-print-btn" onClick={() => window.print()} title="Print DTR">
+              <Printer size={16} />
+              Print
+            </button>
+          </div>
         </header>
 
         {dtrError && <div className="dtr-banner dtr-banner-error">{dtrError}</div>}
@@ -4488,7 +4636,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   <circle cx="48" cy="48" r="42" className="dtr-ring-track" />
                   <circle
                     cx="48" cy="48" r="42"
-                    className="dtr-ring-progress"
+                    className={`dtr-ring-progress ${quickClockStatus.isDone ? 'dtr-ring-progress-done' : ''}`}
                     strokeDasharray={`${ringCircumference}`}
                     strokeDashoffset={`${ringCircumference * (1 - ringProgress)}`}
                   />
@@ -4499,7 +4647,10 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 </div>
               </div>
               <div className="dtr-quickclock-actions">
-                <p className="dtr-quickclock-label">Quick clock</p>
+                <p className="dtr-quickclock-label">
+                  Quick clock
+                  {quickClockStatus.isActive && <span className="dtr-quickclock-live">● on the clock</span>}
+                </p>
                 <input
                   type="text"
                   placeholder="Type your name"
@@ -4512,12 +4663,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 </datalist>
                 <button
                   type="button"
-                  className="dtr-clock-btn"
+                  className={`dtr-clock-btn ${quickClockStatus.isDone && dtrForm.employeeName.trim() ? 'dtr-clock-btn-done' : ''}`}
                   onClick={() => handleQuickClock(dtrForm.employeeName)}
                   disabled={!dtrForm.employeeName.trim()}
                 >
-                  <Clock3 size={16} />
-                  Tap to clock in / out
+                  {quickClockStatus.isDone && dtrForm.employeeName.trim() ? <CheckCircle2 size={16} /> : <Clock3 size={16} />}
+                  {dtrForm.employeeName.trim() ? quickClockStatus.label : 'Tap to clock in / out'}
                 </button>
               </div>
             </div>
@@ -4616,16 +4767,118 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               />
             </div>
 
-            <div className="dtr-print-header print-only">
-              <img src={logo} alt="" />
-              <div>
-                <h2>Lion and Lamb Travel</h2>
-                <p>Daily Time Record</p>
+            {/* ── PRINT-ONLY: Full government-style DTR template ── */}
+            <div className="dtr-print-doc print-only">
+              <div className="dtr-print-doc-header">
+                <img src={logo} alt="Lion and Lamb Travel" className="dtr-print-doc-logo" />
+                <div className="dtr-print-doc-title">
+                  <h1>Lion and Lamb Travel &amp; Tours</h1>
+                  <p className="dtr-print-doc-subtitle">DAILY TIME RECORD</p>
+                </div>
+                <div className="dtr-print-doc-form-no">
+                  <span>Form No.</span>
+                  <strong>DTR-001</strong>
+                </div>
               </div>
-            </div>
-            <div className="dtr-print-meta print-only">
-              <span><strong>Employee:</strong> {dtrNameFilter === 'All' ? 'All team members' : dtrNameFilter}</span>
-              <span><strong>Period:</strong> {new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
+
+              <div className="dtr-print-doc-meta-row">
+                <div className="dtr-print-doc-meta-field">
+                  <span className="dtr-print-doc-meta-label">Employee Name</span>
+                  <strong className="dtr-print-doc-meta-value">
+                    {dtrNameFilter === 'All' ? 'All Team Members' : dtrNameFilter}
+                  </strong>
+                </div>
+                <div className="dtr-print-doc-meta-field">
+                  <span className="dtr-print-doc-meta-label">Period Covered</span>
+                  <strong className="dtr-print-doc-meta-value">
+                    {new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                  </strong>
+                </div>
+                <div className="dtr-print-doc-meta-field">
+                  <span className="dtr-print-doc-meta-label">Position / Dept.</span>
+                  <strong className="dtr-print-doc-meta-value dtr-print-blank-line">&nbsp;</strong>
+                </div>
+              </div>
+
+              <table className="dtr-print-table">
+                <thead>
+                  <tr>
+                    <th rowSpan={2} className="dtr-print-th-date">Day</th>
+                    <th rowSpan={2} className="dtr-print-th-day">Weekday</th>
+                    <th colSpan={2} className="dtr-print-th-group">A.M.</th>
+                    <th colSpan={2} className="dtr-print-th-group">P.M.</th>
+                    <th rowSpan={2} className="dtr-print-th-total">Total Hours</th>
+                    <th rowSpan={2} className="dtr-print-th-notes">Remarks</th>
+                  </tr>
+                  <tr>
+                    <th className="dtr-print-th-sub">Time In</th>
+                    <th className="dtr-print-th-sub">Time Out</th>
+                    <th className="dtr-print-th-sub">Time In</th>
+                    <th className="dtr-print-th-sub">Time Out</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleEntries.length === 0 ? (
+                    Array.from({ length: 12 }, (_, i) => (
+                      <tr key={i} className="dtr-print-tr-empty">
+                        <td className="dtr-print-td-date">&nbsp;</td>
+                        <td className="dtr-print-td-day">&nbsp;</td>
+                        <td /><td /><td /><td />
+                        <td /><td />
+                      </tr>
+                    ))
+                  ) : (
+                    visibleEntries.map((entry) => {
+                      const d = new Date(`${entry.date}T00:00:00`)
+                      const minutes = getDtrEntryMinutes(entry)
+                      return (
+                        <tr key={entry.id} className="dtr-print-tr">
+                          <td className="dtr-print-td-date">{d.getDate()}</td>
+                          <td className="dtr-print-td-day">{d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase()}</td>
+                          <td className="dtr-print-td-time">{formatTimeForDisplay(entry.amIn)}</td>
+                          <td className="dtr-print-td-time">{formatTimeForDisplay(entry.amOut)}</td>
+                          <td className="dtr-print-td-time">{formatTimeForDisplay(entry.pmIn)}</td>
+                          <td className="dtr-print-td-time">{formatTimeForDisplay(entry.pmOut)}</td>
+                          <td className="dtr-print-td-total">{minutes > 0 ? formatMinutesAsHm(minutes) : ''}</td>
+                          <td className="dtr-print-td-notes">{entry.notes || ''}</td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+                <tfoot>
+                  <tr className="dtr-print-tfoot-summary">
+                    <td colSpan={6} className="dtr-print-tfoot-label">
+                      <span>Days Logged: <strong>{daysLoggedVisible}</strong></span>
+                      <span>Avg / Day: <strong>{daysLoggedVisible > 0 ? formatMinutesAsHm(Math.round(totalMinutesVisible / daysLoggedVisible)) : '—'}</strong></span>
+                    </td>
+                    <td className="dtr-print-tfoot-total">{formatMinutesAsHm(totalMinutesVisible)}</td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+
+              <div className="dtr-print-doc-certification">
+                <p>I hereby certify, on my honor, that the above is a true and correct record of the hours of work performed, record of which was made daily at the time of arrival at and departure from the office.</p>
+              </div>
+
+              <div className="dtr-print-doc-signoff">
+                <div className="dtr-print-signoff-block">
+                  <div className="dtr-print-sig-line" />
+                  <p className="dtr-print-sig-name">&nbsp;</p>
+                  <p className="dtr-print-sig-label">Employee Signature &amp; Date</p>
+                </div>
+                <div className="dtr-print-signoff-block">
+                  <div className="dtr-print-sig-line" />
+                  <p className="dtr-print-sig-name">&nbsp;</p>
+                  <p className="dtr-print-sig-label">Supervisor / Manager</p>
+                </div>
+                <div className="dtr-print-signoff-block">
+                  <div className="dtr-print-sig-line" />
+                  <p className="dtr-print-sig-name">&nbsp;</p>
+                  <p className="dtr-print-sig-label">Verified By &amp; Date</p>
+                </div>
+              </div>
             </div>
 
             <div className="dtr-summary-strip">
@@ -4644,6 +4897,80 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <p>Avg / day</p>
               </div>
             </div>
+
+            <div className="dtr-summary-strip">
+              <div className="dtr-summary-stat">
+                <span>{daysLoggedVisible}</span>
+                <p>Days logged</p>
+              </div>
+              <div className="dtr-summary-divider" />
+              <div className="dtr-summary-stat">
+                <span>{formatMinutesAsHm(totalMinutesVisible)}</span>
+                <p>Total hours</p>
+              </div>
+              <div className="dtr-summary-divider" />
+              <div className="dtr-summary-stat">
+                <span>{daysLoggedVisible > 0 ? formatMinutesAsHm(Math.round(totalMinutesVisible / daysLoggedVisible)) : '—'}</span>
+                <p>Avg / day</p>
+              </div>
+            </div>
+
+            {/* ── Weekly hours tracker ── */}
+            {visibleEntries.length > 0 && (() => {
+              const weekTarget = 40 * 60 // 40-hour work week in minutes
+              // Group visible entries by ISO week
+              const weekMap = new Map<string, { entries: DtrEntry[]; label: string }>()
+              for (const entry of visibleEntries) {
+                const key = getIsoWeekKey(entry.date)
+                if (!weekMap.has(key)) weekMap.set(key, { entries: [], label: getWeekRangeLabel(entry.date) })
+                weekMap.get(key)!.entries.push(entry)
+              }
+              const weeks = Array.from(weekMap.entries())
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([key, { entries, label }]) => {
+                  const minutes = entries.reduce((s, e) => s + getDtrEntryMinutes(e), 0)
+                  const days = new Set(entries.map((e) => e.date)).size
+                  const pct = Math.min(100, (minutes / weekTarget) * 100)
+                  const isOver = minutes > weekTarget
+                  const today = getTodayDateStr()
+                  const isCurrentWeek = entries.some((e) => getIsoWeekKey(e.date) === getIsoWeekKey(today))
+                  return { key, label, minutes, days, pct, isOver, isCurrentWeek }
+                })
+              return (
+                <div className="dtr-weekly-tracker no-print">
+                  <div className="dtr-weekly-header">
+                    <p className="dtr-weekly-title">Weekly Hours</p>
+                    <span className="dtr-weekly-target">Target: 40h / week</span>
+                  </div>
+                  <div className="dtr-weekly-rows">
+                    {weeks.map((w) => (
+                      <div key={w.key} className={`dtr-week-row ${w.isCurrentWeek ? 'dtr-week-current' : ''}`}>
+                        <div className="dtr-week-meta">
+                          <span className="dtr-week-range">
+                            {w.label}
+                            {w.isCurrentWeek && <span className="dtr-week-now-pill">This week</span>}
+                          </span>
+                          <span className="dtr-week-stats">{w.days}d logged</span>
+                        </div>
+                        <div className="dtr-week-bar-wrap">
+                          <div className="dtr-week-bar-track">
+                            <div
+                              className={`dtr-week-bar-fill ${w.isOver ? 'dtr-week-bar-over' : w.pct >= 80 ? 'dtr-week-bar-good' : ''}`}
+                              style={{ width: `${w.pct}%` }}
+                            />
+                            <div className="dtr-week-bar-target-line" title="40h target" />
+                          </div>
+                          <span className={`dtr-week-hours ${w.isOver ? 'dtr-week-hours-over' : ''}`}>
+                            {formatMinutesAsHm(w.minutes)}
+                            {w.isOver && <span className="dtr-week-over-badge">+{formatMinutesAsHm(w.minutes - weekTarget)}</span>}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
 
             <div className="dtr-ledger">
               {visibleEntries.length === 0 ? (
@@ -4691,10 +5018,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               )}
             </div>
 
-            <div className="dtr-print-signoff print-only">
-              <div><span /><p>Employee signature</p></div>
-              <div><span /><p>Supervisor signature</p></div>
-            </div>
           </section>
         </div>
       </main>
@@ -4760,11 +5083,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </button>
           <button
             type="button"
-            className="dtr-nav-btn"
+            className="nav-text-action nav-clock-btn"
             onClick={() => setScreen('dtr')}
-            title="Daily Time Record"
+            title="Open Daily Time Record"
           >
-            <Clock3 size={18} />
+            <Clock3 size={15} className="nav-clock-icon" />
+            <span className="nav-clock-time">
+              {formatLiveClockParts(liveClock).time.slice(0, -3)}
+              <span className="nav-clock-period">{formatLiveClockParts(liveClock).period}</span>
+            </span>
           </button>
           <button type="button" onClick={handleLogout} title="Log out">
             <LogOut size={18} />
