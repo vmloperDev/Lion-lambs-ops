@@ -3231,28 +3231,28 @@ input, select, textarea { font: inherit; }
   overflow-wrap: anywhere;
 }
 
-/* Herta retry button (shown on failed AI responses) */
+/* Herta retry button (always shown on AI responses) */
 .chat-retry-btn {
   display: inline-flex; align-items: center; gap: 5px;
   margin-top: 6px;
-  padding: 5px 12px;
-  background: #fef2f2;
-  border: 1.5px solid #fecaca;
+  padding: 4px 11px;
+  background: #f5f3ff;
+  border: 1.5px solid #c4b5fd;
   border-radius: 999px;
-  color: #b91c1c;
-  font-size: 0.72rem; font-weight: 700;
+  color: #7c3aed;
+  font-size: 0.7rem; font-weight: 700;
   cursor: pointer;
   transition: all .15s;
 }
 .chat-retry-btn:hover {
-  background: #fee2e2;
-  border-color: #ef4444;
+  background: #ede9fe;
+  border-color: #7c3aed;
   transform: translateY(-1px);
 }
 [data-theme="dark"] .chat-retry-btn {
-  background: #450a0a; border-color: #7f1d1d; color: #fca5a5;
+  background: #2e1065; border-color: #6d28d9; color: #c4b5fd;
 }
-[data-theme="dark"] .chat-retry-btn:hover { background: #5b0f0f; border-color: #ef4444; }
+[data-theme="dark"] .chat-retry-btn:hover { background: #3b0764; border-color: #a855f7; }
 
 .ai-autofill-retry {
   background: #ef4444 !important;

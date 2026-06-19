@@ -5513,7 +5513,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                           <span className="chat-thinking-dots"><span/><span/><span/></span>
                         ) : msg.text}
                       </div>
-                      {isNexus && msg.isNexusFailed && !msg.isNexusThinking && (
+                      {isNexus && !msg.isNexusThinking && !isUnsent && (
                         <button
                           type="button"
                           className="chat-retry-btn"
