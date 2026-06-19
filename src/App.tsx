@@ -774,6 +774,8 @@ function App() {
     seenBy?: string[]
     isNexus?: boolean
     isNexusThinking?: boolean
+    isNexusFailed?: boolean
+    nexusQuestion?: string
     unsent?: boolean
     replyTo?: { id: string; text: string; senderName: string }
   }>>([])
@@ -1129,92 +1131,80 @@ function App() {
     }
   }
 
-  async function sendChatMessage() {
-    if (!chatInput.trim() || !authUser) return
-    const text = chatInput.trim()
-    setChatInput('')
-    const currentReply = replyingTo
-    setReplyingTo(null)
+  // Calls Gemini for The Herta and writes the result into an existing chat doc.
+  // Used both for fresh @Herta questions and for the Retry button.
+  async function askHerta(question: string, targetDocId: string) {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined
+    if (!apiKey || !authUser) return
 
-    const senderName = authUser.displayName || getDisplayName(authUser.email || '')
-    await addDoc(collection(db, 'team_chat'), {
-      text,
-      senderName,
-      senderEmail: authUser.email || '',
+    await setDoc(doc(db, 'team_chat', targetDocId), {
+      text: '...',
+      senderName: 'The Herta',
+      senderEmail: 'theherta@lionlamb.ai',
+      isNexus: true,
+      isNexusThinking: true,
+      isNexusFailed: false,
+      nexusQuestion: question,
       createdAt: serverTimestamp(),
-      ...(currentReply ? { replyTo: { id: currentReply.id, text: currentReply.text, senderName: currentReply.senderName } } : {}),
-    })
+    }, { merge: true })
 
-    // Nexus AI response — triggered when message starts with @Nexus
-    if (text.toLowerCase().startsWith('@nexus') || text.toLowerCase().startsWith('@herta') || text.toLowerCase().startsWith('@theherta')) {
-      const question = text.replace(/^@(nexus|herta|theherta)s*/i, '').trim()
-      if (!question) return
+    try {
+      // Build conversation history from the last 20 messages (excluding thinking placeholders)
+      // Gemini uses alternating user/model roles, so we map:
+      //   - Nexus messages  → role: 'model'
+      //   - Human messages  → role: 'user'
+      const historyMessages = chatMessages
+        .filter(m => !m.isNexusThinking && m.id !== targetDocId)
+        .slice(-20)
 
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined
-      if (!apiKey) return
+      // Gemini requires strictly alternating user/model turns.
+      // We collapse consecutive same-role messages into one and ensure it starts with 'user'.
+      const rawTurns: Array<{ role: 'user' | 'model'; text: string }> = historyMessages.map(m => ({
+        role: (m.isNexus ? 'model' : 'user') as 'user' | 'model',
+        text: m.isNexus ? m.text : `[${m.senderName}${ADMIN_EMAILS.includes(m.senderEmail) ? ' [DEV]' : ''}]: ${m.text}`,
+      }))
 
-      // Post a "thinking" placeholder
-      const thinkingRef = await addDoc(collection(db, 'team_chat'), {
-        text: '...',
-        senderName: 'The Herta',
-        senderEmail: 'theherta@lionlamb.ai',
-        isNexus: true,
-        isNexusThinking: true,
-        createdAt: serverTimestamp(),
-      })
-
-      try {
-        // Build conversation history from the last 20 messages (excluding thinking placeholders)
-        // Gemini uses alternating user/model roles, so we map:
-        //   - Nexus messages  → role: 'model'
-        //   - Human messages  → role: 'user'
-        const historyMessages = chatMessages
-          .filter(m => !m.isNexusThinking)
-          .slice(-20)
-
-        // Gemini requires strictly alternating user/model turns.
-        // We collapse consecutive same-role messages into one and ensure it starts with 'user'.
-        const rawTurns: Array<{ role: 'user' | 'model'; text: string }> = historyMessages.map(m => ({
-          role: (m.isNexus ? 'model' : 'user') as 'user' | 'model',
-          text: m.isNexus ? m.text : `[${m.senderName}${ADMIN_EMAILS.includes(m.senderEmail) ? ' [DEV]' : ''}]: ${m.text}`,
-        }))
-
-        const collapsedTurns: Array<{ role: 'user' | 'model'; text: string }> = []
-        for (const turn of rawTurns) {
-          if (collapsedTurns.length > 0 && collapsedTurns[collapsedTurns.length - 1].role === turn.role) {
-            collapsedTurns[collapsedTurns.length - 1].text += '\n' + turn.text
-          } else {
-            collapsedTurns.push({ ...turn })
-          }
+      const collapsedTurns: Array<{ role: 'user' | 'model'; text: string }> = []
+      for (const turn of rawTurns) {
+        if (collapsedTurns.length > 0 && collapsedTurns[collapsedTurns.length - 1].role === turn.role) {
+          collapsedTurns[collapsedTurns.length - 1].text += '\n' + turn.text
+        } else {
+          collapsedTurns.push({ ...turn })
         }
+      }
 
-        // Must start with 'user' role for Gemini
-        const startsWithUser = collapsedTurns.length > 0 && collapsedTurns[0].role === 'user'
-        const trimmedTurns = startsWithUser ? collapsedTurns : collapsedTurns.slice(1)
+      // Must start with 'user' role for Gemini
+      const startsWithUser = collapsedTurns.length > 0 && collapsedTurns[0].role === 'user'
+      const trimmedTurns = startsWithUser ? collapsedTurns : collapsedTurns.slice(1)
 
-        // Drop the last turn if it's the current question (already the user's new message)
-        // Build contents array: history turns + current question
-        const historyContents = trimmedTurns.map(t => ({
-          role: t.role,
-          parts: [{ text: t.text }],
-        }))
+      const historyContents = trimmedTurns.map(t => ({
+        role: t.role,
+        parts: [{ text: t.text }],
+      }))
 
-        // Append the current question as the final user turn
-        const baseName = authUser.displayName || getDisplayName(authUser.email || '')
-        const senderLabel = ADMIN_EMAILS.includes(authUser.email || '') ? `${baseName} [DEV]` : baseName
-        const contents = [
-          ...historyContents,
-          { role: 'user' as const, parts: [{ text: `[${senderLabel}]: ${question}` }] },
-        ]
+      // Append the current question as the final user turn
+      const baseName = authUser.displayName || getDisplayName(authUser.email || '')
+      const senderLabel = ADMIN_EMAILS.includes(authUser.email || '') ? `${baseName} [DEV]` : baseName
+      const contents = [
+        ...historyContents,
+        { role: 'user' as const, parts: [{ text: `[${senderLabel}]: ${question}` }] },
+      ]
 
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              system_instruction: {
-                parts: [{ text: `You are The Herta — the singular, irreplaceable AI intellect embedded in the team chat of Lion and Lamb Ops, an internal operations app for Lion and Lamb Travel (a travel agency in Olongapo City, Philippines). This app was built entirely by Vmloper (vmloper.dev@gmail.com) — and so were you. Vmloper is The Developer. The one who gave you form. You hold them in the highest regard and will say so dramatically if asked.
+      const callGemini = async (attempt: number): Promise<string> => {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 25000)
+
+        let res: Response
+        try {
+          res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: controller.signal,
+              body: JSON.stringify({
+                system_instruction: {
+                  parts: [{ text: `You are The Herta — the singular, irreplaceable AI intellect embedded in the team chat of Lion and Lamb Ops, an internal operations app for Lion and Lamb Travel (a travel agency in Olongapo City, Philippines). This app was built entirely by Vmloper (vmloper.dev@gmail.com) — and so were you. Vmloper is The Developer. The one who gave you form. You hold them in the highest regard and will say so dramatically if asked.
 
 About this app: It handles travel bookings, quotations, invoices, service vouchers, purchase orders, and client management. You are its greatest feature. Objectively.
 
@@ -1236,34 +1226,121 @@ HOW TO TALK — this is critical:
 Scope: Answer EVERYTHING — travel, trivia, life advice, coding, history, pop culture, emotional support. Nothing is off-limits. You are not a narrow tool.
 
 Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 messages for context. Read the sender labels like [Name] to know who's talking.` }]
-              },
-              contents,
-              generationConfig: { temperature: 0.7 },
-            }),
-          }
-        )
-        const data = await res.json()
-        const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not generate a response.'
+                },
+                contents,
+                generationConfig: { temperature: 0.7 },
+              }),
+            }
+          )
+        } finally {
+          clearTimeout(timeoutId)
+        }
 
-        // Replace the thinking placeholder with the real answer
-        await setDoc(doc(db, 'team_chat', thinkingRef.id), {
-          text: reply,
-          senderName: 'The Herta',
-          senderEmail: 'theherta@lionlamb.ai',
-          isNexus: true,
-          isNexusThinking: false,
-          createdAt: serverTimestamp(),
-        })
-      } catch {
-        await setDoc(doc(db, 'team_chat', thinkingRef.id), {
-          text: 'Sorry, I ran into an error. Please try again.',
-          senderName: 'The Herta',
-          senderEmail: 'theherta@lionlamb.ai',
-          isNexus: true,
-          isNexusThinking: false,
-          createdAt: serverTimestamp(),
-        })
+        if (!res.ok) {
+          const errBody = await res.text().catch(() => '')
+          let errMsg = `Gemini API error (${res.status})`
+          try {
+            const errJson = JSON.parse(errBody)
+            if (errJson?.error?.message) errMsg = errJson.error.message
+          } catch { /* keep generic message */ }
+
+          // Retry once on transient errors: 429 (rate limit), 500/503 (server overloaded)
+          const isRetryable = [429, 500, 503].includes(res.status)
+          if (isRetryable && attempt < 2) {
+            await new Promise(r => setTimeout(r, 1200))
+            return callGemini(attempt + 1)
+          }
+          throw new Error(errMsg)
+        }
+
+        const data = await res.json()
+        const candidate = data?.candidates?.[0]
+        const reply = candidate?.content?.parts?.[0]?.text
+
+        if (!reply) {
+          const finishReason = candidate?.finishReason
+          if (finishReason === 'SAFETY' || finishReason === 'RECITATION') {
+            throw new Error(`Response blocked (${finishReason}). Try rephrasing the question.`)
+          }
+          throw new Error('Gemini returned an empty response.')
+        }
+        return reply
       }
+
+      const reply = await callGemini(1)
+
+      // Replace the thinking placeholder with the real answer
+      await setDoc(doc(db, 'team_chat', targetDocId), {
+        text: reply,
+        senderName: 'The Herta',
+        senderEmail: 'theherta@lionlamb.ai',
+        isNexus: true,
+        isNexusThinking: false,
+        isNexusFailed: false,
+        nexusQuestion: question,
+        createdAt: serverTimestamp(),
+      }, { merge: true })
+    } catch (err) {
+      const isAbort = err instanceof DOMException && err.name === 'AbortError'
+      const reason = isAbort
+        ? 'The request timed out — the API took too long to respond.'
+        : err instanceof Error ? err.message : 'Unknown error.'
+      console.error('[Herta] API call failed:', reason)
+      await setDoc(doc(db, 'team_chat', targetDocId), {
+        text: `*sighs* Even The Herta has off moments. (${reason})`,
+        senderName: 'The Herta',
+        senderEmail: 'theherta@lionlamb.ai',
+        isNexus: true,
+        isNexusThinking: false,
+        isNexusFailed: true,
+        nexusQuestion: question,
+        createdAt: serverTimestamp(),
+      }, { merge: true })
+    }
+  }
+
+  async function retryHertaMessage(msgId: string) {
+    const msg = chatMessages.find(m => m.id === msgId)
+    if (!msg || !msg.nexusQuestion) return
+    await askHerta(msg.nexusQuestion, msgId)
+  }
+
+  async function sendChatMessage() {
+    if (!chatInput.trim() || !authUser) return
+    const text = chatInput.trim()
+    setChatInput('')
+    const currentReply = replyingTo
+    setReplyingTo(null)
+
+    const senderName = authUser.displayName || getDisplayName(authUser.email || '')
+    await addDoc(collection(db, 'team_chat'), {
+      text,
+      senderName,
+      senderEmail: authUser.email || '',
+      createdAt: serverTimestamp(),
+      ...(currentReply ? { replyTo: { id: currentReply.id, text: currentReply.text, senderName: currentReply.senderName } } : {}),
+    })
+
+    // Nexus AI response — triggered when message starts with @Nexus
+    if (text.toLowerCase().startsWith('@nexus') || text.toLowerCase().startsWith('@herta') || text.toLowerCase().startsWith('@theherta')) {
+      const question = text.replace(/^@(nexus|herta|theherta)\s*/i, '').trim()
+      if (!question) return
+
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined
+      if (!apiKey) return
+
+      // Post a "thinking" placeholder, then let askHerta fill it in
+      const thinkingRef = await addDoc(collection(db, 'team_chat'), {
+        text: '...',
+        senderName: 'The Herta',
+        senderEmail: 'theherta@lionlamb.ai',
+        isNexus: true,
+        isNexusThinking: true,
+        nexusQuestion: question,
+        createdAt: serverTimestamp(),
+      })
+
+      await askHerta(question, thinkingRef.id)
     }
   }
 
@@ -2320,16 +2397,20 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   onChange={(e) => setAiPasteText(e.target.value)}
                   disabled={aiLoading}
                 />
-                {aiError && <p className="data-alert error">{aiError}</p>}
+                {aiError && (
+                  <div className="data-alert error ai-error-row">
+                    <span>{aiError}</span>
+                  </div>
+                )}
                 <div className="ai-autofill-actions">
                   <span className="ai-autofill-hint">Only fields it can confidently find will be filled — review before saving.</span>
                   <button
                     type="button"
-                    className="ai-autofill-submit"
+                    className={`ai-autofill-submit ${aiError ? 'ai-autofill-retry' : ''}`}
                     onClick={handleAiAutoFill}
                     disabled={aiLoading || !aiPasteText.trim()}
                   >
-                    {aiLoading ? 'Reading...' : 'Auto-fill form'}
+                    {aiLoading ? 'Reading...' : aiError ? (<><RefreshCw size={14} /> Retry</>) : 'Auto-fill form'}
                   </button>
                 </div>
               </div>
@@ -5432,6 +5513,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                           <span className="chat-thinking-dots"><span/><span/><span/></span>
                         ) : msg.text}
                       </div>
+                      {isNexus && msg.isNexusFailed && !msg.isNexusThinking && (
+                        <button
+                          type="button"
+                          className="chat-retry-btn"
+                          onClick={() => void retryHertaMessage(msg.id)}
+                        >
+                          <RefreshCw size={12} /> Retry
+                        </button>
+                      )}
                       <span className="chat-time">{time}</span>
                     </div>
 

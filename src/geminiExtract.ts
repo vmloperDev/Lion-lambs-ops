@@ -76,32 +76,74 @@ export async function extractBookingFieldsFromText(
     throw new GeminiExtractError('Paste some text first.')
   }
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: buildPrompt(sourceText) }] }],
-        generationConfig: {
-          temperature: 0.1,
-          responseMimeType: 'application/json',
+  const callGemini = async (attempt: number): Promise<Response> => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 25000)
+
+    let res: Response
+    try {
+      res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: buildPrompt(sourceText) }] }],
+            generationConfig: {
+              temperature: 0.1,
+              responseMimeType: 'application/json',
+            },
+          }),
         },
-      }),
-    },
-  )
+      )
+    } catch (err) {
+      clearTimeout(timeoutId)
+      const isAbort = err instanceof DOMException && err.name === 'AbortError'
+      if (isAbort) {
+        throw new GeminiExtractError('The request timed out. The API may be slow right now — try again.')
+      }
+      throw new GeminiExtractError('Could not reach Gemini. Check your internet connection and try again.')
+    }
+    clearTimeout(timeoutId)
+
+    // Retry once on transient errors: 429 (rate limit), 500/503 (server overloaded)
+    if (!res.ok && [429, 500, 503].includes(res.status) && attempt < 2) {
+      await new Promise(r => setTimeout(r, 1200))
+      return callGemini(attempt + 1)
+    }
+
+    return res
+  }
+
+  const response = await callGemini(1)
 
   if (!response.ok) {
     const errBody = await response.text().catch(() => '')
-    throw new GeminiExtractError(
-      `Gemini API error (${response.status}): ${errBody || response.statusText}`,
-    )
+    let detail = errBody || response.statusText
+    try {
+      const errJson = JSON.parse(errBody)
+      if (errJson?.error?.message) detail = errJson.error.message
+    } catch { /* keep raw body as detail */ }
+
+    if (response.status === 429) {
+      throw new GeminiExtractError('Gemini rate limit reached. Wait a moment and try again.')
+    }
+    if (response.status === 503) {
+      throw new GeminiExtractError('Gemini is temporarily overloaded. Try again in a few seconds.')
+    }
+    throw new GeminiExtractError(`Gemini API error (${response.status}): ${detail}`)
   }
 
   const data = await response.json()
-  const text: string | undefined = data?.candidates?.[0]?.content?.parts?.[0]?.text
+  const candidate = data?.candidates?.[0]
+  const text: string | undefined = candidate?.content?.parts?.[0]?.text
 
   if (!text) {
+    const finishReason = candidate?.finishReason
+    if (finishReason === 'SAFETY' || finishReason === 'RECITATION') {
+      throw new GeminiExtractError(`Gemini blocked this response (${finishReason}). Try rephrasing the pasted text.`)
+    }
     throw new GeminiExtractError('Gemini returned an empty response. Try again.')
   }
 
