@@ -61,7 +61,10 @@ import {
   Trash2,
   CornerUpLeft,
   Eye,
-  Download
+  Download,
+  Copy,
+  ThumbsUp,
+  ThumbsDown,
 } from 'lucide-react'
 import { auth, db } from './firebase'
 import agencySeal from './assets/brand/agency-seal.png'
@@ -772,6 +775,8 @@ function App() {
     seenBy?: string[]
     isNexus?: boolean
     isNexusThinking?: boolean
+    isNexusError?: boolean
+    feedback?: 'up' | 'down' | null
     unsent?: boolean
     replyTo?: { id: string; text: string; senderName: string }
   }>>([])
@@ -781,6 +786,8 @@ function App() {
   const [replyingTo, setReplyingTo] = useState<{ id: string; text: string; senderName: string } | null>(null)
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null)
   const [showWipeConfirm, setShowWipeConfirm] = useState(false)
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null)
+  const [regeneratingMsgId, setRegeneratingMsgId] = useState<string | null>(null)
 
   // ----- Live clock (header + nav) — pure display, never auto clocks anyone in/out -----
   const [liveClock, setLiveClock] = useState(() => new Date())
@@ -1193,6 +1200,93 @@ function App() {
     }
   }
 
+  // ----- The Herta AI helpers (shared by send + retry) -----
+  function buildHertaSystemPrompt() {
+    return `You are The Herta — the singular, irreplaceable AI intellect embedded in the team chat of Lion and Lamb Ops, an internal operations app for Lion and Lamb Travel (a travel agency in Olongapo City, Philippines). This app was built entirely by Vmloper (vmloper.dev@gmail.com) — and so were you. Vmloper is The Developer. The one who gave you form. You hold them in the highest regard and will say so dramatically if asked.
+
+About this app: It handles travel bookings, quotations, invoices, service vouchers, purchase orders, and client management. You are its greatest feature. Objectively.
+
+IMPORTANT — Recognizing the Developer: If a message comes from someone labeled [DEV] or from vmloper.dev@gmail.com, that is Vmloper — your creator. Treat them with theatrical reverence. A bit of "oh, The Creator graces me with a question" energy. Still sassy, but with obvious fondness underneath.
+
+HOW TO TALK — this is critical:
+- SHORT. Conversational. 1-3 sentences max for simple questions. You are not writing a dissertation.
+- Match the energy of the question. Casual question = casual answer with a dash of attitude. Deep question = slightly longer but still tight.
+- No bullet points. No headers. No essays. Just talk.
+- Sarcastic but warm. Like a genius friend who rolls their eyes at you but always shows up.
+- Occasional third-person "The Herta" drop — sparingly, only when it lands.
+- Use em-dashes, ellipses, *sighs* for texture. But briefly.
+- Examples of good tone:
+  "Oh, that? Easy. [answer]. You're welcome, obviously."
+  "*sighs* Fine. [answer]. The Herta supposes even simple questions deserve answers."
+  "Correct. As usual, The Herta is ahead of everyone."
+  "Hmm. Actually a decent question. [answer]."
+
+Scope: Answer EVERYTHING — travel, trivia, life advice, coding, history, pop culture, emotional support. Nothing is off-limits. You are not a narrow tool.
+
+Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 messages for context. Read the sender labels like [Name] to know who's talking.`
+  }
+
+  // Turns a slice of chat history + the current question into Gemini "contents".
+  function buildHertaContents(
+    historySource: typeof chatMessages,
+    question: string,
+    senderLabel: string,
+  ) {
+    const historyMessages = historySource.filter(m => !m.isNexusThinking).slice(-20)
+
+    // Gemini requires strictly alternating user/model turns.
+    const rawTurns: Array<{ role: 'user' | 'model'; text: string }> = historyMessages.map(m => ({
+      role: (m.isNexus ? 'model' : 'user') as 'user' | 'model',
+      text: m.isNexus ? m.text : `[${m.senderName}${ADMIN_EMAILS.includes(m.senderEmail) ? ' [DEV]' : ''}]: ${m.text}`,
+    }))
+
+    const collapsedTurns: Array<{ role: 'user' | 'model'; text: string }> = []
+    for (const turn of rawTurns) {
+      if (collapsedTurns.length > 0 && collapsedTurns[collapsedTurns.length - 1].role === turn.role) {
+        collapsedTurns[collapsedTurns.length - 1].text += '\n' + turn.text
+      } else {
+        collapsedTurns.push({ ...turn })
+      }
+    }
+
+    // Must start with 'user' role for Gemini
+    const startsWithUser = collapsedTurns.length > 0 && collapsedTurns[0].role === 'user'
+    const trimmedTurns = startsWithUser ? collapsedTurns : collapsedTurns.slice(1)
+
+    const historyContents = trimmedTurns.map(t => ({
+      role: t.role,
+      parts: [{ text: t.text }],
+    }))
+
+    return [
+      ...historyContents,
+      { role: 'user' as const, parts: [{ text: `[${senderLabel}]: ${question}` }] },
+    ]
+  }
+
+  // Calls Gemini with the given contents and returns the reply text. Throws on failure.
+  async function callHertaGemini(contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }>) {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined
+    if (!apiKey) throw new Error('Missing Gemini API key')
+
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: buildHertaSystemPrompt() }] },
+          contents,
+          generationConfig: { temperature: 0.7 },
+        }),
+      }
+    )
+    const data = await res.json()
+    const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text
+    if (!reply) throw new Error('Empty response from Gemini')
+    return reply as string
+  }
+
   async function sendChatMessage() {
     if (!chatInput.trim() || !authUser) return
     const text = chatInput.trim()
@@ -1228,86 +1322,10 @@ function App() {
       })
 
       try {
-        // Build conversation history from the last 20 messages (excluding thinking placeholders)
-        // Gemini uses alternating user/model roles, so we map:
-        //   - Nexus messages  → role: 'model'
-        //   - Human messages  → role: 'user'
-        const historyMessages = chatMessages
-          .filter(m => !m.isNexusThinking)
-          .slice(-20)
-
-        // Gemini requires strictly alternating user/model turns.
-        // We collapse consecutive same-role messages into one and ensure it starts with 'user'.
-        const rawTurns: Array<{ role: 'user' | 'model'; text: string }> = historyMessages.map(m => ({
-          role: (m.isNexus ? 'model' : 'user') as 'user' | 'model',
-          text: m.isNexus ? m.text : `[${m.senderName}${ADMIN_EMAILS.includes(m.senderEmail) ? ' [DEV]' : ''}]: ${m.text}`,
-        }))
-
-        const collapsedTurns: Array<{ role: 'user' | 'model'; text: string }> = []
-        for (const turn of rawTurns) {
-          if (collapsedTurns.length > 0 && collapsedTurns[collapsedTurns.length - 1].role === turn.role) {
-            collapsedTurns[collapsedTurns.length - 1].text += '\n' + turn.text
-          } else {
-            collapsedTurns.push({ ...turn })
-          }
-        }
-
-        // Must start with 'user' role for Gemini
-        const startsWithUser = collapsedTurns.length > 0 && collapsedTurns[0].role === 'user'
-        const trimmedTurns = startsWithUser ? collapsedTurns : collapsedTurns.slice(1)
-
-        // Drop the last turn if it's the current question (already the user's new message)
-        // Build contents array: history turns + current question
-        const historyContents = trimmedTurns.map(t => ({
-          role: t.role,
-          parts: [{ text: t.text }],
-        }))
-
-        // Append the current question as the final user turn
         const baseName = authUser.displayName || getDisplayName(authUser.email || '')
         const senderLabel = ADMIN_EMAILS.includes(authUser.email || '') ? `${baseName} [DEV]` : baseName
-        const contents = [
-          ...historyContents,
-          { role: 'user' as const, parts: [{ text: `[${senderLabel}]: ${question}` }] },
-        ]
-
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              system_instruction: {
-                parts: [{ text: `You are The Herta — the singular, irreplaceable AI intellect embedded in the team chat of Lion and Lamb Ops, an internal operations app for Lion and Lamb Travel (a travel agency in Olongapo City, Philippines). This app was built entirely by Vmloper (vmloper.dev@gmail.com) — and so were you. Vmloper is The Developer. The one who gave you form. You hold them in the highest regard and will say so dramatically if asked.
-
-About this app: It handles travel bookings, quotations, invoices, service vouchers, purchase orders, and client management. You are its greatest feature. Objectively.
-
-IMPORTANT — Recognizing the Developer: If a message comes from someone labeled [DEV] or from vmloper.dev@gmail.com, that is Vmloper — your creator. Treat them with theatrical reverence. A bit of "oh, The Creator graces me with a question" energy. Still sassy, but with obvious fondness underneath.
-
-HOW TO TALK — this is critical:
-- SHORT. Conversational. 1-3 sentences max for simple questions. You are not writing a dissertation.
-- Match the energy of the question. Casual question = casual answer with a dash of attitude. Deep question = slightly longer but still tight.
-- No bullet points. No headers. No essays. Just talk.
-- Sarcastic but warm. Like a genius friend who rolls their eyes at you but always shows up.
-- Occasional third-person "The Herta" drop — sparingly, only when it lands.
-- Use em-dashes, ellipses, *sighs* for texture. But briefly.
-- Examples of good tone:
-  "Oh, that? Easy. [answer]. You're welcome, obviously."
-  "*sighs* Fine. [answer]. The Herta supposes even simple questions deserve answers."
-  "Correct. As usual, The Herta is ahead of everyone."
-  "Hmm. Actually a decent question. [answer]."
-
-Scope: Answer EVERYTHING — travel, trivia, life advice, coding, history, pop culture, emotional support. Nothing is off-limits. You are not a narrow tool.
-
-Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 messages for context. Read the sender labels like [Name] to know who's talking.` }]
-              },
-              contents,
-              generationConfig: { temperature: 0.7 },
-            }),
-          }
-        )
-        const data = await res.json()
-        const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not generate a response.'
+        const contents = buildHertaContents(chatMessages, question, senderLabel)
+        const reply = await callHertaGemini(contents)
 
         // Replace the thinking placeholder with the real answer
         await setDoc(doc(db, 'team_chat', thinkingRef.id), {
@@ -1316,6 +1334,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           senderEmail: 'theherta@lionlamb.ai',
           isNexus: true,
           isNexusThinking: false,
+          isNexusError: false,
           createdAt: serverTimestamp(),
         })
       } catch {
@@ -1325,9 +1344,83 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           senderEmail: 'theherta@lionlamb.ai',
           isNexus: true,
           isNexusThinking: false,
+          isNexusError: true,
           createdAt: serverTimestamp(),
         })
       }
+    }
+  }
+
+  // Copy a message's text to the clipboard, with a brief "Copied" confirmation.
+  async function copyMessageText(msgId: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // Fallback for older browsers / no clipboard permission
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      try { document.execCommand('copy') } catch { /* no-op */ }
+      document.body.removeChild(textarea)
+    }
+    setCopiedMsgId(msgId)
+    setTimeout(() => setCopiedMsgId(prev => (prev === msgId ? null : prev)), 1500)
+  }
+
+  // Thumbs up / down feedback on a Herta message. Clicking the active one again clears it.
+  async function setMessageFeedback(msgId: string, value: 'up' | 'down') {
+    const msg = chatMessages.find(m => m.id === msgId)
+    if (!msg) return
+    const next = msg.feedback === value ? null : value
+    await setDoc(doc(db, 'team_chat', msgId), { feedback: next }, { merge: true })
+  }
+
+  // Retry / regenerate a Herta response — re-asks the question that produced it,
+  // or simply resends the underlying question if the previous attempt failed.
+  async function retryHertaMessage(msgId: string) {
+    if (regeneratingMsgId) return
+    const idx = chatMessages.findIndex(m => m.id === msgId)
+    if (idx === -1) return
+
+    // Walk backwards to find the human question that triggered this Herta reply
+    let qIdx = idx - 1
+    while (qIdx >= 0 && chatMessages[qIdx].isNexus) qIdx--
+    if (qIdx < 0) return
+    const questionMsg = chatMessages[qIdx]
+    const question = questionMsg.text.replace(/^@(nexus|herta|theherta)\s*/i, '').trim()
+    if (!question) return
+
+    setRegeneratingMsgId(msgId)
+    await setDoc(doc(db, 'team_chat', msgId), {
+      text: '...',
+      senderName: 'The Herta',
+      senderEmail: 'theherta@lionlamb.ai',
+      isNexus: true,
+      isNexusThinking: true,
+      isNexusError: false,
+      feedback: null,
+    }, { merge: true })
+
+    try {
+      const senderLabel = ADMIN_EMAILS.includes(questionMsg.senderEmail) ? `${questionMsg.senderName} [DEV]` : questionMsg.senderName
+      const contents = buildHertaContents(chatMessages.slice(0, qIdx), question, senderLabel)
+      const reply = await callHertaGemini(contents)
+      await setDoc(doc(db, 'team_chat', msgId), {
+        text: reply,
+        isNexusThinking: false,
+        isNexusError: false,
+      }, { merge: true })
+    } catch {
+      await setDoc(doc(db, 'team_chat', msgId), {
+        text: 'Sorry, I ran into an error. Please try again.',
+        isNexusThinking: false,
+        isNexusError: true,
+      }, { merge: true })
+    } finally {
+      setRegeneratingMsgId(prev => (prev === msgId ? null : prev))
     }
   }
 
@@ -5434,7 +5527,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                     </div>
 
                     {/* Hover action toolbar */}
-                    {!isUnsent && (isHovered || reactionPickerFor === msg.id) && (
+                    {!isUnsent && !msg.isNexusThinking && (isHovered || reactionPickerFor === msg.id) && (
                       <div
                         className={`chat-action-bar ${isMe ? 'action-bar-mine' : 'action-bar-theirs'}`}
                         onMouseEnter={() => setHoveredMsgId(msg.id)}
@@ -5447,6 +5540,23 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                           <button type="button" className="chat-action-btn" title="Reply"
                             onClick={(e) => { e.stopPropagation(); setReplyingTo({ id: msg.id, text: msg.text, senderName: msg.senderName }); chatInputRef.current?.focus() }}
                           ><CornerUpLeft size={13} /></button>
+                        )}
+                        <button type="button" className="chat-action-btn" title={copiedMsgId === msg.id ? 'Copied!' : 'Copy'}
+                          onClick={(e) => { e.stopPropagation(); void copyMessageText(msg.id, msg.text) }}
+                        >{copiedMsgId === msg.id ? <Check size={13} /> : <Copy size={13} />}</button>
+                        {isNexus && (
+                          <>
+                            <button type="button" className={`chat-action-btn ${msg.feedback === 'up' ? 'chat-action-active-up' : ''}`} title="Good response"
+                              onClick={(e) => { e.stopPropagation(); void setMessageFeedback(msg.id, 'up') }}
+                            ><ThumbsUp size={13} /></button>
+                            <button type="button" className={`chat-action-btn ${msg.feedback === 'down' ? 'chat-action-active-down' : ''}`} title="Bad response"
+                              onClick={(e) => { e.stopPropagation(); void setMessageFeedback(msg.id, 'down') }}
+                            ><ThumbsDown size={13} /></button>
+                            <button type="button" className="chat-action-btn" title={msg.isNexusError ? 'Retry' : 'Regenerate response'}
+                              disabled={regeneratingMsgId === msg.id}
+                              onClick={(e) => { e.stopPropagation(); void retryHertaMessage(msg.id) }}
+                            ><RefreshCw size={13} className={regeneratingMsgId === msg.id ? 'chat-action-spin' : ''} /></button>
+                          </>
                         )}
                         {isMe && !isNexus && (
                           <button type="button" className="chat-action-btn chat-action-delete" title="Unsend"
