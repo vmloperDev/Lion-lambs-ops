@@ -3318,3 +3318,19 @@ input, select, textarea { font: inherit; }
   color: var(--text-tertiary, #8a9ab0);
   font-style: italic;
 }
+
+/* ── Live rate pulsing dot ───────────────────────────────────────────────── */
+.rate-live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex-shrink: 0;
+  animation: rate-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes rate-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.75); }
+}

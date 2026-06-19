@@ -894,6 +894,7 @@ function App() {
   const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({})
   const [ratesLoadedAt, setRatesLoadedAt] = useState<Date | null>(null)
   const [ratesLoading, setRatesLoading] = useState(false)
+  const [ratesClock, setRatesClock] = useState(0) // ticks every second on data-form
 
   // Fetch rates from Frankfurter (free, no key required) — PHP as base
   useEffect(() => {
@@ -919,6 +920,13 @@ function App() {
     const interval = setInterval(fetchRates, 10 * 60 * 1000)
     return () => { cancelled = true; clearInterval(interval) }
   }, [])
+
+  // Tick ratesClock every second so the "X seconds ago" freshness counter is live
+  useEffect(() => {
+    if (screen !== 'data-form') return
+    const t = setInterval(() => setRatesClock((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [screen])
 
   const currentCurrency = bookingForm.currency || 'PHP'
   const rateFromPHP = exchangeRates[currentCurrency] ?? null // null = not loaded yet
@@ -2584,13 +2592,19 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   <span className="rate-loading">Fetching live rates…</span>
                 ) : rateFromPHP !== null && currentCurrency !== 'PHP' ? (
                   <>
-                    <span className="rate-value">1 PHP = {rateFromPHP.toFixed(4)} {currentCurrency}</span>
-                    {ratesLoadedAt && (
-                      <span className="rate-time">Updated {ratesLoadedAt.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}</span>
-                    )}
+                    <span className="rate-live-dot" title="Live rate" />
+                    <span className="rate-value">1 PHP = {rateFromPHP.toFixed(6)} {currentCurrency}</span>
+                    {ratesLoadedAt && (() => {
+                      const secsAgo = Math.floor((Date.now() - ratesLoadedAt.getTime()) / 1000)
+                      const label = secsAgo < 60
+                        ? `${secsAgo}s ago`
+                        : `${Math.floor(secsAgo / 60)}m ${secsAgo % 60}s ago`
+                      void ratesClock // subscribe to tick
+                      return <span className="rate-time">Updated {label}</span>
+                    })()}
                   </>
                 ) : currentCurrency === 'PHP' ? (
-                  <span className="rate-value">Philippine Peso (base)</span>
+                  <span className="rate-value">Philippine Peso — base currency</span>
                 ) : (
                   <span className="rate-loading">Rate unavailable</span>
                 )}
