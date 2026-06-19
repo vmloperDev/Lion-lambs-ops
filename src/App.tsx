@@ -896,17 +896,17 @@ function App() {
   const [ratesLoading, setRatesLoading] = useState(false)
   const [ratesClock, setRatesClock] = useState(0) // ticks every second on data-form
 
-  // Fetch rates from Frankfurter (free, no key required) — PHP as base
+  // Fetch rates from open.er-api.com (free, no key, supports PHP as base)
   useEffect(() => {
     let cancelled = false
     async function fetchRates() {
       setRatesLoading(true)
       try {
-        const res = await fetch('https://api.frankfurter.app/latest?base=PHP')
+        const res = await fetch('https://open.er-api.com/v6/latest/PHP')
         if (!res.ok) throw new Error('rate fetch failed')
         const data = await res.json()
-        if (!cancelled) {
-          setExchangeRates({ PHP: 1, ...data.rates })
+        if (!cancelled && data.result === 'success') {
+          setExchangeRates(data.rates) // already includes PHP: 1
           setRatesLoadedAt(new Date())
         }
       } catch {
@@ -931,11 +931,24 @@ function App() {
   const currentCurrency = bookingForm.currency || 'PHP'
   const rateFromPHP = exchangeRates[currentCurrency] ?? null // null = not loaded yet
 
-  function formatWithCurrency(phpAmount: number) {
-    if (currentCurrency === 'PHP' || rateFromPHP === null) {
-      return formatAmount(String(phpAmount), currentCurrency)
-    }
-    return formatAmount(String(phpAmount * rateFromPHP), currentCurrency)
+  // Format an amount that is already in the booking's chosen currency — no conversion needed.
+  // convertAndFormat: just labels the number with the right currency code.
+  function convertAndFormat(amount: number, currency: string, _rates?: Record<string, number>) {
+    return formatAmount(String(amount), currency || 'PHP')
+  }
+
+  // For the data-form summary totals (already in chosen currency)
+  function formatWithCurrency(amount: number) {
+    return formatAmount(String(amount), currentCurrency)
+  }
+
+  // Convert a chosen-currency amount TO PHP for reference display
+  function toPhpEquivalent(amount: number, currency: string): string {
+    if (!currency || currency === 'PHP') return ''
+    const rate = exchangeRates[currency] ?? null
+    if (rate === null || rate === 0) return ''
+    const php = amount / rate
+    return `≈ PHP ${php.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
   const [invoiceForm, setInvoiceForm] = useState({
     paymentMethod: '',
@@ -2593,20 +2606,22 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 ) : rateFromPHP !== null && currentCurrency !== 'PHP' ? (
                   <>
                     <span className="rate-live-dot" title="Live rate" />
-                    <span className="rate-value">1 PHP = {rateFromPHP.toFixed(6)} {currentCurrency}</span>
+                    <span className="rate-value">
+                      1 {currentCurrency} = {(1 / rateFromPHP).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} PHP
+                    </span>
                     {ratesLoadedAt && (() => {
                       const secsAgo = Math.floor((Date.now() - ratesLoadedAt.getTime()) / 1000)
                       const label = secsAgo < 60
                         ? `${secsAgo}s ago`
                         : `${Math.floor(secsAgo / 60)}m ${secsAgo % 60}s ago`
                       void ratesClock // subscribe to tick
-                      return <span className="rate-time">Updated {label}</span>
+                      return <span className="rate-time">· Updated {label}</span>
                     })()}
                   </>
                 ) : currentCurrency === 'PHP' ? (
-                  <span className="rate-value">Philippine Peso — base currency</span>
+                  <span className="rate-value">🇵🇭 Philippine Peso — base currency</span>
                 ) : (
-                  <span className="rate-loading">Rate unavailable</span>
+                  <span className="rate-loading">Rate unavailable — check connection</span>
                 )}
               </div>
             </div>
@@ -2763,21 +2778,31 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                           <UserRound size={13} />
                         </button>
                       </div>
-                      <input
-                        type="text"
-                        value={item.unitPrice}
-                        onChange={(e) => changeBreakdownItemField(index, 'unitPrice', e.target.value)}
-                        placeholder="0.00"
-                      />
-                      <input
-                        type="text"
-                        className={item.isPackageRow ? 'disabled-field' : undefined}
-                        value={item.isPackageRow ? '' : item.nettCost}
-                        onChange={(e) => changeBreakdownItemField(index, 'nettCost', e.target.value)}
-                        placeholder={item.isPackageRow ? 'N/A' : '0.00'}
-                        disabled={item.isPackageRow}
-                        title={item.isPackageRow ? 'Package row has no supplier nett — it\'s the client-facing package price, always sent to the invoice' : undefined}
-                      />
+                      <div className="price-input-wrap">
+                        <input
+                          type="text"
+                          value={item.unitPrice}
+                          onChange={(e) => changeBreakdownItemField(index, 'unitPrice', e.target.value)}
+                          placeholder="0.00"
+                        />
+                        {currentCurrency !== 'PHP' && item.unitPrice && (
+                          <span className="php-equiv">{toPhpEquivalent(parseAmount(item.unitPrice), currentCurrency)}</span>
+                        )}
+                      </div>
+                      <div className="price-input-wrap">
+                        <input
+                          type="text"
+                          className={item.isPackageRow ? 'disabled-field' : undefined}
+                          value={item.isPackageRow ? '' : item.nettCost}
+                          onChange={(e) => changeBreakdownItemField(index, 'nettCost', e.target.value)}
+                          placeholder={item.isPackageRow ? 'N/A' : '0.00'}
+                          disabled={item.isPackageRow}
+                          title={item.isPackageRow ? 'Package row has no supplier nett — it\'s the client-facing package price, always sent to the invoice' : undefined}
+                        />
+                        {currentCurrency !== 'PHP' && !item.isPackageRow && item.nettCost && (
+                          <span className="php-equiv">{toPhpEquivalent(parseAmount(item.nettCost), currentCurrency)}</span>
+                        )}
+                      </div>
                       <button
                         type="button"
                         className={`send-to-invoice-btn ${item.isPackageRow || item.sendToInvoice ? 'active' : ''}`}
@@ -2814,16 +2839,19 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <article>
                   <span>Client total</span>
                   <strong>{formatWithCurrency(displayTotalClient)}</strong>
+                  {currentCurrency !== 'PHP' && <small className="php-equiv-total">{toPhpEquivalent(displayTotalClient, currentCurrency)}</small>}
                 </article>
                 <article>
                   <span>Supplier nett</span>
                   <strong>{formatWithCurrency(displayTotalNett)}</strong>
+                  {currentCurrency !== 'PHP' && <small className="php-equiv-total">{toPhpEquivalent(displayTotalNett, currentCurrency)}</small>}
                 </article>
                 <article>
                   <span>Est. profit</span>
                   <strong className={displayTotalProfit >= 0 ? 'profit-total' : 'profit-negative'}>
                     {formatWithCurrency(displayTotalProfit)}
                   </strong>
+                  {currentCurrency !== 'PHP' && <small className="php-equiv-total">{toPhpEquivalent(displayTotalProfit, currentCurrency)}</small>}
                 </article>
               </div>
             </div>
@@ -3225,11 +3253,11 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               </article>
               <article>
                 <span>Client price</span>
-                <strong>{formatAmount(String(getBookingClientTotal(selectedBooking)))}</strong>
+                <strong>{convertAndFormat(getBookingClientTotal(selectedBooking), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
               </article>
               <article className="internal-summary">
                 <span>Internal nett</span>
-                <strong>{formatAmount(String(getBookingBreakdownNettTotal(selectedBooking)))}</strong>
+                <strong>{convertAndFormat(getBookingBreakdownNettTotal(selectedBooking), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
               </article>
             </div>
 
@@ -3577,8 +3605,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   <td className="item-col">{item.description}</td>
                   <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
                   <td>{item.quantity}</td>
-                  <td>{formatAmount(String(item.unitPrice))}</td>
-                  <td>{formatAmount(String(item.total))}</td>
+                  <td>{convertAndFormat(item.unitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                  <td>{convertAndFormat(item.total, selectedBooking.currency || 'PHP', exchangeRates)}</td>
                 </tr>
               ))}
             </tbody>
@@ -3694,15 +3722,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           <section className="invoice-edit-summary">
             <article>
               <span>Total invoice</span>
-              <strong>{formatAmount(String(totalPrice))}</strong>
+              <strong>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
             </article>
             <article>
               <span>Amount paid</span>
-              <strong>{formatAmount(invoiceForm.invoiceAmountPaid)}</strong>
+              <strong>{convertAndFormat(parseAmount(invoiceForm.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
             </article>
             <article>
               <span>Balance</span>
-              <strong>{formatAmount(String(balance))}</strong>
+              <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
             </article>
           </section>
 
@@ -3824,8 +3852,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <div className="fully-paid-modal-body">
                 <p>
                   This will settle the remaining balance of{' '}
-                  <strong>{formatAmount(String(Math.max(getInvoiceEditorTotal() - parseAmount(invoiceForm.invoiceAmountPaid), 0)))}</strong>{' '}
-                  to PHP 0.00. When was it fully paid?
+                  <strong>{convertAndFormat(Math.max(getInvoiceEditorTotal() - parseAmount(invoiceForm.invoiceAmountPaid), 0), selectedBooking.currency || 'PHP', exchangeRates)}</strong>{' '}
+                  to {selectedBooking.currency || 'PHP'} 0.00. When was it fully paid?
                 </p>
                 <label className="fully-paid-date-field">
                   Date fully paid
@@ -3953,7 +3981,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </div>
             <div className="amount-due-box">
               <span>Amount Due</span>
-              <strong>{formatAmount(String(balance))}</strong>
+              <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
             </div>
           </section>
 
@@ -3979,8 +4007,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                     <td className="item-col">{item.description}</td>
                     <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
                     <td>{item.quantity}</td>
-                    <td>{formatAmount(String(item.unitPrice))}</td>
-                    <td>{formatAmount(String(item.total))}</td>
+                    <td>{convertAndFormat(item.unitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                    <td>{convertAndFormat(item.total, selectedBooking.currency || 'PHP', exchangeRates)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -3989,15 +4017,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <section className="invoice-total-panel">
               <div className="invoice-total-row total-row">
                 <span>TOTAL</span>
-                <strong>{formatAmount(String(totalPrice))}</strong>
+                <strong>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
               </div>
               <div className="invoice-total-row">
                 <span>PAID</span>
-                <strong>{formatAmount(selectedBooking.invoiceAmountPaid)}</strong>
+                <strong>{convertAndFormat(parseAmount(selectedBooking.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
               </div>
               <div className="invoice-total-row">
                 <span>BALANCE</span>
-                <strong>{formatAmount(String(balance))}</strong>
+                <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
               </div>
               {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate && (
                 <div className="invoice-total-row fully-paid-badge">
@@ -4205,15 +4233,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <td>{paxLabel}</td>
                 <td>{itemDescription}</td>
                 <td>{item.details || '—'}</td>
-                <td>{formatAmount(String(poUnitPrice))}</td>
-                <td>{formatAmount(String(poAmount))}</td>
+                <td>{convertAndFormat(poUnitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                <td>{convertAndFormat(poAmount, selectedBooking.currency || 'PHP', exchangeRates)}</td>
               </tr>
             </tbody>
           </table>
 
           <section className="po-total">
             <span>Total Amount:</span>
-            <strong>{formatAmount(String(poAmount))}</strong>
+            <strong>{convertAndFormat(poAmount, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
           </section>
 
           <section className="po-notes-grid">
