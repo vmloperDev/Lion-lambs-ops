@@ -803,6 +803,14 @@ function App() {
   const [dtrEditingId, setDtrEditingId] = useState<string | null>(null)
   const [dtrError, setDtrError] = useState('')
   const [dtrMessage, setDtrMessage] = useState('')
+  const [dtrView, setDtrView] = useState<'records' | 'detail'>('records')
+  const [dtrRecordSearch, setDtrRecordSearch] = useState('')
+  const [dtrNewRecordOpen, setDtrNewRecordOpen] = useState(false)
+  const [dtrNewRecordName, setDtrNewRecordName] = useState('')
+  const [dtrNewRecordMonth, setDtrNewRecordMonth] = useState(() => getTodayDateStr().slice(0, 7))
+  const [dtrNewRecordError, setDtrNewRecordError] = useState('')
+  const [dtrDeleteRecordTarget, setDtrDeleteRecordTarget] = useState<{ employeeName: string; month: string } | null>(null)
+  const [dtrDeletingRecord, setDtrDeletingRecord] = useState(false)
   const [dtrForm, setDtrForm] = useState<Omit<DtrEntry, 'id' | 'createdAt' | 'updatedAt' | 'loggedBy'>>({
     employeeName: '',
     date: getTodayDateStr(),
@@ -1157,6 +1165,58 @@ function App() {
       setDtrError('')
     } catch {
       setDtrError('Could not delete this entry. Check your connection and try again.')
+    }
+  }
+
+  // Opens an existing employee+month record in the detail editor.
+  function openDtrRecord(employeeName: string, month: string) {
+    setDtrNameFilter(employeeName)
+    setDtrMonthFilter(month)
+    setDtrEditingId(null)
+    setDtrForm({ employeeName, date: getTodayDateStr().slice(0, 7) === month ? getTodayDateStr() : `${month}-01`, amIn: '', amOut: '', pmIn: '', pmOut: '', notes: '' })
+    setDtrError('')
+    setDtrMessage('')
+    setDtrView('detail')
+  }
+
+  // Creates a brand-new employee+month record and jumps straight into the detail editor.
+  function handleCreateDtrRecord(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const name = dtrNewRecordName.trim()
+    if (!name) {
+      setDtrNewRecordError('Enter the employee name.')
+      return
+    }
+    if (!dtrNewRecordMonth) {
+      setDtrNewRecordError('Pick a month.')
+      return
+    }
+    const alreadyExists = dtrEntries.some(
+      (e) => e.employeeName.toLowerCase() === name.toLowerCase() && e.date.startsWith(dtrNewRecordMonth)
+    )
+    setDtrNewRecordOpen(false)
+    setDtrNewRecordError('')
+    openDtrRecord(name, dtrNewRecordMonth)
+    setDtrNewRecordName('')
+    setDtrMessage(alreadyExists ? `Opened existing record for ${name}.` : `New record ready for ${name} — log the first day below.`)
+  }
+
+  // Deletes every entry that makes up a whole employee+month record.
+  async function handleDeleteDtrRecord(employeeName: string, month: string) {
+    setDtrDeletingRecord(true)
+    try {
+      const targets = dtrEntries.filter((e) => e.employeeName === employeeName && e.date.startsWith(month))
+      await Promise.all(targets.map((e) => deleteDoc(doc(db, dtrCollectionKey, e.id))))
+      setDtrMessage(`Deleted record for ${employeeName} (${month}).`)
+      setDtrError('')
+      if (dtrView === 'detail' && dtrNameFilter === employeeName && dtrMonthFilter === month) {
+        setDtrView('records')
+      }
+    } catch {
+      setDtrError('Could not delete this record. Check your connection and try again.')
+    } finally {
+      setDtrDeletingRecord(false)
+      setDtrDeleteRecordTarget(null)
     }
   }
 
@@ -4741,15 +4801,197 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const daysLoggedVisible = new Set(visibleEntries.map((e) => e.date)).size
     const shiftTargetMinutes = 8 * 60
 
+    // Group every entry into an employee+month "record" — this is what makes the
+    // DTR feel like a normal records system: create one, open one, delete one.
+    type DtrRecordSummary = { employeeName: string; month: string; daysLogged: number; totalMinutes: number; lastUpdated: string }
+    const recordMap = new Map<string, DtrRecordSummary>()
+    for (const entry of dtrEntries) {
+      const month = entry.date.slice(0, 7)
+      const key = `${entry.employeeName}__${month}`
+      if (!recordMap.has(key)) {
+        recordMap.set(key, { employeeName: entry.employeeName, month, daysLogged: 0, totalMinutes: 0, lastUpdated: entry.updatedAt || entry.createdAt || '' })
+      }
+      const rec = recordMap.get(key)!
+      rec.daysLogged += 1
+      rec.totalMinutes += getDtrEntryMinutes(entry)
+      if ((entry.updatedAt || entry.createdAt || '') > rec.lastUpdated) rec.lastUpdated = entry.updatedAt || entry.createdAt || ''
+    }
+    const allRecords = Array.from(recordMap.values()).sort((a, b) => b.month.localeCompare(a.month) || a.employeeName.localeCompare(b.employeeName))
+    const recordSearchLower = dtrRecordSearch.trim().toLowerCase()
+    const filteredRecords = recordSearchLower
+      ? allRecords.filter((r) => r.employeeName.toLowerCase().includes(recordSearchLower) || r.month.includes(recordSearchLower))
+      : allRecords
+
+    // ----- DTR records list (landing) view -----
+    if (dtrView === 'records') {
+      return (
+        <main className="dtr-screen">
+          <header className="dtr-header">
+            <button type="button" className="dtr-back-btn" onClick={() => setScreen('home')} title="Back to dashboard">
+              <CornerUpLeft size={18} />
+            </button>
+            <div className="dtr-header-title">
+              <p>Operations desk</p>
+              <h1>Daily Time Records</h1>
+            </div>
+            <div className="dtr-live-clock no-print">
+              <span className="dtr-live-clock-dot" />
+              <div className="dtr-live-clock-text">
+                <strong>
+                  {formatLiveClockParts(liveClock).time}
+                  <span className="dtr-live-clock-period">{formatLiveClockParts(liveClock).period}</span>
+                </strong>
+                <span className="dtr-live-clock-date">{formatLiveDateShort(liveClock)}</span>
+              </div>
+            </div>
+            <div className="dtr-header-actions">
+              <button type="button" className="dtr-save-btn" onClick={() => { setDtrNewRecordError(''); setDtrNewRecordName(''); setDtrNewRecordMonth(getTodayDateStr().slice(0, 7)); setDtrNewRecordOpen(true) }}>
+                <Plus size={16} />
+                New Record
+              </button>
+            </div>
+          </header>
+
+          {dtrError && <div className="dtr-banner dtr-banner-error">{dtrError}</div>}
+          {dtrMessage && !dtrError && <div className="dtr-banner dtr-banner-ok">{dtrMessage}</div>}
+
+          <div className="dtr-records-body">
+            <div className="dtr-records-toolbar">
+              <input
+                type="text"
+                className="dtr-records-search"
+                placeholder="Search by employee or month (YYYY-MM)..."
+                value={dtrRecordSearch}
+                onChange={(e) => setDtrRecordSearch(e.target.value)}
+              />
+              <span className="dtr-records-count">{filteredRecords.length} record{filteredRecords.length === 1 ? '' : 's'}</span>
+            </div>
+
+            {filteredRecords.length === 0 ? (
+              <div className="dtr-empty dtr-records-empty">
+                <Clock3 size={28} />
+                <p>{allRecords.length === 0 ? 'No DTR records yet.' : 'No records match your search.'}</p>
+                <span>Create a new record for an employee and month to get started.</span>
+                {allRecords.length === 0 && (
+                  <button type="button" className="dtr-save-btn" onClick={() => { setDtrNewRecordError(''); setDtrNewRecordName(''); setDtrNewRecordMonth(getTodayDateStr().slice(0, 7)); setDtrNewRecordOpen(true) }}>
+                    <Plus size={15} />
+                    New Record
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="dtr-records-grid">
+                {filteredRecords.map((rec) => {
+                  const monthLabel = new Date(`${rec.month}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+                  const isCurrentMonth = rec.month === getTodayDateStr().slice(0, 7)
+                  return (
+                    <div key={`${rec.employeeName}__${rec.month}`} className={`dtr-record-card ${isCurrentMonth ? 'dtr-record-card-current' : ''}`}>
+                      <div className="dtr-record-card-top">
+                        <div className="dtr-record-avatar">{rec.employeeName.charAt(0).toUpperCase()}</div>
+                        <div className="dtr-record-card-info">
+                          <p className="dtr-record-name">{rec.employeeName}</p>
+                          <p className="dtr-record-month">{monthLabel}{isCurrentMonth && <span className="dtr-record-current-pill">Current</span>}</p>
+                        </div>
+                      </div>
+                      <div className="dtr-record-card-stats">
+                        <div className="dtr-record-stat">
+                          <span>{rec.daysLogged}</span>
+                          <p>Days logged</p>
+                        </div>
+                        <div className="dtr-record-stat">
+                          <span>{formatMinutesAsHm(rec.totalMinutes)}</span>
+                          <p>Total hours</p>
+                        </div>
+                      </div>
+                      <div className="dtr-record-card-actions">
+                        <button type="button" className="dtr-record-open-btn" onClick={() => openDtrRecord(rec.employeeName, rec.month)}>
+                          <Eye size={14} />
+                          Open
+                        </button>
+                        <button type="button" className="dtr-record-delete-btn" onClick={() => setDtrDeleteRecordTarget({ employeeName: rec.employeeName, month: rec.month })}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* New record modal */}
+          {dtrNewRecordOpen && (
+            <div className="dtr-modal-overlay" onClick={() => setDtrNewRecordOpen(false)}>
+              <div className="dtr-modal" onClick={(e) => e.stopPropagation()}>
+                <h3>New DTR record</h3>
+                <p className="dtr-modal-sub">Pick the employee and month — you'll log individual days next.</p>
+                <form onSubmit={handleCreateDtrRecord} className="dtr-modal-form">
+                  <label>
+                    Employee name
+                    <input
+                      type="text"
+                      value={dtrNewRecordName}
+                      onChange={(e) => setDtrNewRecordName(e.target.value)}
+                      placeholder="e.g. Maria Santos"
+                      list="dtr-known-names-modal"
+                      autoFocus
+                      required
+                    />
+                    <datalist id="dtr-known-names-modal">
+                      {knownNames.map((name) => <option key={name} value={name} />)}
+                    </datalist>
+                  </label>
+                  <label>
+                    Month
+                    <input
+                      type="month"
+                      value={dtrNewRecordMonth}
+                      onChange={(e) => setDtrNewRecordMonth(e.target.value)}
+                      required
+                    />
+                  </label>
+                  {dtrNewRecordError && <p className="dtr-modal-error">{dtrNewRecordError}</p>}
+                  <div className="dtr-modal-actions">
+                    <button type="button" className="dtr-cancel-btn" onClick={() => setDtrNewRecordOpen(false)}>Cancel</button>
+                    <button type="submit" className="dtr-save-btn"><Plus size={15} />Create record</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Delete record confirmation */}
+          {dtrDeleteRecordTarget && (
+            <div className="dtr-modal-overlay" onClick={() => !dtrDeletingRecord && setDtrDeleteRecordTarget(null)}>
+              <div className="dtr-modal" onClick={(e) => e.stopPropagation()}>
+                <h3>Delete this record?</h3>
+                <p className="dtr-modal-sub">
+                  This permanently deletes every logged day for <strong>{dtrDeleteRecordTarget.employeeName}</strong> in{' '}
+                  <strong>{new Date(`${dtrDeleteRecordTarget.month}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</strong>. This cannot be undone.
+                </p>
+                <div className="dtr-modal-actions">
+                  <button type="button" className="dtr-cancel-btn" disabled={dtrDeletingRecord} onClick={() => setDtrDeleteRecordTarget(null)}>Cancel</button>
+                  <button type="button" className="dtr-record-delete-confirm-btn" disabled={dtrDeletingRecord} onClick={() => handleDeleteDtrRecord(dtrDeleteRecordTarget.employeeName, dtrDeleteRecordTarget.month)}>
+                    <Trash2 size={15} />
+                    {dtrDeletingRecord ? 'Deleting...' : 'Delete record'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+      )
+    }
+
     return (
       <main className="dtr-screen">
         <header className="dtr-header">
-          <button type="button" className="dtr-back-btn" onClick={() => setScreen('home')} title="Back">
+          <button type="button" className="dtr-back-btn" onClick={() => setDtrView('records')} title="Back to records">
             <CornerUpLeft size={18} />
           </button>
           <div className="dtr-header-title">
-            <p>Operations desk</p>
-            <h1>Daily Time Record</h1>
+            <p>Operations desk · <button type="button" className="dtr-breadcrumb-btn" onClick={() => setDtrView('records')}>All records</button></p>
+            <h1>{dtrNameFilter === 'All' ? 'Daily Time Record' : dtrNameFilter} {dtrNameFilter !== 'All' && <span className="dtr-header-month">· {new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>}</h1>
           </div>
           <div className="dtr-live-clock no-print">
             <span className="dtr-live-clock-dot" />
@@ -5177,7 +5419,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           <button
             type="button"
             className="nav-text-action nav-clock-btn"
-            onClick={() => setScreen('dtr')}
+            onClick={() => { setDtrView('records'); setScreen('dtr') }}
             title="Open Daily Time Record"
           >
             <Clock3 size={15} className="nav-clock-icon" />
@@ -5220,7 +5462,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <button
                   type="button"
                   className="open-dtr-btn"
-                  onClick={() => setScreen('dtr')}
+                  onClick={() => { setDtrView('records'); setScreen('dtr') }}
                 >
                   <Clock3 size={18} />
                   Open Daily Time Record

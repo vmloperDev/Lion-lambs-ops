@@ -3169,11 +3169,13 @@ input, select, textarea { font: inherit; }
 /* ---- Dashboard DTR quick-status widget, beside New Inquiry ---- */
 .dashboard-banner-actions {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 10px;
 }
-.dashboard-banner-actions .create-project-btn { margin-top: 0; }
+.dashboard-banner-actions .create-project-btn { margin-top: 0; flex: 1 1 0; white-space: nowrap; }
+.dashboard-banner-actions .open-dtr-btn { flex: 1 1 0; white-space: nowrap; }
 
 .open-dtr-btn {
   display: flex; align-items: center; justify-content: center; gap: 9px;
@@ -3220,9 +3222,120 @@ input, select, textarea { font: inherit; }
 }
 
 @media (max-width: 620px) {
-  .dashboard-banner-actions { width: 100%; }
+  .dashboard-banner-actions { width: 100%; flex-direction: column; }
   .dashboard-clock-strip { padding: 10px 16px; }
   .dashboard-clock-time { font-size: 1.3rem; }
+}
+
+/* ── DTR records list (landing) ── */
+.dtr-header-month { font-weight: 500; color: var(--muted); font-size: 1rem; }
+.dtr-breadcrumb-btn {
+  background: none; border: none; padding: 0; margin: 0;
+  font: inherit; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--teal-dark); font-weight: 700; cursor: pointer; text-decoration: underline;
+}
+.dtr-records-body { padding: 24px 28px; max-width: 1180px; width: 100%; margin: 0 auto; }
+.dtr-records-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 18px;
+}
+.dtr-records-search {
+  flex: 1; max-width: 360px; padding: 10px 14px; border-radius: var(--r-sm);
+  border: 1.5px solid var(--border); background: var(--surface); color: var(--ink);
+  font-size: .85rem; font-family: inherit;
+}
+.dtr-records-search:focus { outline: none; border-color: var(--teal-mid); }
+.dtr-records-count { font-size: .8rem; color: var(--muted); font-weight: 600; flex-shrink: 0; }
+.dtr-records-empty { padding: 56px 24px; gap: 10px; }
+.dtr-records-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 14px;
+}
+.dtr-record-card {
+  background: var(--surface); border: 1.5px solid var(--border); border-radius: var(--r-md);
+  padding: 16px; display: flex; flex-direction: column; gap: 14px;
+  transition: var(--t);
+}
+.dtr-record-card:hover { border-color: var(--teal-mid); box-shadow: var(--shadow-sm, 0 2px 10px rgba(0,0,0,.06)); }
+.dtr-record-card-current { border-color: var(--teal-mid); background: var(--teal-light); }
+.dtr-record-card-top { display: flex; align-items: center; gap: 12px; }
+.dtr-record-avatar {
+  width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+  background: var(--teal-dark); color: #fff; font-weight: 700; font-size: 1rem;
+  display: grid; place-items: center; font-family: 'Space Grotesk', system-ui, sans-serif;
+}
+.dtr-record-card-info { min-width: 0; }
+.dtr-record-name {
+  margin: 0; font-weight: 700; color: var(--navy); font-size: .95rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dtr-record-month {
+  margin: 2px 0 0; font-size: .76rem; color: var(--muted); font-weight: 600;
+  display: flex; align-items: center; gap: 6px;
+}
+.dtr-record-current-pill {
+  background: var(--teal-dark); color: #fff; font-size: .6rem; font-weight: 800;
+  letter-spacing: .04em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px;
+}
+.dtr-record-card-stats {
+  display: flex; gap: 10px; padding: 10px 0; border-top: 1px dashed var(--border); border-bottom: 1px dashed var(--border);
+}
+.dtr-record-stat { flex: 1; text-align: center; }
+.dtr-record-stat span {
+  display: block; font-family: 'Space Mono', monospace; font-weight: 700; font-size: 1.05rem; color: var(--navy);
+}
+.dtr-record-stat p { margin: 2px 0 0; font-size: .68rem; color: var(--muted); font-weight: 600; }
+.dtr-record-card-actions { display: flex; gap: 8px; }
+.dtr-record-open-btn {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 9px 12px; border-radius: var(--r-sm); border: none;
+  background: var(--teal-dark); color: #fff; font-weight: 700; font-size: .82rem;
+  cursor: pointer; transition: var(--t); font-family: inherit;
+}
+.dtr-record-open-btn:hover { background: var(--teal-darker, #0d4f4a); }
+.dtr-record-delete-btn {
+  width: 38px; display: flex; align-items: center; justify-content: center;
+  border-radius: var(--r-sm); border: 1.5px solid var(--border);
+  background: var(--surface); color: var(--muted); cursor: pointer; transition: var(--t);
+}
+.dtr-record-delete-btn:hover { background: #fef2f2; color: #ef4444; border-color: #fca5a5; }
+[data-theme="dark"] .dtr-record-delete-btn:hover { background: #450a0a; color: #fca5a5; border-color: #7f1d1d; }
+
+/* ── DTR modals (new record / delete confirm) ── */
+.dtr-modal-overlay {
+  position: fixed; inset: 0; background: rgba(15,23,32,.5); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center; z-index: 60; padding: 16px;
+}
+.dtr-modal {
+  background: var(--surface); border-radius: var(--r-md); padding: 24px;
+  width: 100%; max-width: 380px; box-shadow: 0 12px 40px rgba(0,0,0,.25);
+}
+.dtr-modal h3 { margin: 0 0 6px; font-family: 'Space Grotesk', system-ui, sans-serif; font-size: 1.1rem; color: var(--navy); }
+.dtr-modal-sub { margin: 0 0 18px; font-size: .82rem; color: var(--muted); line-height: 1.5; }
+.dtr-modal-form { display: flex; flex-direction: column; gap: 14px; }
+.dtr-modal-form label {
+  display: flex; flex-direction: column; gap: 6px; font-size: .78rem; font-weight: 700; color: var(--body);
+}
+.dtr-modal-form input {
+  padding: 10px 12px; border-radius: var(--r-sm); border: 1.5px solid var(--border);
+  background: var(--bg); color: var(--ink); font-size: .88rem; font-family: inherit; font-weight: 500;
+}
+.dtr-modal-form input:focus { outline: none; border-color: var(--teal-mid); }
+.dtr-modal-error { margin: 0; font-size: .78rem; color: #ef4444; font-weight: 600; }
+.dtr-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+.dtr-record-delete-confirm-btn {
+  display: flex; align-items: center; gap: 7px; padding: 10px 18px; border-radius: var(--r-sm);
+  border: none; background: #ef4444; color: #fff; font-weight: 700; font-size: .85rem;
+  cursor: pointer; transition: var(--t); font-family: inherit;
+}
+.dtr-record-delete-confirm-btn:hover { background: #dc2626; }
+.dtr-record-delete-confirm-btn:disabled { opacity: .6; cursor: default; }
+
+@media (max-width: 620px) {
+  .dtr-records-body { padding: 16px; }
+  .dtr-records-toolbar { flex-direction: column; align-items: stretch; }
+  .dtr-records-search { max-width: none; }
+  .dtr-records-grid { grid-template-columns: 1fr; }
 }
 
 /* ── Currency bar (section 05a) ──────────────────────────────────────────── */
