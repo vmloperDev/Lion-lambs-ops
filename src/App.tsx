@@ -2278,19 +2278,28 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     let printableArea: HTMLElement | null = null
     let restoreFn: (() => void) | null = null
 
+    // The print/export doc is always forced to a white background, but its text/border
+    // colors come from CSS variables that flip to light-on-dark values in dark mode.
+    // White-on-white = invisible PDF. Force light theme for the capture, then restore.
+    const root = document.documentElement
+    const savedTheme = root.getAttribute('data-theme')
+    const wasDark = savedTheme === 'dark'
+    if (wasDark) root.setAttribute('data-theme', 'light')
+
     if (isDtrScreen) {
       const docEl = document.querySelector<HTMLElement>('.dtr-print-doc')
-      if (!docEl) { window.print(); return }
+      if (!docEl) { if (wasDark) root.setAttribute('data-theme', 'dark'); window.print(); return }
       // Temporarily render the hidden DTR doc off-screen so html2canvas can capture it
       const saved = { display: docEl.style.display, visibility: docEl.style.visibility, position: docEl.style.position, left: docEl.style.left, top: docEl.style.top, width: docEl.style.width, padding: docEl.style.padding, background: docEl.style.background }
-      docEl.style.cssText += ';display:block!important;visibility:visible!important;position:absolute!important;left:-9999px!important;top:0!important;width:794px!important;padding:32px!important;background:#fff!important;'
+      docEl.style.cssText += ';display:block!important;visibility:visible!important;position:absolute!important;left:-9999px!important;top:0!important;width:794px!important;padding:32px!important;background:#fff!important;color:#1a1a1a!important;'
       await new Promise((r) => requestAnimationFrame(r))
       await new Promise((r) => requestAnimationFrame(r))
       printableArea = docEl
-      restoreFn = () => Object.assign(docEl.style, saved)
+      restoreFn = () => { Object.assign(docEl.style, saved); if (wasDark) root.setAttribute('data-theme', 'dark') }
     } else {
       printableArea = document.querySelector<HTMLElement>('.print-document')
-      if (!printableArea) { window.print(); return }
+      if (!printableArea) { if (wasDark) root.setAttribute('data-theme', 'dark'); window.print(); return }
+      restoreFn = () => { if (wasDark) root.setAttribute('data-theme', 'dark') }
     }
 
     try {
@@ -5450,38 +5459,41 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 </h1>
                 <span>{activeProjects} active booking records</span>
               </div>
-              <div className="dashboard-banner-actions">
-                <button
-                  type="button"
-                  className="create-project-btn"
-                  onClick={handleNewBooking}
-                >
-                  <Plus size={20} />
-                  New Inquiry
-                </button>
-                <button
-                  type="button"
-                  className="open-dtr-btn"
-                  onClick={() => { setDtrView('records'); setScreen('dtr') }}
-                >
-                  <Clock3 size={18} />
-                  Open Daily Time Record
-                </button>
-              </div>
-            </div>
 
-            {/* Dashboard live clock strip */}
-            <div className="dashboard-clock-strip no-print">
-              <div className="dashboard-clock-display">
-                <span className="dashboard-clock-time">
-                  {formatLiveClockParts(liveClock).time}
-                </span>
-                <span className="dashboard-clock-period">{formatLiveClockParts(liveClock).period}</span>
-              </div>
-              <div className="dashboard-clock-meta">
-                <span className="dashboard-clock-date">
-                  {liveClock.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-                </span>
+              <div className="dashboard-banner-right">
+                {/* Dashboard live clock strip */}
+                <div className="dashboard-clock-strip no-print">
+                  <div className="dashboard-clock-display">
+                    <span className="dashboard-clock-time">
+                      {formatLiveClockParts(liveClock).time}
+                    </span>
+                    <span className="dashboard-clock-period">{formatLiveClockParts(liveClock).period}</span>
+                  </div>
+                  <div className="dashboard-clock-meta">
+                    <span className="dashboard-clock-date">
+                      {liveClock.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="dashboard-banner-actions">
+                  <button
+                    type="button"
+                    className="create-project-btn"
+                    onClick={handleNewBooking}
+                  >
+                    <Plus size={20} />
+                    New Inquiry
+                  </button>
+                  <button
+                    type="button"
+                    className="open-dtr-btn"
+                    onClick={() => { setDtrView('records'); setScreen('dtr') }}
+                  >
+                    <Clock3 size={18} />
+                    Open Daily Time Record
+                  </button>
+                </div>
               </div>
             </div>
           </section>
