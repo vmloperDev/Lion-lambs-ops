@@ -2286,16 +2286,40 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const wasDark = savedTheme === 'dark'
     if (wasDark) root.setAttribute('data-theme', 'light')
 
+    let captureOverlay: HTMLDivElement | null = null
+
     if (isDtrScreen) {
       const docEl = document.querySelector<HTMLElement>('.dtr-print-doc')
       if (!docEl) { if (wasDark) root.setAttribute('data-theme', 'dark'); window.print(); return }
-      // Temporarily render the hidden DTR doc off-screen so html2canvas can capture it
-      const saved = { display: docEl.style.display, visibility: docEl.style.visibility, position: docEl.style.position, left: docEl.style.left, top: docEl.style.top, width: docEl.style.width, padding: docEl.style.padding, background: docEl.style.background }
-      docEl.style.cssText += ';display:block!important;visibility:visible!important;position:absolute!important;left:-9999px!important;top:0!important;width:794px!important;padding:32px!important;background:#fff!important;color:#1a1a1a!important;'
+
+      // html2canvas can render a blank/white canvas when the captured element sits at an
+      // extreme off-screen position (e.g. left:-9999px) — the internal canvas math gets
+      // confused, especially at scale:2. Instead, briefly bring the doc fully on-screen
+      // (top-left, fixed) behind a solid white overlay so nothing looks broken to the user.
+      captureOverlay = document.createElement('div')
+      captureOverlay.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:99998;'
+      document.body.appendChild(captureOverlay)
+
+      const saved = { display: docEl.style.display, visibility: docEl.style.visibility, position: docEl.style.position, left: docEl.style.left, top: docEl.style.top, width: docEl.style.width, padding: docEl.style.padding, background: docEl.style.background, zIndex: docEl.style.zIndex }
+      docEl.style.cssText += ';display:block!important;visibility:visible!important;position:fixed!important;left:0!important;top:0!important;width:794px!important;padding:32px!important;background:#fff!important;color:#1a1a1a!important;z-index:99999!important;max-height:none!important;'
+
+      // Make sure the logo image (and any other images) inside the doc have actually
+      // finished loading before we snapshot — a not-yet-loaded image also renders blank.
+      const images = Array.from(docEl.querySelectorAll('img'))
+      await Promise.all(images.map((img) => img.complete ? Promise.resolve() : new Promise((res) => {
+        img.addEventListener('load', res, { once: true })
+        img.addEventListener('error', res, { once: true })
+        setTimeout(res, 1500)
+      })))
+
       await new Promise((r) => requestAnimationFrame(r))
       await new Promise((r) => requestAnimationFrame(r))
       printableArea = docEl
-      restoreFn = () => { Object.assign(docEl.style, saved); if (wasDark) root.setAttribute('data-theme', 'dark') }
+      restoreFn = () => {
+        Object.assign(docEl.style, saved)
+        captureOverlay?.remove()
+        if (wasDark) root.setAttribute('data-theme', 'dark')
+      }
     } else {
       printableArea = document.querySelector<HTMLElement>('.print-document')
       if (!printableArea) { if (wasDark) root.setAttribute('data-theme', 'dark'); window.print(); return }
