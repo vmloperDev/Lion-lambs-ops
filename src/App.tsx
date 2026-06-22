@@ -888,6 +888,7 @@ function App() {
   }, [isDark])
 
   const [isPdfExporting, setIsPdfExporting] = useState(false)
+  const [isJpgExporting, setIsJpgExporting] = useState(false)
   const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
   // Holds the exact booking object built at save-time so templates always
@@ -2370,6 +2371,65 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     }
   }
 
+  async function handleDownloadJpg() {
+    const root = document.documentElement
+    const savedTheme = root.getAttribute('data-theme')
+    const wasDark = savedTheme === 'dark'
+    if (wasDark) root.setAttribute('data-theme', 'light')
+
+    const printableArea = document.querySelector('.print-document') as HTMLElement | null
+    if (!printableArea) {
+      if (wasDark) root.setAttribute('data-theme', 'dark')
+      return
+    }
+
+    try {
+      setIsJpgExporting(true)
+      const { default: html2canvas } = await import('html2canvas')
+      const canvas = await html2canvas(printableArea, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        useCORS: true,
+        logging: false,
+      })
+      if (wasDark) root.setAttribute('data-theme', 'dark')
+
+      const currentBooking = bookings.find((b) => b.id === selectedBookingId)
+      const baseName = currentBooking?.quotationNo || currentBooking?.id || 'lion-lamb-document'
+
+      const pageHeightPx = Math.round((canvas.width * 297) / 210)
+      const totalPages = Math.ceil(canvas.height / pageHeightPx)
+
+      if (totalPages <= 1) {
+        const link = document.createElement('a')
+        link.download = baseName.replace(/[^\w.-]+/g, '_') + '.jpg'
+        link.href = canvas.toDataURL('image/jpeg', 0.95)
+        link.click()
+      } else {
+        for (let i = 0; i < totalPages; i++) {
+          const pageCanvas = document.createElement('canvas')
+          pageCanvas.width = canvas.width
+          const sliceH = Math.min(pageHeightPx, canvas.height - i * pageHeightPx)
+          pageCanvas.height = sliceH
+          const ctx = pageCanvas.getContext('2d')!
+          ctx.fillStyle = '#ffffff'
+          ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height)
+          ctx.drawImage(canvas, 0, -i * pageHeightPx)
+          const link = document.createElement('a')
+          link.download = baseName.replace(/[^\w.-]+/g, '_') + '_p' + (i + 1) + '.jpg'
+          link.href = pageCanvas.toDataURL('image/jpeg', 0.95)
+          link.click()
+          await new Promise((r) => setTimeout(r, 120))
+        }
+      }
+    } catch {
+      if (wasDark) root.setAttribute('data-theme', 'dark')
+      setDataError('JPG export failed. Try the PDF or Print option instead.')
+    } finally {
+      setIsJpgExporting(false)
+    }
+  }
+
   if (screen === 'splash') {
     return (
       <main className="splash-screen">
@@ -3629,6 +3689,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
             </button>
             <button
+              className="nav-text-action"
+              type="button"
+              onClick={handleDownloadJpg}
+              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
+              disabled={isJpgExporting || isPdfExporting}
+            >
+              <Download size={18} />
+              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
+            </button>
+            <button
               type="button"
               onClick={() => setScreen('document-folder')}
               title="Back"
@@ -3789,6 +3859,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
             >
               {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={handleDownloadJpg}
+              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
+              disabled={isJpgExporting || isPdfExporting}
+            >
+              <Download size={18} />
+              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
             </button>
             <button
               type="button"
@@ -4393,6 +4473,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
             </button>
             <button
+              className="nav-text-action"
+              type="button"
+              onClick={handleDownloadJpg}
+              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
+              disabled={isJpgExporting || isPdfExporting}
+            >
+              <Download size={18} />
+              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
+            </button>
+            <button
               type="button"
               onClick={() => setScreen('document-folder')}
               title="Back"
@@ -4505,6 +4595,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             >
               <Printer size={18} />
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
+            </button>
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={handleDownloadJpg}
+              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
+              disabled={isJpgExporting || isPdfExporting}
+            >
+              <Download size={18} />
+              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
             </button>
             <button
               type="button"
@@ -4721,6 +4821,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             >
               <Printer size={18} />
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
+            </button>
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={handleDownloadJpg}
+              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
+              disabled={isJpgExporting || isPdfExporting}
+            >
+              <Download size={18} />
+              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
             </button>
             <button
               type="button"
