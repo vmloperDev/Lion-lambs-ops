@@ -3861,16 +3861,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               {isDark ? <Sun size={18} /> : <Moon size={18} />}
             </button>
             <button
-              className="nav-text-action"
-              type="button"
-              onClick={handleDownloadJpg}
-              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
-              disabled={isJpgExporting || isPdfExporting}
-            >
-              <Download size={18} />
-              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
-            </button>
-            <button
               type="button"
               onClick={() => setScreen(invoiceEditorReturnScreen)}
               title="Back"
@@ -4116,6 +4106,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             >
               <Printer size={18} />
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
+            </button>
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={handleDownloadJpg}
+              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
+              disabled={isJpgExporting || isPdfExporting}
+            >
+              <Download size={18} />
+              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
             </button>
             <button
               type="button"
