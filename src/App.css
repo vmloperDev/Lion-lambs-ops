@@ -2389,8 +2389,18 @@ input, select, textarea { font: inherit; }
   transition: background .1s, color .1s;
 }
 .chat-action-btn:hover { background: var(--surface-2, #f0f4f8); color: var(--ink); }
+.chat-action-btn:disabled { opacity: .5; cursor: default; }
 .chat-action-delete:hover { background: #fef2f2 !important; color: #ef4444 !important; }
 [data-theme="dark"] .chat-action-delete:hover { background: #450a0a !important; color: #fca5a5 !important; }
+.chat-action-active-up { background: #ecfdf5 !important; color: #16a34a !important; }
+.chat-action-active-down { background: #fef2f2 !important; color: #ef4444 !important; }
+[data-theme="dark"] .chat-action-active-up { background: #052e1f !important; color: #4ade80 !important; }
+[data-theme="dark"] .chat-action-active-down { background: #450a0a !important; color: #fca5a5 !important; }
+.chat-action-spin { animation: chatActionSpin .8s linear infinite; }
+@keyframes chatActionSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
 
 /* ── Reply preview inside bubble ── */
 .chat-reply-preview {
@@ -2649,12 +2659,12 @@ input, select, textarea { font: inherit; }
 .dtr-pdf-btn {
   display: flex; align-items: center; gap: 8px;
   padding: 10px 18px; border-radius: var(--r-sm);
-  background: var(--navy); color: #fff; border: none;
+  background: var(--teal-dark); color: #fff; border: none;
   font-weight: 600; font-size: .88rem; cursor: pointer;
   box-shadow: var(--sh-xs); transition: var(--t);
   flex-shrink: 0;
 }
-.dtr-pdf-btn:hover:not(:disabled) { background: #0f2f47; box-shadow: var(--sh-sm); transform: translateY(-1px); }
+.dtr-pdf-btn:hover:not(:disabled) { background: var(--teal-deeper); box-shadow: var(--sh-sm); transform: translateY(-1px); }
 .dtr-pdf-btn:disabled { opacity: .6; cursor: not-allowed; }
 .dtr-print-btn {
   display: flex; align-items: center; gap: 8px;
@@ -3004,143 +3014,151 @@ input, select, textarea { font: inherit; }
   .dtr-ledger-panel { padding: 0 !important; }
   .dtr-ledger { display: none !important; }
   .print-only { display: block !important; }
-
-  /* Document wrapper */
-  .dtr-print-doc {
-    font-family: 'Times New Roman', Times, serif;
-    color: #000;
-    width: 100%;
-  }
-  .dtr-print-doc-signoff { display: flex !important; }
-
-  /* ── Header ── */
-  .dtr-print-doc-header {
-    display: flex !important;
-    align-items: center;
-    gap: 14px;
-    border-bottom: 2.5px solid #0b2a3d;
-    padding-bottom: 10px;
-    margin-bottom: 10px;
-  }
-  .dtr-print-doc-logo { width: 52px; height: 52px; object-fit: contain; flex-shrink: 0; }
-  .dtr-print-doc-title { flex: 1; }
-  .dtr-print-doc-title h1 {
-    margin: 0; font-size: 16pt; font-weight: 700; letter-spacing: .01em;
-    color: #0b2a3d; font-family: 'Arial', sans-serif;
-  }
-  .dtr-print-doc-subtitle {
-    margin: 2px 0 0; font-size: 10pt; font-weight: 700; letter-spacing: .18em;
-    color: #1a4560; font-family: 'Arial', sans-serif; text-transform: uppercase;
-  }
-  .dtr-print-doc-form-no {
-    display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
-    font-family: 'Arial', sans-serif;
-  }
-  .dtr-print-doc-form-no span { font-size: 7pt; text-transform: uppercase; letter-spacing: .1em; color: #666; }
-  .dtr-print-doc-form-no strong { font-size: 9pt; color: #0b2a3d; letter-spacing: .04em; }
-
-  /* ── Meta row ── */
-  .dtr-print-doc-meta-row {
-    display: flex !important;
-    gap: 0;
-    border: 1px solid #0b2a3d;
-    border-radius: 0;
-    margin-bottom: 12px;
-  }
-  .dtr-print-doc-meta-field {
-    flex: 1;
-    padding: 7px 10px;
-    border-right: 1px solid #0b2a3d;
-    display: flex; flex-direction: column; gap: 2px;
-  }
-  .dtr-print-doc-meta-field:last-child { border-right: none; }
-  .dtr-print-doc-meta-label {
-    font-size: 7pt; text-transform: uppercase; letter-spacing: .08em;
-    color: #555; font-family: 'Arial', sans-serif; font-weight: 700;
-  }
-  .dtr-print-doc-meta-value {
-    font-size: 10pt; font-weight: 700; color: #000; font-family: 'Arial', sans-serif;
-  }
-  .dtr-print-blank-line { border-bottom: 1px solid #aaa; min-width: 100px; }
-
-  /* ── Main DTR table ── */
-  .dtr-print-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-family: 'Arial', sans-serif;
-    font-size: 9pt;
-    margin-bottom: 10px;
-  }
-  .dtr-print-table th, .dtr-print-table td {
-    border: 1px solid #0b2a3d;
-    padding: 5px 6px;
-    text-align: center;
-    vertical-align: middle;
-  }
-  .dtr-print-th-date { width: 36px; background: #0b2a3d; color: #fff; font-size: 8pt; }
-  .dtr-print-th-day  { width: 46px; background: #0b2a3d; color: #fff; font-size: 8pt; }
-  .dtr-print-th-group {
-    background: #1a4560; color: #fff; font-size: 8.5pt;
-    letter-spacing: .06em; padding: 4px;
-  }
-  .dtr-print-th-sub  { background: #234f70; color: #e8f3f9; font-size: 7.5pt; font-weight: 600; padding: 4px; }
-  .dtr-print-th-total { width: 72px; background: #0b2a3d; color: #fff; font-size: 8pt; }
-  .dtr-print-th-notes { background: #0b2a3d; color: #fff; font-size: 8pt; }
-  .dtr-print-td-date  { font-weight: 700; font-size: 10pt; color: #0b2a3d; }
-  .dtr-print-td-day   { font-size: 7.5pt; font-weight: 700; color: #334; letter-spacing: .04em; }
-  .dtr-print-td-time  { font-size: 9pt; color: #1a1a2e; min-width: 58px; }
-  .dtr-print-td-total { font-weight: 700; font-size: 9pt; color: #0b2a3d; }
-  .dtr-print-td-notes { font-size: 8pt; color: #444; text-align: left; padding-left: 8px; }
-  .dtr-print-tr:nth-child(even) td { background: #f5f9fc; }
-  .dtr-print-tr-weekend td { background: #f0f0f0 !important; color: #888; }
-  .dtr-print-tr-weekend .dtr-print-td-date,
-  .dtr-print-tr-weekend .dtr-print-td-day { color: #aaa; }
-  .dtr-print-tr-has-entry td { background: #fff !important; }
-  .dtr-print-tr-has-entry:nth-child(even) td { background: #f0f7fb !important; }
-  .dtr-print-weekend-mark { font-size: 7pt; color: #aaa; font-style: italic; }
-  .dtr-print-tr-empty td { height: 20px; }
-
-  /* Footer summary row */
-  .dtr-print-tfoot-summary td {
-    background: #e8f3f9 !important;
-    border-top: 2px solid #0b2a3d !important;
-    font-size: 8.5pt;
-  }
-  .dtr-print-tfoot-label {
-    text-align: left !important;
-    padding-left: 10px !important;
-    display: table-cell;
-    color: #1a2e3d;
-    letter-spacing: .01em;
-  }
-  .dtr-print-tfoot-label span { margin-right: 24px; }
-  .dtr-print-tfoot-label strong { color: #0b2a3d; }
-  .dtr-print-tfoot-total { font-weight: 700; font-size: 10pt; color: #0b2a3d; }
-
-  /* ── Certification text ── */
-  .dtr-print-doc-certification {
-    font-size: 8pt; font-style: italic; color: #444;
-    border-top: 1px solid #ccc;
-    padding-top: 8px; margin-bottom: 24px;
-    font-family: 'Arial', sans-serif;
-    line-height: 1.5;
-  }
-
-  /* ── Signature section ── */
-  .dtr-print-doc-signoff {
-    display: flex !important;
-    gap: 32px;
-    margin-top: 20px;
-  }
-  .dtr-print-signoff-block { flex: 1; text-align: center; }
-  .dtr-print-sig-line {
-    border-top: 1.5px solid #0b2a3d;
-    margin-bottom: 4px;
-    height: 44px;
-  }
-  .dtr-print-sig-name { margin: 0 0 2px; font-size: 10pt; font-weight: 700; font-family: 'Arial', sans-serif; min-height: 14pt; }
-  .dtr-print-sig-label { margin: 0; font-size: 7.5pt; color: #555; font-family: 'Arial', sans-serif; text-transform: uppercase; letter-spacing: .06em; }
 }
+
+/* ── DTR print/export document — colors are hardcoded (not theme variables) and kept
+   OUTSIDE @media print on purpose, so both window.print() and the html2canvas-based
+   PDF export render identically and correctly regardless of light/dark mode. The
+   wrapper itself stays hidden on screen via `.dtr-print-doc { display: none }` below,
+   and is only shown via .print-only (during print) or a direct inline-style toggle
+   (during PDF capture). ── */
+
+/* Document wrapper */
+.dtr-print-doc {
+  font-family: 'Times New Roman', Times, serif;
+  color: #000;
+  width: 100%;
+}
+.dtr-print-doc-signoff { display: flex !important; }
+
+/* ── Header ── */
+.dtr-print-doc-header {
+  display: flex !important;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 2.5px solid #0b2a3d;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+}
+.dtr-print-doc-logo { width: 52px; height: 52px; object-fit: contain; flex-shrink: 0; }
+.dtr-print-doc-title { flex: 1; }
+.dtr-print-doc-title h1 {
+  margin: 0; font-size: 16pt; font-weight: 700; letter-spacing: .01em;
+  color: #0b2a3d; font-family: 'Arial', sans-serif;
+}
+.dtr-print-doc-subtitle {
+  margin: 2px 0 0; font-size: 10pt; font-weight: 700; letter-spacing: .18em;
+  color: #1a4560; font-family: 'Arial', sans-serif; text-transform: uppercase;
+}
+.dtr-print-doc-form-no {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  font-family: 'Arial', sans-serif;
+}
+.dtr-print-doc-form-no span { font-size: 7pt; text-transform: uppercase; letter-spacing: .1em; color: #666; }
+.dtr-print-doc-form-no strong { font-size: 9pt; color: #0b2a3d; letter-spacing: .04em; }
+
+/* ── Meta row ── */
+.dtr-print-doc-meta-row {
+  display: flex !important;
+  gap: 0;
+  border: 1px solid #0b2a3d;
+  border-radius: 0;
+  margin-bottom: 12px;
+}
+.dtr-print-doc-meta-field {
+  flex: 1;
+  padding: 7px 10px;
+  border-right: 1px solid #0b2a3d;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.dtr-print-doc-meta-field:last-child { border-right: none; }
+.dtr-print-doc-meta-label {
+  font-size: 7pt; text-transform: uppercase; letter-spacing: .08em;
+  color: #555; font-family: 'Arial', sans-serif; font-weight: 700;
+}
+.dtr-print-doc-meta-value {
+  font-size: 10pt; font-weight: 700; color: #000; font-family: 'Arial', sans-serif;
+}
+.dtr-print-blank-line { border-bottom: 1px solid #aaa; min-width: 100px; }
+
+/* ── Main DTR table ── */
+.dtr-print-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'Arial', sans-serif;
+  font-size: 9pt;
+  margin-bottom: 10px;
+}
+.dtr-print-table th, .dtr-print-table td {
+  border: 1px solid #0b2a3d;
+  padding: 5px 6px;
+  text-align: center;
+  vertical-align: middle;
+}
+.dtr-print-th-date { width: 36px; background: #0b2a3d; color: #fff; font-size: 8pt; }
+.dtr-print-th-day  { width: 46px; background: #0b2a3d; color: #fff; font-size: 8pt; }
+.dtr-print-th-group {
+  background: #1a4560; color: #fff; font-size: 8.5pt;
+  letter-spacing: .06em; padding: 4px;
+}
+.dtr-print-th-sub  { background: #234f70; color: #e8f3f9; font-size: 7.5pt; font-weight: 600; padding: 4px; }
+.dtr-print-th-total { width: 72px; background: #0b2a3d; color: #fff; font-size: 8pt; }
+.dtr-print-th-notes { background: #0b2a3d; color: #fff; font-size: 8pt; }
+.dtr-print-td-date  { font-weight: 700; font-size: 10pt; color: #0b2a3d; }
+.dtr-print-td-day   { font-size: 7.5pt; font-weight: 700; color: #334; letter-spacing: .04em; }
+.dtr-print-td-time  { font-size: 9pt; color: #1a1a2e; min-width: 58px; }
+.dtr-print-td-total { font-weight: 700; font-size: 9pt; color: #0b2a3d; }
+.dtr-print-td-notes { font-size: 8pt; color: #444; text-align: left; padding-left: 8px; }
+.dtr-print-tr:nth-child(even) td { background: #f5f9fc; }
+.dtr-print-tr-weekend td { background: #f0f0f0 !important; color: #888; }
+.dtr-print-tr-weekend .dtr-print-td-date,
+.dtr-print-tr-weekend .dtr-print-td-day { color: #aaa; }
+.dtr-print-tr-has-entry td { background: #fff !important; }
+.dtr-print-tr-has-entry:nth-child(even) td { background: #f0f7fb !important; }
+.dtr-print-weekend-mark { font-size: 7pt; color: #aaa; font-style: italic; }
+.dtr-print-tr-empty td { height: 20px; }
+
+/* Footer summary row */
+.dtr-print-tfoot-summary td {
+  background: #e8f3f9 !important;
+  border-top: 2px solid #0b2a3d !important;
+  font-size: 8.5pt;
+}
+.dtr-print-tfoot-label {
+  text-align: left !important;
+  padding-left: 10px !important;
+  display: table-cell;
+  color: #1a2e3d;
+  letter-spacing: .01em;
+}
+.dtr-print-tfoot-label span { margin-right: 24px; }
+.dtr-print-tfoot-label strong { color: #0b2a3d; }
+.dtr-print-tfoot-total { font-weight: 700; font-size: 10pt; color: #0b2a3d; }
+
+/* ── Certification text ── */
+.dtr-print-doc-certification {
+  font-size: 8pt; font-style: italic; color: #444;
+  border-top: 1px solid #ccc;
+  padding-top: 8px; margin-bottom: 24px;
+  font-family: 'Arial', sans-serif;
+  line-height: 1.5;
+}
+
+/* ── Signature section ── */
+.dtr-print-doc-signoff {
+  display: flex !important;
+  gap: 32px;
+  margin-top: 20px;
+}
+.dtr-print-signoff-block { flex: 1; text-align: center; }
+.dtr-print-sig-line {
+  border-top: 1.5px solid #0b2a3d;
+  margin-bottom: 4px;
+  height: 44px;
+}
+.dtr-print-sig-name { margin: 0 0 2px; font-size: 10pt; font-weight: 700; font-family: 'Arial', sans-serif; min-height: 14pt; }
+.dtr-print-sig-label { margin: 0; font-size: 7.5pt; color: #555; font-family: 'Arial', sans-serif; text-transform: uppercase; letter-spacing: .06em; }
+
 .print-only { display: none; }
 .dtr-print-doc { display: none; }
 
@@ -3159,11 +3177,13 @@ input, select, textarea { font: inherit; }
 /* ---- Dashboard DTR quick-status widget, beside New Inquiry ---- */
 .dashboard-banner-actions {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 10px;
 }
-.dashboard-banner-actions .create-project-btn { margin-top: 0; }
+.dashboard-banner-actions .create-project-btn { margin-top: 0; flex: 1 1 0; white-space: nowrap; }
+.dashboard-banner-actions .open-dtr-btn { flex: 1 1 0; white-space: nowrap; }
 
 .open-dtr-btn {
   display: flex; align-items: center; justify-content: center; gap: 9px;
@@ -3180,28 +3200,35 @@ input, select, textarea { font: inherit; }
 }
 
 /* ── Dashboard live clock strip ── */
+.dashboard-banner-right {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  flex: 0 0 auto;
+}
 .dashboard-clock-strip {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 24px;
-  background: rgba(255,255,255,.07);
-  border-top: 1px solid rgba(255,255,255,.12);
-  border-radius: 0 0 var(--r-md) var(--r-md);
+  padding: 12px 18px;
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: var(--r-sm);
   gap: 16px;
 }
 .dashboard-clock-display {
   display: flex; align-items: baseline; gap: 6px;
 }
 .dashboard-clock-time {
-  font-family: 'Space Mono', monospace; font-size: 1.7rem; font-weight: 700;
+  font-family: 'Space Mono', monospace; font-size: 1.5rem; font-weight: 700;
   color: #fff; letter-spacing: .03em; line-height: 1;
 }
 .dashboard-clock-period {
-  font-family: 'Space Mono', monospace; font-size: .75rem; font-weight: 800;
+  font-family: 'Space Mono', monospace; font-size: .72rem; font-weight: 800;
   color: rgba(255,255,255,.65); letter-spacing: .08em; text-transform: uppercase;
 }
 .dashboard-clock-meta { display: flex; flex-direction: column; gap: 2px; }
 .dashboard-clock-date {
-  font-size: .82rem; color: rgba(255,255,255,.75); font-weight: 600;
+  font-size: .78rem; color: rgba(255,255,255,.75); font-weight: 600;
 }
 
 @keyframes dtrPulse {
@@ -3210,9 +3237,121 @@ input, select, textarea { font: inherit; }
 }
 
 @media (max-width: 620px) {
-  .dashboard-banner-actions { width: 100%; }
-  .dashboard-clock-strip { padding: 10px 16px; }
+  .dashboard-banner-right { width: 100%; }
+  .dashboard-banner-actions { width: 100%; flex-direction: column; }
+  .dashboard-clock-strip { padding: 10px 16px; justify-content: center; }
   .dashboard-clock-time { font-size: 1.3rem; }
+}
+
+/* ── DTR records list (landing) ── */
+.dtr-header-month { font-weight: 500; color: var(--muted); font-size: 1rem; }
+.dtr-breadcrumb-btn {
+  background: none; border: none; padding: 0; margin: 0;
+  font: inherit; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--teal-dark); font-weight: 700; cursor: pointer; text-decoration: underline;
+}
+.dtr-records-body { padding: 24px 28px; max-width: 1180px; width: 100%; margin: 0 auto; }
+.dtr-records-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 18px;
+}
+.dtr-records-search {
+  flex: 1; max-width: 360px; padding: 10px 14px; border-radius: var(--r-sm);
+  border: 1.5px solid var(--border); background: var(--surface); color: var(--ink);
+  font-size: .85rem; font-family: inherit;
+}
+.dtr-records-search:focus { outline: none; border-color: var(--teal-mid); }
+.dtr-records-count { font-size: .8rem; color: var(--muted); font-weight: 600; flex-shrink: 0; }
+.dtr-records-empty { padding: 56px 24px; gap: 10px; }
+.dtr-records-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 14px;
+}
+.dtr-record-card {
+  background: var(--surface); border: 1.5px solid var(--border); border-radius: var(--r-md);
+  padding: 16px; display: flex; flex-direction: column; gap: 14px;
+  transition: var(--t);
+}
+.dtr-record-card:hover { border-color: var(--teal-mid); box-shadow: var(--shadow-sm, 0 2px 10px rgba(0,0,0,.06)); }
+.dtr-record-card-current { border-color: var(--teal-mid); background: var(--teal-light); }
+.dtr-record-card-top { display: flex; align-items: center; gap: 12px; }
+.dtr-record-avatar {
+  width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+  background: var(--teal-dark); color: #fff; font-weight: 700; font-size: 1rem;
+  display: grid; place-items: center; font-family: 'Space Grotesk', system-ui, sans-serif;
+}
+.dtr-record-card-info { min-width: 0; }
+.dtr-record-name {
+  margin: 0; font-weight: 700; color: var(--navy); font-size: .95rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dtr-record-month {
+  margin: 2px 0 0; font-size: .76rem; color: var(--muted); font-weight: 600;
+  display: flex; align-items: center; gap: 6px;
+}
+.dtr-record-current-pill {
+  background: var(--teal-dark); color: #fff; font-size: .6rem; font-weight: 800;
+  letter-spacing: .04em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px;
+}
+.dtr-record-card-stats {
+  display: flex; gap: 10px; padding: 10px 0; border-top: 1px dashed var(--border); border-bottom: 1px dashed var(--border);
+}
+.dtr-record-stat { flex: 1; text-align: center; }
+.dtr-record-stat span {
+  display: block; font-family: 'Space Mono', monospace; font-weight: 700; font-size: 1.05rem; color: var(--navy);
+}
+.dtr-record-stat p { margin: 2px 0 0; font-size: .68rem; color: var(--muted); font-weight: 600; }
+.dtr-record-card-actions { display: flex; gap: 8px; }
+.dtr-record-open-btn {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 9px 12px; border-radius: var(--r-sm); border: none;
+  background: var(--teal-dark); color: #fff; font-weight: 700; font-size: .82rem;
+  cursor: pointer; transition: var(--t); font-family: inherit;
+}
+.dtr-record-open-btn:hover { background: var(--teal-darker, #0d4f4a); }
+.dtr-record-delete-btn {
+  width: 38px; display: flex; align-items: center; justify-content: center;
+  border-radius: var(--r-sm); border: 1.5px solid var(--border);
+  background: var(--surface); color: var(--muted); cursor: pointer; transition: var(--t);
+}
+.dtr-record-delete-btn:hover { background: #fef2f2; color: #ef4444; border-color: #fca5a5; }
+[data-theme="dark"] .dtr-record-delete-btn:hover { background: #450a0a; color: #fca5a5; border-color: #7f1d1d; }
+
+/* ── DTR modals (new record / delete confirm) ── */
+.dtr-modal-overlay {
+  position: fixed; inset: 0; background: rgba(15,23,32,.5); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center; z-index: 60; padding: 16px;
+}
+.dtr-modal {
+  background: var(--surface); border-radius: var(--r-md); padding: 24px;
+  width: 100%; max-width: 380px; box-shadow: 0 12px 40px rgba(0,0,0,.25);
+}
+.dtr-modal h3 { margin: 0 0 6px; font-family: 'Space Grotesk', system-ui, sans-serif; font-size: 1.1rem; color: var(--navy); }
+.dtr-modal-sub { margin: 0 0 18px; font-size: .82rem; color: var(--muted); line-height: 1.5; }
+.dtr-modal-form { display: flex; flex-direction: column; gap: 14px; }
+.dtr-modal-form label {
+  display: flex; flex-direction: column; gap: 6px; font-size: .78rem; font-weight: 700; color: var(--body);
+}
+.dtr-modal-form input {
+  padding: 10px 12px; border-radius: var(--r-sm); border: 1.5px solid var(--border);
+  background: var(--bg); color: var(--ink); font-size: .88rem; font-family: inherit; font-weight: 500;
+}
+.dtr-modal-form input:focus { outline: none; border-color: var(--teal-mid); }
+.dtr-modal-error { margin: 0; font-size: .78rem; color: #ef4444; font-weight: 600; }
+.dtr-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+.dtr-record-delete-confirm-btn {
+  display: flex; align-items: center; gap: 7px; padding: 10px 18px; border-radius: var(--r-sm);
+  border: none; background: #ef4444; color: #fff; font-weight: 700; font-size: .85rem;
+  cursor: pointer; transition: var(--t); font-family: inherit;
+}
+.dtr-record-delete-confirm-btn:hover { background: #dc2626; }
+.dtr-record-delete-confirm-btn:disabled { opacity: .6; cursor: default; }
+
+@media (max-width: 620px) {
+  .dtr-records-body { padding: 16px; }
+  .dtr-records-toolbar { flex-direction: column; align-items: stretch; }
+  .dtr-records-search { max-width: none; }
+  .dtr-records-grid { grid-template-columns: 1fr; }
 }
 
 /* ── Currency bar (section 05a) ──────────────────────────────────────────── */

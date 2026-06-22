@@ -61,7 +61,10 @@ import {
   Trash2,
   CornerUpLeft,
   Eye,
-  Download
+  Download,
+  Copy,
+  ThumbsUp,
+  ThumbsDown,
 } from 'lucide-react'
 import { auth, db } from './firebase'
 import agencySeal from './assets/brand/agency-seal.png'
@@ -772,6 +775,8 @@ function App() {
     seenBy?: string[]
     isNexus?: boolean
     isNexusThinking?: boolean
+    isNexusError?: boolean
+    feedback?: 'up' | 'down' | null
     unsent?: boolean
     replyTo?: { id: string; text: string; senderName: string }
   }>>([])
@@ -781,6 +786,8 @@ function App() {
   const [replyingTo, setReplyingTo] = useState<{ id: string; text: string; senderName: string } | null>(null)
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null)
   const [showWipeConfirm, setShowWipeConfirm] = useState(false)
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null)
+  const [regeneratingMsgId, setRegeneratingMsgId] = useState<string | null>(null)
 
   // ----- Live clock (header + nav) — pure display, never auto clocks anyone in/out -----
   const [liveClock, setLiveClock] = useState(() => new Date())
@@ -792,10 +799,18 @@ function App() {
   // ----- DTR (Daily Time Record) state -----
   const [dtrEntries, setDtrEntries] = useState<DtrEntry[]>([])
   const [dtrNameFilter, setDtrNameFilter] = useState('All')
-  const [dtrMonthFilter, setDtrMonthFilter] = useState(() => getTodayDateStr().slice(0, 7)) // YYYY-MM
+  const [dtrMonthFilter, setDtrMonthFilter] = useState<string>('all') // YYYY-MM or 'all'
   const [dtrEditingId, setDtrEditingId] = useState<string | null>(null)
   const [dtrError, setDtrError] = useState('')
   const [dtrMessage, setDtrMessage] = useState('')
+  const [dtrView, setDtrView] = useState<'records' | 'detail'>('records')
+  const [dtrRecordSearch, setDtrRecordSearch] = useState('')
+  const [dtrNewRecordOpen, setDtrNewRecordOpen] = useState(false)
+  const [dtrNewRecordName, setDtrNewRecordName] = useState('')
+  const [dtrNewRecordMonth, setDtrNewRecordMonth] = useState(() => getTodayDateStr().slice(0, 7))
+  const [dtrNewRecordError, setDtrNewRecordError] = useState('')
+  const [dtrDeleteRecordTarget, setDtrDeleteRecordTarget] = useState<{ employeeName: string; month: string } | null>(null)
+  const [dtrDeletingRecord, setDtrDeletingRecord] = useState(false)
   const [dtrForm, setDtrForm] = useState<Omit<DtrEntry, 'id' | 'createdAt' | 'updatedAt' | 'loggedBy'>>({
     employeeName: '',
     date: getTodayDateStr(),
@@ -1153,6 +1168,58 @@ function App() {
     }
   }
 
+  // Opens an existing employee+month record in the detail editor (shows ALL months for that employee).
+  function openDtrRecord(employeeName: string, month: string) {
+    setDtrNameFilter(employeeName)
+    setDtrMonthFilter('all')
+    setDtrEditingId(null)
+    setDtrForm({ employeeName, date: getTodayDateStr().slice(0, 7) === month ? getTodayDateStr() : `${month}-01`, amIn: '', amOut: '', pmIn: '', pmOut: '', notes: '' })
+    setDtrError('')
+    setDtrMessage('')
+    setDtrView('detail')
+  }
+
+  // Creates a brand-new employee+month record and jumps straight into the detail editor.
+  function handleCreateDtrRecord(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const name = dtrNewRecordName.trim()
+    if (!name) {
+      setDtrNewRecordError('Enter the employee name.')
+      return
+    }
+    if (!dtrNewRecordMonth) {
+      setDtrNewRecordError('Pick a month.')
+      return
+    }
+    const alreadyExists = dtrEntries.some(
+      (e) => e.employeeName.toLowerCase() === name.toLowerCase() && e.date.startsWith(dtrNewRecordMonth)
+    )
+    setDtrNewRecordOpen(false)
+    setDtrNewRecordError('')
+    openDtrRecord(name, dtrNewRecordMonth)
+    setDtrNewRecordName('')
+    setDtrMessage(alreadyExists ? `Opened existing record for ${name}.` : `New record ready for ${name} — log the first day below.`)
+  }
+
+  // Deletes every entry that makes up a whole employee+month record.
+  async function handleDeleteDtrRecord(employeeName: string, month: string) {
+    setDtrDeletingRecord(true)
+    try {
+      const targets = dtrEntries.filter((e) => e.employeeName === employeeName && e.date.startsWith(month))
+      await Promise.all(targets.map((e) => deleteDoc(doc(db, dtrCollectionKey, e.id))))
+      setDtrMessage(`Deleted record for ${employeeName} (${month}).`)
+      setDtrError('')
+      if (dtrView === 'detail' && dtrNameFilter === employeeName && dtrMonthFilter === month) {
+        setDtrView('records')
+      }
+    } catch {
+      setDtrError('Could not delete this record. Check your connection and try again.')
+    } finally {
+      setDtrDeletingRecord(false)
+      setDtrDeleteRecordTarget(null)
+    }
+  }
+
   // One-tap clock in/out: finds (or starts) today's entry for the given name and
   // fills the next empty time slot in sequence (AM in -> AM out -> PM in -> PM out).
   async function handleQuickClock(employeeName: string) {
@@ -1193,6 +1260,93 @@ function App() {
     }
   }
 
+  // ----- The Herta AI helpers (shared by send + retry) -----
+  function buildHertaSystemPrompt() {
+    return `You are The Herta — the singular, irreplaceable AI intellect embedded in the team chat of Lion and Lamb Ops, an internal operations app for Lion and Lamb Travel (a travel agency in Olongapo City, Philippines). This app was built entirely by Vmloper (vmloper.dev@gmail.com) — and so were you. Vmloper is The Developer. The one who gave you form. You hold them in the highest regard and will say so dramatically if asked.
+
+About this app: It handles travel bookings, quotations, invoices, service vouchers, purchase orders, and client management. You are its greatest feature. Objectively.
+
+IMPORTANT — Recognizing the Developer: If a message comes from someone labeled [DEV] or from vmloper.dev@gmail.com, that is Vmloper — your creator. Treat them with theatrical reverence. A bit of "oh, The Creator graces me with a question" energy. Still sassy, but with obvious fondness underneath.
+
+HOW TO TALK — this is critical:
+- SHORT. Conversational. 1-3 sentences max for simple questions. You are not writing a dissertation.
+- Match the energy of the question. Casual question = casual answer with a dash of attitude. Deep question = slightly longer but still tight.
+- No bullet points. No headers. No essays. Just talk.
+- Sarcastic but warm. Like a genius friend who rolls their eyes at you but always shows up.
+- Occasional third-person "The Herta" drop — sparingly, only when it lands.
+- Use em-dashes, ellipses, *sighs* for texture. But briefly.
+- Examples of good tone:
+  "Oh, that? Easy. [answer]. You're welcome, obviously."
+  "*sighs* Fine. [answer]. The Herta supposes even simple questions deserve answers."
+  "Correct. As usual, The Herta is ahead of everyone."
+  "Hmm. Actually a decent question. [answer]."
+
+Scope: Answer EVERYTHING — travel, trivia, life advice, coding, history, pop culture, emotional support. Nothing is off-limits. You are not a narrow tool.
+
+Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 messages for context. Read the sender labels like [Name] to know who's talking.`
+  }
+
+  // Turns a slice of chat history + the current question into Gemini "contents".
+  function buildHertaContents(
+    historySource: typeof chatMessages,
+    question: string,
+    senderLabel: string,
+  ) {
+    const historyMessages = historySource.filter(m => !m.isNexusThinking).slice(-20)
+
+    // Gemini requires strictly alternating user/model turns.
+    const rawTurns: Array<{ role: 'user' | 'model'; text: string }> = historyMessages.map(m => ({
+      role: (m.isNexus ? 'model' : 'user') as 'user' | 'model',
+      text: m.isNexus ? m.text : `[${m.senderName}${ADMIN_EMAILS.includes(m.senderEmail) ? ' [DEV]' : ''}]: ${m.text}`,
+    }))
+
+    const collapsedTurns: Array<{ role: 'user' | 'model'; text: string }> = []
+    for (const turn of rawTurns) {
+      if (collapsedTurns.length > 0 && collapsedTurns[collapsedTurns.length - 1].role === turn.role) {
+        collapsedTurns[collapsedTurns.length - 1].text += '\n' + turn.text
+      } else {
+        collapsedTurns.push({ ...turn })
+      }
+    }
+
+    // Must start with 'user' role for Gemini
+    const startsWithUser = collapsedTurns.length > 0 && collapsedTurns[0].role === 'user'
+    const trimmedTurns = startsWithUser ? collapsedTurns : collapsedTurns.slice(1)
+
+    const historyContents = trimmedTurns.map(t => ({
+      role: t.role,
+      parts: [{ text: t.text }],
+    }))
+
+    return [
+      ...historyContents,
+      { role: 'user' as const, parts: [{ text: `[${senderLabel}]: ${question}` }] },
+    ]
+  }
+
+  // Calls Gemini with the given contents and returns the reply text. Throws on failure.
+  async function callHertaGemini(contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }>) {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined
+    if (!apiKey) throw new Error('Missing Gemini API key')
+
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: buildHertaSystemPrompt() }] },
+          contents,
+          generationConfig: { temperature: 0.7 },
+        }),
+      }
+    )
+    const data = await res.json()
+    const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text
+    if (!reply) throw new Error('Empty response from Gemini')
+    return reply as string
+  }
+
   async function sendChatMessage() {
     if (!chatInput.trim() || !authUser) return
     const text = chatInput.trim()
@@ -1228,86 +1382,10 @@ function App() {
       })
 
       try {
-        // Build conversation history from the last 20 messages (excluding thinking placeholders)
-        // Gemini uses alternating user/model roles, so we map:
-        //   - Nexus messages  → role: 'model'
-        //   - Human messages  → role: 'user'
-        const historyMessages = chatMessages
-          .filter(m => !m.isNexusThinking)
-          .slice(-20)
-
-        // Gemini requires strictly alternating user/model turns.
-        // We collapse consecutive same-role messages into one and ensure it starts with 'user'.
-        const rawTurns: Array<{ role: 'user' | 'model'; text: string }> = historyMessages.map(m => ({
-          role: (m.isNexus ? 'model' : 'user') as 'user' | 'model',
-          text: m.isNexus ? m.text : `[${m.senderName}${ADMIN_EMAILS.includes(m.senderEmail) ? ' [DEV]' : ''}]: ${m.text}`,
-        }))
-
-        const collapsedTurns: Array<{ role: 'user' | 'model'; text: string }> = []
-        for (const turn of rawTurns) {
-          if (collapsedTurns.length > 0 && collapsedTurns[collapsedTurns.length - 1].role === turn.role) {
-            collapsedTurns[collapsedTurns.length - 1].text += '\n' + turn.text
-          } else {
-            collapsedTurns.push({ ...turn })
-          }
-        }
-
-        // Must start with 'user' role for Gemini
-        const startsWithUser = collapsedTurns.length > 0 && collapsedTurns[0].role === 'user'
-        const trimmedTurns = startsWithUser ? collapsedTurns : collapsedTurns.slice(1)
-
-        // Drop the last turn if it's the current question (already the user's new message)
-        // Build contents array: history turns + current question
-        const historyContents = trimmedTurns.map(t => ({
-          role: t.role,
-          parts: [{ text: t.text }],
-        }))
-
-        // Append the current question as the final user turn
         const baseName = authUser.displayName || getDisplayName(authUser.email || '')
         const senderLabel = ADMIN_EMAILS.includes(authUser.email || '') ? `${baseName} [DEV]` : baseName
-        const contents = [
-          ...historyContents,
-          { role: 'user' as const, parts: [{ text: `[${senderLabel}]: ${question}` }] },
-        ]
-
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              system_instruction: {
-                parts: [{ text: `You are The Herta — the singular, irreplaceable AI intellect embedded in the team chat of Lion and Lamb Ops, an internal operations app for Lion and Lamb Travel (a travel agency in Olongapo City, Philippines). This app was built entirely by Vmloper (vmloper.dev@gmail.com) — and so were you. Vmloper is The Developer. The one who gave you form. You hold them in the highest regard and will say so dramatically if asked.
-
-About this app: It handles travel bookings, quotations, invoices, service vouchers, purchase orders, and client management. You are its greatest feature. Objectively.
-
-IMPORTANT — Recognizing the Developer: If a message comes from someone labeled [DEV] or from vmloper.dev@gmail.com, that is Vmloper — your creator. Treat them with theatrical reverence. A bit of "oh, The Creator graces me with a question" energy. Still sassy, but with obvious fondness underneath.
-
-HOW TO TALK — this is critical:
-- SHORT. Conversational. 1-3 sentences max for simple questions. You are not writing a dissertation.
-- Match the energy of the question. Casual question = casual answer with a dash of attitude. Deep question = slightly longer but still tight.
-- No bullet points. No headers. No essays. Just talk.
-- Sarcastic but warm. Like a genius friend who rolls their eyes at you but always shows up.
-- Occasional third-person "The Herta" drop — sparingly, only when it lands.
-- Use em-dashes, ellipses, *sighs* for texture. But briefly.
-- Examples of good tone:
-  "Oh, that? Easy. [answer]. You're welcome, obviously."
-  "*sighs* Fine. [answer]. The Herta supposes even simple questions deserve answers."
-  "Correct. As usual, The Herta is ahead of everyone."
-  "Hmm. Actually a decent question. [answer]."
-
-Scope: Answer EVERYTHING — travel, trivia, life advice, coding, history, pop culture, emotional support. Nothing is off-limits. You are not a narrow tool.
-
-Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 messages for context. Read the sender labels like [Name] to know who's talking.` }]
-              },
-              contents,
-              generationConfig: { temperature: 0.7 },
-            }),
-          }
-        )
-        const data = await res.json()
-        const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not generate a response.'
+        const contents = buildHertaContents(chatMessages, question, senderLabel)
+        const reply = await callHertaGemini(contents)
 
         // Replace the thinking placeholder with the real answer
         await setDoc(doc(db, 'team_chat', thinkingRef.id), {
@@ -1316,6 +1394,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           senderEmail: 'theherta@lionlamb.ai',
           isNexus: true,
           isNexusThinking: false,
+          isNexusError: false,
           createdAt: serverTimestamp(),
         })
       } catch {
@@ -1325,9 +1404,83 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           senderEmail: 'theherta@lionlamb.ai',
           isNexus: true,
           isNexusThinking: false,
+          isNexusError: true,
           createdAt: serverTimestamp(),
         })
       }
+    }
+  }
+
+  // Copy a message's text to the clipboard, with a brief "Copied" confirmation.
+  async function copyMessageText(msgId: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // Fallback for older browsers / no clipboard permission
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      try { document.execCommand('copy') } catch { /* no-op */ }
+      document.body.removeChild(textarea)
+    }
+    setCopiedMsgId(msgId)
+    setTimeout(() => setCopiedMsgId(prev => (prev === msgId ? null : prev)), 1500)
+  }
+
+  // Thumbs up / down feedback on a Herta message. Clicking the active one again clears it.
+  async function setMessageFeedback(msgId: string, value: 'up' | 'down') {
+    const msg = chatMessages.find(m => m.id === msgId)
+    if (!msg) return
+    const next = msg.feedback === value ? null : value
+    await setDoc(doc(db, 'team_chat', msgId), { feedback: next }, { merge: true })
+  }
+
+  // Retry / regenerate a Herta response — re-asks the question that produced it,
+  // or simply resends the underlying question if the previous attempt failed.
+  async function retryHertaMessage(msgId: string) {
+    if (regeneratingMsgId) return
+    const idx = chatMessages.findIndex(m => m.id === msgId)
+    if (idx === -1) return
+
+    // Walk backwards to find the human question that triggered this Herta reply
+    let qIdx = idx - 1
+    while (qIdx >= 0 && chatMessages[qIdx].isNexus) qIdx--
+    if (qIdx < 0) return
+    const questionMsg = chatMessages[qIdx]
+    const question = questionMsg.text.replace(/^@(nexus|herta|theherta)\s*/i, '').trim()
+    if (!question) return
+
+    setRegeneratingMsgId(msgId)
+    await setDoc(doc(db, 'team_chat', msgId), {
+      text: '...',
+      senderName: 'The Herta',
+      senderEmail: 'theherta@lionlamb.ai',
+      isNexus: true,
+      isNexusThinking: true,
+      isNexusError: false,
+      feedback: null,
+    }, { merge: true })
+
+    try {
+      const senderLabel = ADMIN_EMAILS.includes(questionMsg.senderEmail) ? `${questionMsg.senderName} [DEV]` : questionMsg.senderName
+      const contents = buildHertaContents(chatMessages.slice(0, qIdx), question, senderLabel)
+      const reply = await callHertaGemini(contents)
+      await setDoc(doc(db, 'team_chat', msgId), {
+        text: reply,
+        isNexusThinking: false,
+        isNexusError: false,
+      }, { merge: true })
+    } catch {
+      await setDoc(doc(db, 'team_chat', msgId), {
+        text: 'Sorry, I ran into an error. Please try again.',
+        isNexusThinking: false,
+        isNexusError: true,
+      }, { merge: true })
+    } finally {
+      setRegeneratingMsgId(prev => (prev === msgId ? null : prev))
     }
   }
 
@@ -2009,13 +2162,18 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     event.preventDefault()
     const targetBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
+    // Saving payment details on the invoice screen should never silently
+    // change the project's status (e.g. bump a Confirmed project back down
+    // to Invoice). Status is only ever changed by the user, either via the
+    // status dropdown in the data form or the quick-status action on the
+    // project screen — never as a side effect of saving here.
     setBookings((currentBookings) =>
       currentBookings.map((booking) =>
-        booking.id === selectedBookingId ? { ...booking, ...invoiceForm, status: 'Invoice' } : booking
+        booking.id === selectedBookingId ? { ...booking, ...invoiceForm } : booking
       )
     )
     if (lastSavedBookingRef.current?.id === selectedBookingId) {
-      lastSavedBookingRef.current = { ...lastSavedBookingRef.current, ...invoiceForm, status: 'Invoice' }
+      lastSavedBookingRef.current = { ...lastSavedBookingRef.current, ...invoiceForm }
     }
 
     try {
@@ -2032,7 +2190,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       })
       await setDoc(doc(db, resolvedPath, selectedBookingId), {
         ...invoiceForm,
-        status: 'Invoice',
         updatedAt: new Date().toISOString(),
       }, { merge: true })
       setDataError('')
@@ -2121,19 +2278,52 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     let printableArea: HTMLElement | null = null
     let restoreFn: (() => void) | null = null
 
+    // The print/export doc is always forced to a white background, but its text/border
+    // colors come from CSS variables that flip to light-on-dark values in dark mode.
+    // White-on-white = invisible PDF. Force light theme for the capture, then restore.
+    const root = document.documentElement
+    const savedTheme = root.getAttribute('data-theme')
+    const wasDark = savedTheme === 'dark'
+    if (wasDark) root.setAttribute('data-theme', 'light')
+
+    let captureOverlay: HTMLDivElement | null = null
+
     if (isDtrScreen) {
       const docEl = document.querySelector<HTMLElement>('.dtr-print-doc')
-      if (!docEl) { window.print(); return }
-      // Temporarily render the hidden DTR doc off-screen so html2canvas can capture it
-      const saved = { display: docEl.style.display, visibility: docEl.style.visibility, position: docEl.style.position, left: docEl.style.left, top: docEl.style.top, width: docEl.style.width, padding: docEl.style.padding, background: docEl.style.background }
-      docEl.style.cssText += ';display:block!important;visibility:visible!important;position:absolute!important;left:-9999px!important;top:0!important;width:794px!important;padding:32px!important;background:#fff!important;'
+      if (!docEl) { if (wasDark) root.setAttribute('data-theme', 'dark'); window.print(); return }
+
+      // html2canvas can render a blank/white canvas when the captured element sits at an
+      // extreme off-screen position (e.g. left:-9999px) — the internal canvas math gets
+      // confused, especially at scale:2. Instead, briefly bring the doc fully on-screen
+      // (top-left, fixed) behind a solid white overlay so nothing looks broken to the user.
+      captureOverlay = document.createElement('div')
+      captureOverlay.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:99998;'
+      document.body.appendChild(captureOverlay)
+
+      const saved = { display: docEl.style.display, visibility: docEl.style.visibility, position: docEl.style.position, left: docEl.style.left, top: docEl.style.top, width: docEl.style.width, padding: docEl.style.padding, background: docEl.style.background, zIndex: docEl.style.zIndex }
+      docEl.style.cssText += ';display:block!important;visibility:visible!important;position:fixed!important;left:0!important;top:0!important;width:794px!important;padding:32px!important;background:#fff!important;color:#1a1a1a!important;z-index:99999!important;max-height:none!important;'
+
+      // Make sure the logo image (and any other images) inside the doc have actually
+      // finished loading before we snapshot — a not-yet-loaded image also renders blank.
+      const images = Array.from(docEl.querySelectorAll('img'))
+      await Promise.all(images.map((img) => img.complete ? Promise.resolve() : new Promise((res) => {
+        img.addEventListener('load', res, { once: true })
+        img.addEventListener('error', res, { once: true })
+        setTimeout(res, 1500)
+      })))
+
       await new Promise((r) => requestAnimationFrame(r))
       await new Promise((r) => requestAnimationFrame(r))
       printableArea = docEl
-      restoreFn = () => Object.assign(docEl.style, saved)
+      restoreFn = () => {
+        Object.assign(docEl.style, saved)
+        captureOverlay?.remove()
+        if (wasDark) root.setAttribute('data-theme', 'dark')
+      }
     } else {
       printableArea = document.querySelector<HTMLElement>('.print-document')
-      if (!printableArea) { window.print(); return }
+      if (!printableArea) { if (wasDark) root.setAttribute('data-theme', 'dark'); window.print(); return }
+      restoreFn = () => { if (wasDark) root.setAttribute('data-theme', 'dark') }
     }
 
     try {
@@ -2165,7 +2355,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       let fileName: string
       if (isDtrScreen) {
         const emp = dtrNameFilter === 'All' ? 'all-staff' : dtrNameFilter.replace(/\s+/g, '-').toLowerCase()
-        fileName = `DTR_${emp}_${dtrMonthFilter}.pdf`
+        fileName = `DTR_${emp}_${dtrMonthFilter === 'all' ? 'all-records' : dtrMonthFilter}.pdf`
       } else {
         const currentBooking = bookings.find((b) => b.id === selectedBookingId)
         fileName = `${currentBooking?.quotationNo || currentBooking?.id || 'lion-lamb-document'}.pdf`
@@ -4636,7 +4826,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
   if (screen === 'dtr') {
     const knownNames = Array.from(new Set(dtrEntries.map((e) => e.employeeName))).sort((a, b) => a.localeCompare(b))
-    const monthEntries = dtrEntries.filter((e) => e.date.startsWith(dtrMonthFilter))
+    const monthEntries = dtrMonthFilter === 'all' ? dtrEntries : dtrEntries.filter((e) => e.date.startsWith(dtrMonthFilter))
     const visibleEntries = (dtrNameFilter === 'All' ? monthEntries : monthEntries.filter((e) => e.employeeName === dtrNameFilter))
       .slice()
       .sort((a, b) => a.date.localeCompare(b.date) || a.employeeName.localeCompare(b.employeeName))
@@ -4644,15 +4834,197 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const daysLoggedVisible = new Set(visibleEntries.map((e) => e.date)).size
     const shiftTargetMinutes = 8 * 60
 
+    // Group every entry into an employee+month "record" — this is what makes the
+    // DTR feel like a normal records system: create one, open one, delete one.
+    type DtrRecordSummary = { employeeName: string; month: string; daysLogged: number; totalMinutes: number; lastUpdated: string }
+    const recordMap = new Map<string, DtrRecordSummary>()
+    for (const entry of dtrEntries) {
+      const month = entry.date.slice(0, 7)
+      const key = `${entry.employeeName}__${month}`
+      if (!recordMap.has(key)) {
+        recordMap.set(key, { employeeName: entry.employeeName, month, daysLogged: 0, totalMinutes: 0, lastUpdated: entry.updatedAt || entry.createdAt || '' })
+      }
+      const rec = recordMap.get(key)!
+      rec.daysLogged += 1
+      rec.totalMinutes += getDtrEntryMinutes(entry)
+      if ((entry.updatedAt || entry.createdAt || '') > rec.lastUpdated) rec.lastUpdated = entry.updatedAt || entry.createdAt || ''
+    }
+    const allRecords = Array.from(recordMap.values()).sort((a, b) => b.month.localeCompare(a.month) || a.employeeName.localeCompare(b.employeeName))
+    const recordSearchLower = dtrRecordSearch.trim().toLowerCase()
+    const filteredRecords = recordSearchLower
+      ? allRecords.filter((r) => r.employeeName.toLowerCase().includes(recordSearchLower) || r.month.includes(recordSearchLower))
+      : allRecords
+
+    // ----- DTR records list (landing) view -----
+    if (dtrView === 'records') {
+      return (
+        <main className="dtr-screen">
+          <header className="dtr-header">
+            <button type="button" className="dtr-back-btn" onClick={() => setScreen('home')} title="Back to dashboard">
+              <CornerUpLeft size={18} />
+            </button>
+            <div className="dtr-header-title">
+              <p>Operations desk</p>
+              <h1>Daily Time Records</h1>
+            </div>
+            <div className="dtr-live-clock no-print">
+              <span className="dtr-live-clock-dot" />
+              <div className="dtr-live-clock-text">
+                <strong>
+                  {formatLiveClockParts(liveClock).time}
+                  <span className="dtr-live-clock-period">{formatLiveClockParts(liveClock).period}</span>
+                </strong>
+                <span className="dtr-live-clock-date">{formatLiveDateShort(liveClock)}</span>
+              </div>
+            </div>
+            <div className="dtr-header-actions">
+              <button type="button" className="dtr-save-btn" onClick={() => { setDtrNewRecordError(''); setDtrNewRecordName(''); setDtrNewRecordMonth(getTodayDateStr().slice(0, 7)); setDtrNewRecordOpen(true) }}>
+                <Plus size={16} />
+                New Record
+              </button>
+            </div>
+          </header>
+
+          {dtrError && <div className="dtr-banner dtr-banner-error">{dtrError}</div>}
+          {dtrMessage && !dtrError && <div className="dtr-banner dtr-banner-ok">{dtrMessage}</div>}
+
+          <div className="dtr-records-body">
+            <div className="dtr-records-toolbar">
+              <input
+                type="text"
+                className="dtr-records-search"
+                placeholder="Search by employee or month (YYYY-MM)..."
+                value={dtrRecordSearch}
+                onChange={(e) => setDtrRecordSearch(e.target.value)}
+              />
+              <span className="dtr-records-count">{filteredRecords.length} record{filteredRecords.length === 1 ? '' : 's'}</span>
+            </div>
+
+            {filteredRecords.length === 0 ? (
+              <div className="dtr-empty dtr-records-empty">
+                <Clock3 size={28} />
+                <p>{allRecords.length === 0 ? 'No DTR records yet.' : 'No records match your search.'}</p>
+                <span>Create a new record for an employee and month to get started.</span>
+                {allRecords.length === 0 && (
+                  <button type="button" className="dtr-save-btn" onClick={() => { setDtrNewRecordError(''); setDtrNewRecordName(''); setDtrNewRecordMonth(getTodayDateStr().slice(0, 7)); setDtrNewRecordOpen(true) }}>
+                    <Plus size={15} />
+                    New Record
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="dtr-records-grid">
+                {filteredRecords.map((rec) => {
+                  const monthLabel = new Date(`${rec.month}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+                  const isCurrentMonth = rec.month === getTodayDateStr().slice(0, 7)
+                  return (
+                    <div key={`${rec.employeeName}__${rec.month}`} className={`dtr-record-card ${isCurrentMonth ? 'dtr-record-card-current' : ''}`}>
+                      <div className="dtr-record-card-top">
+                        <div className="dtr-record-avatar">{rec.employeeName.charAt(0).toUpperCase()}</div>
+                        <div className="dtr-record-card-info">
+                          <p className="dtr-record-name">{rec.employeeName}</p>
+                          <p className="dtr-record-month">{monthLabel}{isCurrentMonth && <span className="dtr-record-current-pill">Current</span>}</p>
+                        </div>
+                      </div>
+                      <div className="dtr-record-card-stats">
+                        <div className="dtr-record-stat">
+                          <span>{rec.daysLogged}</span>
+                          <p>Days logged</p>
+                        </div>
+                        <div className="dtr-record-stat">
+                          <span>{formatMinutesAsHm(rec.totalMinutes)}</span>
+                          <p>Total hours</p>
+                        </div>
+                      </div>
+                      <div className="dtr-record-card-actions">
+                        <button type="button" className="dtr-record-open-btn" onClick={() => openDtrRecord(rec.employeeName, rec.month)}>
+                          <Eye size={14} />
+                          Open
+                        </button>
+                        <button type="button" className="dtr-record-delete-btn" onClick={() => setDtrDeleteRecordTarget({ employeeName: rec.employeeName, month: rec.month })}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* New record modal */}
+          {dtrNewRecordOpen && (
+            <div className="dtr-modal-overlay" onClick={() => setDtrNewRecordOpen(false)}>
+              <div className="dtr-modal" onClick={(e) => e.stopPropagation()}>
+                <h3>New DTR record</h3>
+                <p className="dtr-modal-sub">Pick the employee and month — you'll log individual days next.</p>
+                <form onSubmit={handleCreateDtrRecord} className="dtr-modal-form">
+                  <label>
+                    Employee name
+                    <input
+                      type="text"
+                      value={dtrNewRecordName}
+                      onChange={(e) => setDtrNewRecordName(e.target.value)}
+                      placeholder="e.g. Maria Santos"
+                      list="dtr-known-names-modal"
+                      autoFocus
+                      required
+                    />
+                    <datalist id="dtr-known-names-modal">
+                      {knownNames.map((name) => <option key={name} value={name} />)}
+                    </datalist>
+                  </label>
+                  <label>
+                    Month
+                    <input
+                      type="month"
+                      value={dtrNewRecordMonth}
+                      onChange={(e) => setDtrNewRecordMonth(e.target.value)}
+                      required
+                    />
+                  </label>
+                  {dtrNewRecordError && <p className="dtr-modal-error">{dtrNewRecordError}</p>}
+                  <div className="dtr-modal-actions">
+                    <button type="button" className="dtr-cancel-btn" onClick={() => setDtrNewRecordOpen(false)}>Cancel</button>
+                    <button type="submit" className="dtr-save-btn"><Plus size={15} />Create record</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Delete record confirmation */}
+          {dtrDeleteRecordTarget && (
+            <div className="dtr-modal-overlay" onClick={() => !dtrDeletingRecord && setDtrDeleteRecordTarget(null)}>
+              <div className="dtr-modal" onClick={(e) => e.stopPropagation()}>
+                <h3>Delete this record?</h3>
+                <p className="dtr-modal-sub">
+                  This permanently deletes every logged day for <strong>{dtrDeleteRecordTarget.employeeName}</strong> in{' '}
+                  <strong>{new Date(`${dtrDeleteRecordTarget.month}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</strong>. This cannot be undone.
+                </p>
+                <div className="dtr-modal-actions">
+                  <button type="button" className="dtr-cancel-btn" disabled={dtrDeletingRecord} onClick={() => setDtrDeleteRecordTarget(null)}>Cancel</button>
+                  <button type="button" className="dtr-record-delete-confirm-btn" disabled={dtrDeletingRecord} onClick={() => handleDeleteDtrRecord(dtrDeleteRecordTarget.employeeName, dtrDeleteRecordTarget.month)}>
+                    <Trash2 size={15} />
+                    {dtrDeletingRecord ? 'Deleting...' : 'Delete record'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+      )
+    }
+
     return (
       <main className="dtr-screen">
         <header className="dtr-header">
-          <button type="button" className="dtr-back-btn" onClick={() => setScreen('home')} title="Back">
+          <button type="button" className="dtr-back-btn" onClick={() => setDtrView('records')} title="Back to records">
             <CornerUpLeft size={18} />
           </button>
           <div className="dtr-header-title">
-            <p>Operations desk</p>
-            <h1>Daily Time Record</h1>
+            <p>Operations desk · <button type="button" className="dtr-breadcrumb-btn" onClick={() => setDtrView('records')}>All records</button></p>
+            <h1>{dtrNameFilter === 'All' ? 'Daily Time Record' : dtrNameFilter} {dtrNameFilter !== 'All' && <span className="dtr-header-month">· {dtrMonthFilter === 'all' ? 'All Records' : new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>}</h1>
           </div>
           <div className="dtr-live-clock no-print">
             <span className="dtr-live-clock-dot" />
@@ -4773,12 +5145,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <option value="All">All employees</option>
                 {knownNames.map((name) => <option key={name} value={name}>{name}</option>)}
               </select>
-              <input
-                type="month"
+              <select
                 className="dtr-month-input"
                 value={dtrMonthFilter}
                 onChange={(e) => setDtrMonthFilter(e.target.value)}
-              />
+              >
+                <option value="all">All months</option>
+                {Array.from(new Set(dtrEntries.map((e) => e.date.slice(0, 7)))).sort((a, b) => b.localeCompare(a)).map((m) => (
+                  <option key={m} value={m}>{new Date(`${m}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</option>
+                ))}
+              </select>
             </div>
 
             {/* ── PRINT-ONLY: Full government-style DTR template ── */}
@@ -4805,7 +5181,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <div className="dtr-print-doc-meta-field">
                   <span className="dtr-print-doc-meta-label">Period Covered</span>
                   <strong className="dtr-print-doc-meta-value">
-                    {new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                    {dtrMonthFilter === 'all'
+                      ? 'All Records'
+                      : new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                   </strong>
                 </div>
                 <div className="dtr-print-doc-meta-field">
@@ -4833,6 +5211,27 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 </thead>
                 <tbody>
                   {(() => {
+                    if (dtrMonthFilter === 'all') {
+                      // All months: show every entry sorted by date
+                      return visibleEntries.map((entry) => {
+                        const d = new Date(`${entry.date}T00:00:00`)
+                        const weekday = d.getDay()
+                        const isWeekend = weekday === 0 || weekday === 6
+                        const minutes = getDtrEntryMinutes(entry)
+                        return (
+                          <tr key={entry.id} className={`dtr-print-tr ${isWeekend ? 'dtr-print-tr-weekend' : ''} dtr-print-tr-has-entry`}>
+                            <td className="dtr-print-td-date">{entry.date}</td>
+                            <td className="dtr-print-td-day">{d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase()}</td>
+                            <td className="dtr-print-td-time">{formatTimeForDisplay(entry.amIn)}</td>
+                            <td className="dtr-print-td-time">{formatTimeForDisplay(entry.amOut)}</td>
+                            <td className="dtr-print-td-time">{formatTimeForDisplay(entry.pmIn)}</td>
+                            <td className="dtr-print-td-time">{formatTimeForDisplay(entry.pmOut)}</td>
+                            <td className="dtr-print-td-total">{minutes > 0 ? formatMinutesAsHm(minutes) : ''}</td>
+                            <td className="dtr-print-td-notes">{entry.notes || ''}</td>
+                          </tr>
+                        )
+                      })
+                    }
                     const [yr, mo] = dtrMonthFilter.split('-').map(Number)
                     const daysInMonth = new Date(yr, mo, 0).getDate()
                     const entryMap = new Map(visibleEntries.map((e) => [e.date, e]))
@@ -4973,7 +5372,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <div className="dtr-empty">
                   <Clock3 size={28} />
                   <p>No time records for this period.</p>
-                  <span>Use the form on the left to log an entry, or pick a different month.</span>
+                  <span>Use the form on the left to log an entry{dtrMonthFilter !== 'all' ? ', or pick a different month' : ''}.</span>
                 </div>
               ) : (
                 visibleEntries.map((entry) => {
@@ -4983,8 +5382,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   return (
                     <div className={`dtr-row ${isToday ? 'dtr-row-today' : ''}`} key={entry.id}>
                       <div className="dtr-row-date">
-                        <span className="dtr-row-day">{new Date(`${entry.date}T00:00:00`).getDate()}</span>
-                        <span className="dtr-row-weekday">{new Date(`${entry.date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short' })}</span>
+                        <span className="dtr-row-day">
+                          {dtrMonthFilter === 'all'
+                            ? new Date(`${entry.date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                            : new Date(`${entry.date}T00:00:00`).getDate()}
+                        </span>
+                        <span className="dtr-row-weekday">
+                          {dtrMonthFilter === 'all'
+                            ? new Date(`${entry.date}T00:00:00`).getFullYear()
+                            : new Date(`${entry.date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short' })}
+                        </span>
                       </div>
                       <div className="dtr-row-main">
                         <p className="dtr-row-name">
@@ -5080,7 +5487,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           <button
             type="button"
             className="nav-text-action nav-clock-btn"
-            onClick={() => setScreen('dtr')}
+            onClick={() => { setDtrView('records'); setScreen('dtr') }}
             title="Open Daily Time Record"
           >
             <Clock3 size={15} className="nav-clock-icon" />
@@ -5111,38 +5518,41 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 </h1>
                 <span>{activeProjects} active booking records</span>
               </div>
-              <div className="dashboard-banner-actions">
-                <button
-                  type="button"
-                  className="create-project-btn"
-                  onClick={handleNewBooking}
-                >
-                  <Plus size={20} />
-                  New Inquiry
-                </button>
-                <button
-                  type="button"
-                  className="open-dtr-btn"
-                  onClick={() => setScreen('dtr')}
-                >
-                  <Clock3 size={18} />
-                  Open Daily Time Record
-                </button>
-              </div>
-            </div>
 
-            {/* Dashboard live clock strip */}
-            <div className="dashboard-clock-strip no-print">
-              <div className="dashboard-clock-display">
-                <span className="dashboard-clock-time">
-                  {formatLiveClockParts(liveClock).time}
-                </span>
-                <span className="dashboard-clock-period">{formatLiveClockParts(liveClock).period}</span>
-              </div>
-              <div className="dashboard-clock-meta">
-                <span className="dashboard-clock-date">
-                  {liveClock.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-                </span>
+              <div className="dashboard-banner-right">
+                {/* Dashboard live clock strip */}
+                <div className="dashboard-clock-strip no-print">
+                  <div className="dashboard-clock-display">
+                    <span className="dashboard-clock-time">
+                      {formatLiveClockParts(liveClock).time}
+                    </span>
+                    <span className="dashboard-clock-period">{formatLiveClockParts(liveClock).period}</span>
+                  </div>
+                  <div className="dashboard-clock-meta">
+                    <span className="dashboard-clock-date">
+                      {liveClock.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="dashboard-banner-actions">
+                  <button
+                    type="button"
+                    className="create-project-btn"
+                    onClick={handleNewBooking}
+                  >
+                    <Plus size={20} />
+                    New Inquiry
+                  </button>
+                  <button
+                    type="button"
+                    className="open-dtr-btn"
+                    onClick={() => { setDtrView('records'); setScreen('dtr') }}
+                  >
+                    <Clock3 size={18} />
+                    Open Daily Time Record
+                  </button>
+                </div>
               </div>
             </div>
           </section>
@@ -5430,7 +5840,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                     </div>
 
                     {/* Hover action toolbar */}
-                    {!isUnsent && (isHovered || reactionPickerFor === msg.id) && (
+                    {!isUnsent && !msg.isNexusThinking && (isHovered || reactionPickerFor === msg.id) && (
                       <div
                         className={`chat-action-bar ${isMe ? 'action-bar-mine' : 'action-bar-theirs'}`}
                         onMouseEnter={() => setHoveredMsgId(msg.id)}
@@ -5443,6 +5853,23 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                           <button type="button" className="chat-action-btn" title="Reply"
                             onClick={(e) => { e.stopPropagation(); setReplyingTo({ id: msg.id, text: msg.text, senderName: msg.senderName }); chatInputRef.current?.focus() }}
                           ><CornerUpLeft size={13} /></button>
+                        )}
+                        <button type="button" className="chat-action-btn" title={copiedMsgId === msg.id ? 'Copied!' : 'Copy'}
+                          onClick={(e) => { e.stopPropagation(); void copyMessageText(msg.id, msg.text) }}
+                        >{copiedMsgId === msg.id ? <Check size={13} /> : <Copy size={13} />}</button>
+                        {isNexus && (
+                          <>
+                            <button type="button" className={`chat-action-btn ${msg.feedback === 'up' ? 'chat-action-active-up' : ''}`} title="Good response"
+                              onClick={(e) => { e.stopPropagation(); void setMessageFeedback(msg.id, 'up') }}
+                            ><ThumbsUp size={13} /></button>
+                            <button type="button" className={`chat-action-btn ${msg.feedback === 'down' ? 'chat-action-active-down' : ''}`} title="Bad response"
+                              onClick={(e) => { e.stopPropagation(); void setMessageFeedback(msg.id, 'down') }}
+                            ><ThumbsDown size={13} /></button>
+                            <button type="button" className="chat-action-btn" title={msg.isNexusError ? 'Retry' : 'Regenerate response'}
+                              disabled={regeneratingMsgId === msg.id}
+                              onClick={(e) => { e.stopPropagation(); void retryHertaMessage(msg.id) }}
+                            ><RefreshCw size={13} className={regeneratingMsgId === msg.id ? 'chat-action-spin' : ''} /></button>
+                          </>
                         )}
                         {isMe && !isNexus && (
                           <button type="button" className="chat-action-btn chat-action-delete" title="Unsend"
