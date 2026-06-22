@@ -3699,6 +3699,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
             </button>
             <button
+              className="nav-text-action"
+              type="button"
+              onClick={() => window.print()}
+              title="Print document"
+            >
+              <Printer size={18} />
+              <span>Print</span>
+            </button>
+            <button
               type="button"
               onClick={() => setScreen('document-folder')}
               title="Back"
@@ -4118,6 +4127,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
             </button>
             <button
+              className="nav-text-action"
+              type="button"
+              onClick={() => window.print()}
+              title="Print document"
+            >
+              <Printer size={18} />
+              <span>Print</span>
+            </button>
+            <button
               type="button"
               onClick={openInvoiceEditor}
               title="Edit invoice"
@@ -4483,6 +4501,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
             </button>
             <button
+              className="nav-text-action"
+              type="button"
+              onClick={() => window.print()}
+              title="Print document"
+            >
+              <Printer size={18} />
+              <span>Print</span>
+            </button>
+            <button
               type="button"
               onClick={() => setScreen('document-folder')}
               title="Back"
@@ -4605,6 +4632,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             >
               <Download size={18} />
               <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
+            </button>
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={() => window.print()}
+              title="Print document"
+            >
+              <Printer size={18} />
+              <span>Print</span>
             </button>
             <button
               type="button"
@@ -4831,6 +4867,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             >
               <Download size={18} />
               <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
+            </button>
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={() => window.print()}
+              title="Print document"
+            >
+              <Printer size={18} />
+              <span>Print</span>
             </button>
             <button
               type="button"
