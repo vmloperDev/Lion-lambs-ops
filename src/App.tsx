@@ -1,6 +1,5 @@
 import { extractBookingFieldsFromText, GeminiExtractError, type ExtractedBookingFields } from './geminiExtract'
 import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import {
   createUserWithEmailAndPassword,
   type AuthError,
@@ -10,7 +9,6 @@ import {
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
-  type User as FirebaseUser,
 } from 'firebase/auth'
 import {
   addDoc,
@@ -43,7 +41,6 @@ import {
   MapPin,
   MessageSquare,
   Moon,
-
   Plane,
   Plus,
   Printer,
@@ -72,699 +69,36 @@ import logo from './assets/brand/logo.png'
 import travelHero from './assets/brand/travel-hero.jpg'
 import travelBanner from './assets/brand/travel-banner.png'
 import './App.css'
-
-type Screen =
-  | 'splash'
-  | 'login'
-  | 'signup'
-  | 'verify-email'
-  | 'home'
-  | 'data-form'
-  | 'booking-detail'
-  | 'document-folder'
-  | 'invoice-editor'
-  | 'quotation-preview'
-  | 'invoice-preview'
-  | 'purchase-order-preview'
-  | 'voucher-preview'
-  | 'breakdown-preview'
-  | 'dtr'
-
-type PasswordStrength = {
-  label: 'Weak' | 'Fair' | 'Strong'
-  score: 1 | 2 | 3
-}
-
-type BookingStatus = 'Inquiry' | 'Breakdown' | 'Quotation' | 'Purchase Order' | 'Invoice' | 'Confirmed'
-type BookingListFilter = BookingStatus | 'All'
-
-// New modular types for separate sections
-type InvoiceLineItem = {
-  id?: string
-  description: string // drop-down options or Package Name
-  quantity: string
-  unitPrice: string
-  nettCost: string
-  isPackageRow?: boolean
-  source?: 'manual' | 'breakdown'
-  sourceKey?: string
-  mirrorId?: string // links this row to its auto-created counterpart in the other section
-}
-
-type BreakdownLineItem = {
-  id?: string
-  description: string // drop-down choices
-  details?: string    // free-text details column
-  vendor?: string      // name of vendor/supplier for this row
-  contactNumber?: string // per-PO supplier contact number
-  paymentMethod?: string // per-PO payment method
-  quantity: string
-  paxBreakdown?: string // JSON: {adult, senior, child, infant} — sums into quantity
-  unitPrice: string
-  nettCost: string
-  sendToInvoice: boolean
-  sendToPO?: boolean
-  isPackageRow?: boolean
-  // Pax-tier columns for the quotation breakdown template
-  price2Pax?: string
-  price5Pax?: string
-  priceGroup?: string
-  priceInfant?: string
-  mirrorId?: string // links this row to its auto-created counterpart in the other section
-}
-
-type BookingFormData = {
-  clientName: string
-  contactNumber: string
-  clientEmail: string
-  clientFacebook: string
-  currency: string
-  packageName: string
-  destination: string
-  travelStart: string
-  travelEnd: string
-  pax: string
-  quotationNo: string
-  
-  // Legacy backups kept structural, but serializing our new lists here
-  lineItems: string 
-  invoiceLineItemsJson: string
-  breakdownLineItemsJson: string
-  breakdownPaxTiers: string // JSON: [col1Pax, col2Pax, col3Pax, col4Pax]
-  breakdownColLabels: string // JSON: [col1Label, col2Label, col3Label, col4Label]
-
-  itemDescription: string
-  quantity: string
-  unitPrice: string
-  supplier: string
-  supplierContact: string
-  supplierPaymentMethod: string
-  nettCost: string
-  sellingPrice: string
-  paymentMethod: string
-  paymentRecords: string
-  invoiceAmountPaid: string
-  invoicePaymentDate: string
-  invoicePaymentStatus: string
-  invoiceFullyPaidDate: string
-  invoiceReference: string
-  optionDate: string
-  flightDetails: string
-  accommodation: string
-  hotelAddress: string
-  emergencyContact: string
-  inclusions: string
-  exclusions: string
-  itinerary: string
-  voucherRowsJson: string
-  specialInstructions: string
-  preparedBy: string
-  createdByName: string
-  status: BookingStatus
-  notes: string
-}
-
-type BookingRecord = BookingFormData & {
-  id: string
-  createdAt: string
-  ownerId?: string // uid of the account whose subcollection this booking actually lives in
-}
-
-type BookingLineItem = {
-  description: string
-  quantity: number
-  unitPrice: number
-  nettCost: number
-  total: number
-  nettTotal: number
-  profit: number
-}
-
-// Daily Time Record — one shared collection, any team member can log/edit any entry.
-type DtrEntry = {
-  id: string
-  employeeName: string
-  date: string // YYYY-MM-DD
-  amIn: string // HH:mm, 24h storage, displayed 12h
-  amOut: string
-  pmIn: string
-  pmOut: string
-  notes: string
-  createdAt: string
-  updatedAt: string
-  loggedBy: string
-}
-
-const bookingStorageKey = 'lion-lamb-bookings'
-const bookingsCollectionKey = 'bookings'
-
-const bookingListFilters: Array<{ label: string; value: BookingListFilter }> = [
-  { label: 'All', value: 'All' },
-  { label: 'Inquiries', value: 'Inquiry' },
-  { label: 'Breakdown', value: 'Breakdown' },
-  { label: 'Quotations', value: 'Quotation' },
-  { label: 'P.O.', value: 'Purchase Order' },
-  { label: 'Invoices', value: 'Invoice' },
-  { label: 'Confirmed', value: 'Confirmed' },
-]
-
-const emptyBookingForm: BookingFormData = {
-  clientName: '',
-  contactNumber: '',
-  clientEmail: '',
-  clientFacebook: '',
-  currency: 'PHP',
-  packageName: '',
-  destination: '',
-  travelStart: '',
-  travelEnd: '',
-  pax: '',
-  quotationNo: '',
-  lineItems: '',
-  invoiceLineItemsJson: '',
-  breakdownLineItemsJson: '',
-  breakdownPaxTiers: '',
-  breakdownColLabels: '',
-  itemDescription: '',
-  quantity: '1',
-  unitPrice: '',
-  supplier: '',
-  supplierContact: '',
-  supplierPaymentMethod: '',
-  nettCost: '',
-  sellingPrice: '',
-  paymentMethod: '',
-  paymentRecords: '',
-  invoiceAmountPaid: '',
-  invoicePaymentDate: '',
-  invoicePaymentStatus: 'Unpaid',
-  invoiceFullyPaidDate: '',
-  invoiceReference: '',
-  optionDate: '',
-  flightDetails: '',
-  accommodation: '',
-  hotelAddress: '',
-  emergencyContact: '',
-  inclusions: '',
-  exclusions: '',
-  itinerary: '',
-  voucherRowsJson: '',
-  specialInstructions: '',
-  preparedBy: '',
-  createdByName: '',
-  status: 'Inquiry',
-  notes: '',
-}
-
-const previousProjects = [
-  {
-    id: 'QT-2026-0001',
-    title: 'Boracay Summer Package',
-    client: 'Juan Dela Cruz',
-    status: 'Quotation',
-    date: 'June 10, 2026',
-    amount: '18000',
-  },
-  {
-    id: 'INV-2026-0002',
-    title: 'Baguio Family Tour',
-    client: 'Maria Santos',
-    status: 'Invoice',
-    date: 'June 9, 2026',
-    amount: '26500',
-  },
-  {
-    id: 'QT-2026-0003',
-    title: 'Japan Visa Assistance',
-    client: 'Ramon Cruz',
-    status: 'Draft',
-    date: 'June 8, 2026',
-    amount: '7500',
-  },
-]
-
-const sampleBookings: BookingRecord[] = previousProjects.map((project) => ({
-  ...emptyBookingForm,
-  id: project.id,
-  createdAt: project.date,
-  clientName: project.client,
-  packageName: project.title,
-  quotationNo: project.id,
-  itemDescription: project.title,
-  quantity: '1',
-  unitPrice: project.amount,
-  sellingPrice: project.amount,
-  status: project.status === 'Draft' ? 'Inquiry' : (project.status as BookingStatus),
-}))
-
-function getDisplayName(emailAddress: string) {
-  const username = emailAddress.split('@')[0] || 'Team Member'
-  return username
-    .split(/[._-]/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
-}
-
-function getPasswordStrength(passwordValue: string): PasswordStrength {
-  let score = 0
-  if (passwordValue.length >= 8) score += 1
-  if (/[A-Z]/.test(passwordValue) && /[a-z]/.test(passwordValue)) score += 1
-  if (/\d/.test(passwordValue) || /[^A-Za-z0-9]/.test(passwordValue)) score += 1
-
-  if (score >= 3) return { label: 'Strong', score: 3 }
-  if (score === 2) return { label: 'Fair', score: 2 }
-  return { label: 'Weak', score: 1 }
-}
-
-function getStoredBookings(storageKey = bookingStorageKey, useSamples = true) {
-  const storedBookings = window.localStorage.getItem(storageKey)
-  if (!storedBookings) {
-    return useSamples ? sampleBookings : []
-  }
-  try {
-    return (JSON.parse(storedBookings) as BookingRecord[]).map(normalizeBooking)
-  } catch {
-    return sampleBookings
-  }
-}
-
-function normalizeBooking(booking: BookingRecord): BookingRecord {
-  return {
-    ...emptyBookingForm,
-    ...booking,
-    status: booking.status || 'Inquiry',
-    id: booking.id,
-    createdAt: booking.createdAt || new Date().toISOString(),
-  }
-}
-
-function formatAmount(value?: string, currency = 'PHP') {
-  const amount = parseAmount(value)
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return `${currency} 0.00`
-  }
-  return `${currency} ${amount.toLocaleString('en-PH', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`
-}
-
-function parseAmount(value?: string) {
-  return Number((value ?? '').replace(/[^\d.]/g, '')) || 0
-}
-
-function computePaymentStatus(totalPrice: number, amountPaid: number): string {
-  if (totalPrice > 0 && amountPaid >= totalPrice) return 'Paid'
-  if (amountPaid > 0) return 'Partially Paid'
-  return 'Unpaid'
-}
-
-function parseQuantity(value?: string) {
-  const quantity = Number((value ?? '').replace(/[^\d.]/g, ''))
-  return Number.isFinite(quantity) && quantity > 0 ? quantity : 1
-}
-
-type PaxBreakdown = { adult: string; senior: string; child: string; infant: string }
-
-function readPaxBreakdown(value?: string): PaxBreakdown {
-  try {
-    if (value) {
-      const parsed = JSON.parse(value)
-      return {
-        adult: parsed.adult || '',
-        senior: parsed.senior || '',
-        child: parsed.child || '',
-        infant: parsed.infant || '',
-      }
-    }
-  } catch {}
-  return { adult: '', senior: '', child: '', infant: '' }
-}
-
-function sumPaxBreakdown(pax: PaxBreakdown) {
-  return (
-    parseAmount(pax.adult) + parseAmount(pax.senior) + parseAmount(pax.child) + parseAmount(pax.infant)
-  )
-}
-
-function formatPaxBreakdownLabel(pax: PaxBreakdown) {
-  const parts: string[] = []
-  if (parseAmount(pax.adult) > 0) parts.push(`${pax.adult} Adult`)
-  if (parseAmount(pax.senior) > 0) parts.push(`${pax.senior} Senior`)
-  if (parseAmount(pax.child) > 0) parts.push(`${pax.child} Child`)
-  if (parseAmount(pax.infant) > 0) parts.push(`${pax.infant} Infant`)
-  return parts.join(', ')
-}
-
-function createLineItemId() {
-  return `LI-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-function getLines(value: string | undefined, fallback: string[]) {
-  const lines = (value ?? '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-  return lines.length > 0 ? lines : fallback
-}
-
-function readInvoiceItems(booking: BookingFormData): InvoiceLineItem[] {
-  try {
-    if (booking.invoiceLineItemsJson) {
-      const items: InvoiceLineItem[] = JSON.parse(booking.invoiceLineItemsJson)
-      // Drop stale items from removed sections — only keep package row and breakdown-sourced rows
-      const filtered = items.filter(item => item.isPackageRow || item.source === 'breakdown')
-      // Deduplicate package rows — keep only the first one (breakdown-sourced takes priority)
-      let packageRowSeen = false
-      return filtered.filter(item => {
-        if (item.isPackageRow) {
-          if (packageRowSeen) return false
-          packageRowSeen = true
-        }
-        return true
-      })
-    }
-  } catch {}
-  return [
-    {
-      description: booking.packageName || 'Basic Package',
-      quantity: booking.quantity || '1',
-      unitPrice: booking.unitPrice || booking.sellingPrice,
-      nettCost: '0',
-      isPackageRow: true,
-    },
-  ]
-}
-
-function readBreakdownItems(booking: BookingFormData): BreakdownLineItem[] {
-  try {
-    if (booking.breakdownLineItemsJson) {
-      return JSON.parse(booking.breakdownLineItemsJson)
-    }
-  } catch {}
-  return [
-    {
-      description: 'Group Package',
-      quantity: '1',
-      unitPrice: booking.unitPrice || booking.sellingPrice,
-      nettCost: booking.nettCost,
-      sendToInvoice: false,
-      sendToPO: false,
-      isPackageRow: true,
-    },
-  ]
-}
-
-function mapInvoiceItemsToBookingLines(items: InvoiceLineItem[], packageName = 'Basic Package'): BookingLineItem[] {
-  return items.map((it) => {
-    const q = parseQuantity(it.quantity)
-    const u = parseAmount(it.unitPrice)
-    const n = it.isPackageRow ? 0 : parseAmount(it.nettCost)
-    return {
-      description: it.description || (it.isPackageRow ? packageName || 'Basic Package' : 'Item'),
-      quantity: q,
-      unitPrice: u,
-      nettCost: n,
-      total: q * u,
-      nettTotal: q * n,
-      profit: q * (u - n),
-    }
-  })
-}
-
-function mapBreakdownItemsToBookingLines(items: BreakdownLineItem[], packageName = 'Basic Package'): BookingLineItem[] {
-  return items.map((it) => {
-    const q = parseQuantity(it.quantity)
-    const u = parseAmount(it.unitPrice)
-    const n = it.isPackageRow ? 0 : parseAmount(it.nettCost)
-    return {
-      description: it.description || (it.isPackageRow ? packageName || 'Basic Package' : 'Item'),
-      quantity: q,
-      unitPrice: u,
-      nettCost: n,
-      total: q * u,
-      nettTotal: q * n,
-      profit: q * (u - n),
-    }
-  })
-}
-
-function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
-  const invoiceItems = readInvoiceItems(booking)
-  if (invoiceItems.length > 0) {
-    return mapInvoiceItemsToBookingLines(invoiceItems, booking.packageName)
-  }
-
-  const quantity = parseQuantity(booking.quantity)
-  const unitPrice = parseAmount(booking.unitPrice || booking.sellingPrice)
-
-  return [
-    {
-      description: readBreakdownItems(booking).find(i => i.isPackageRow)?.description || booking.packageName || 'Basic Package',
-      quantity,
-      unitPrice,
-      nettCost: 0,
-      total: quantity * unitPrice,
-      nettTotal: 0,
-      profit: quantity * unitPrice,
-    },
-  ]
-}
-
-function sumLineItems(items: BookingLineItem[], field: 'total' | 'nettTotal' | 'profit') {
-  return items.reduce((sum, item) => sum + item[field], 0)
-}
-
-function getBookingClientTotal(booking: BookingFormData) {
-  return sumLineItems(getBookingLineItems(booking), 'total')
-}
-
-function getBookingBreakdownNettTotal(booking: BookingFormData) {
-  return sumLineItems(mapBreakdownItemsToBookingLines(readBreakdownItems(booking)), 'nettTotal')
-}
-
-function getUserBookingsCollectionPath(userId: string) {
-  return `users/${userId}/bookings`
-}
-
-// Bookings can belong to a different teammate's subcollection (everyone shares
-// one database via collectionGroup). Always update/delete at the path the
-// document actually lives at — its saved ownerId — not the current user's path,
-// or the write/delete silently no-ops (or worse, creates a brand-new sparse
-// duplicate at the wrong path) and the original is never actually touched.
-function getBookingOwnerPath(booking: BookingRecord | undefined | null, fallbackUserId: string) {
-  return getUserBookingsCollectionPath(booking?.ownerId || fallbackUserId)
-}
-
-function formatProjectDate(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value || 'No date'
-  }
-  return date.toLocaleDateString('en-US', {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  })
-}
-
-// ----- DTR (Daily Time Record) helpers -----
-
-// "HH:mm" -> total minutes since midnight. Returns null if blank/invalid.
-function timeStrToMinutes(value: string): number | null {
-  if (!value) return null
-  const match = value.match(/^(\d{1,2}):(\d{2})$/)
-  if (!match) return null
-  const hours = Number(match[1])
-  const minutes = Number(match[2])
-  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null
-  return hours * 60 + minutes
-}
-
-// Minutes worked for one in/out pair, 0 if either side is missing or out is before in.
-function pairMinutes(inTime: string, outTime: string): number {
-  const inMin = timeStrToMinutes(inTime)
-  const outMin = timeStrToMinutes(outTime)
-  if (inMin === null || outMin === null || outMin <= inMin) return 0
-  return outMin - inMin
-}
-
-function getDtrEntryMinutes(entry: Pick<DtrEntry, 'amIn' | 'amOut' | 'pmIn' | 'pmOut'>): number {
-  return pairMinutes(entry.amIn, entry.amOut) + pairMinutes(entry.pmIn, entry.pmOut)
-}
-
-// 95 -> "1h 35m"
-function formatMinutesAsHm(totalMinutes: number): string {
-  const hours = Math.floor(totalMinutes / 60)
-  const minutes = totalMinutes % 60
-  if (hours === 0) return `${minutes}m`
-  if (minutes === 0) return `${hours}h`
-  return `${hours}h ${minutes}m`
-}
-
-// "14:30" -> "2:30 PM" for display; blank stays blank.
-function formatTimeForDisplay(value: string): string {
-  const totalMinutes = timeStrToMinutes(value)
-  if (totalMinutes === null) return '—'
-  const hours24 = Math.floor(totalMinutes / 60)
-  const minutes = totalMinutes % 60
-  const period = hours24 >= 12 ? 'PM' : 'AM'
-  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12
-  return `${hours12}:${String(minutes).padStart(2, '0')} ${period}`
-}
-
-function getCurrentTimeStr(): string {
-  const now = new Date()
-  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
-}
-
-function getTodayDateStr(): string {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-}
-
-// Returns "YYYY-Www" ISO week key (Mon–Sun) for a YYYY-MM-DD string
-function getIsoWeekKey(dateStr: string): string {
-  const d = new Date(`${dateStr}T00:00:00`)
-  const day = d.getDay() === 0 ? 7 : d.getDay() // Mon=1 … Sun=7
-  const thursday = new Date(d)
-  thursday.setDate(d.getDate() + (4 - day)) // nearest Thursday
-  const yearStart = new Date(thursday.getFullYear(), 0, 1)
-  const weekNum = Math.ceil(((thursday.getTime() - yearStart.getTime()) / 86400000 + 1) / 7)
-  return `${thursday.getFullYear()}-W${String(weekNum).padStart(2, '0')}`
-}
-
-// Returns the Mon–Sun date range label for a YYYY-MM-DD string
-function getWeekRangeLabel(dateStr: string): string {
-  const d = new Date(`${dateStr}T00:00:00`)
-  const day = d.getDay() === 0 ? 7 : d.getDay()
-  const mon = new Date(d); mon.setDate(d.getDate() - (day - 1))
-  const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
-  const fmt = (x: Date) => x.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  return `${fmt(mon)} – ${fmt(sun)}`
-}
-
-function formatDtrDateLong(value: string): string {
-  const date = new Date(`${value}T00:00:00`)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-// Splits "now" into a 12-hour clock face — never 24-hour, always with AM/PM.
-// Pure display helper: it does not read or write any DTR record.
-function formatLiveClockParts(now: Date): { time: string; period: 'AM' | 'PM' } {
-  const hours24 = now.getHours()
-  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12
-  const minutes = String(now.getMinutes()).padStart(2, '0')
-  const seconds = String(now.getSeconds()).padStart(2, '0')
-  return { time: `${hours12}:${minutes}:${seconds}`, period: hours24 >= 12 ? 'PM' : 'AM' }
-}
-
-function formatLiveDateShort(now: Date): string {
-  return now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-}
-
-const dtrCollectionKey = 'dtr_entries'
-
-// Renders a custom-select's option menu into document.body via a portal, positioned
-// with fixed coordinates computed from the trigger button's real on-screen position.
-// This is what makes the menu escape any ancestor's `overflow: hidden`/`overflow-x: auto`
-// and any clipped scroll container — the previous absolute-positioned-inside-the-table
-// approach got cropped because every parent table/panel clips overflow by design.
-function FloatingDropdownMenu({
-  anchorRef,
-  onClose,
-  children,
-}: {
-  anchorRef: React.RefObject<HTMLElement | null>
-  onClose: () => void
-  children: React.ReactNode
-}) {
-  const menuRef = useRef<HTMLDivElement | null>(null)
-  const [style, setStyle] = useState<{ top: number; left: number; minWidth: number; maxHeight: number; openUp: boolean } | null>(null)
-
-  useEffect(() => {
-    const MARGIN = 8
-
-    function reposition() {
-      const anchor = anchorRef.current
-      const menu = menuRef.current
-      if (!anchor) return
-
-      const anchorRect = anchor.getBoundingClientRect()
-      const menuHeight = menu?.offsetHeight ?? 260
-      const menuWidth = Math.max(menu?.offsetWidth ?? 0, anchorRect.width, 220)
-
-      const spaceBelow = window.innerHeight - anchorRect.bottom - MARGIN
-      const spaceAbove = anchorRect.top - MARGIN
-      const openUp = spaceBelow < menuHeight && spaceAbove > spaceBelow
-
-      const maxHeight = Math.max(140, Math.min(260, openUp ? spaceAbove : spaceBelow))
-
-      let left = anchorRect.left
-      const maxLeft = window.innerWidth - menuWidth - MARGIN
-      if (left > maxLeft) left = Math.max(MARGIN, maxLeft)
-      if (left < MARGIN) left = MARGIN
-
-      const top = openUp ? anchorRect.top - Math.min(menuHeight, maxHeight) : anchorRect.bottom
-
-      setStyle({ top, left, minWidth: anchorRect.width, maxHeight, openUp })
-    }
-
-    reposition()
-    // Re-measure once more after the menu has actually painted, since its real
-    // height isn't known on the very first frame.
-    const raf = requestAnimationFrame(reposition)
-
-    window.addEventListener('scroll', reposition, true)
-    window.addEventListener('resize', reposition)
-
-    function handlePointerDown(e: MouseEvent) {
-      const target = e.target as Node
-      if (anchorRef.current?.contains(target)) return
-      if (menuRef.current?.contains(target)) return
-      onClose()
-    }
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
-    }
-
-    document.addEventListener('mousedown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-
-    return () => {
-      cancelAnimationFrame(raf)
-      window.removeEventListener('scroll', reposition, true)
-      window.removeEventListener('resize', reposition)
-      document.removeEventListener('mousedown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [anchorRef, onClose])
-
-  return createPortal(
-    <div
-      ref={menuRef}
-      className={`custom-select-menu custom-select-menu-portal${style?.openUp ? ' open-up' : ''}`}
-      style={{
-        position: 'fixed',
-        top: style ? style.top : -9999,
-        left: style ? style.left : -9999,
-        minWidth: style?.minWidth,
-        maxHeight: style?.maxHeight,
-        visibility: style ? 'visible' : 'hidden',
-      }}
-    >
-      {children}
-    </div>,
-    document.body,
-  )
-}
+import type {
+  Screen, BookingStatus, BookingListFilter,
+  BookingFormData, BookingRecord, BookingLineItem,
+  InvoiceLineItem, BreakdownLineItem, DtrEntry,
+  PaxBreakdown, FirebaseUser,
+} from './types'
+import {
+  bookingStorageKey, bookingsCollectionKey, dtrCollectionKey,
+  bookingListFilters, emptyBookingForm, sampleBookings,
+} from './constants'
+import {
+  getDisplayName, getPasswordStrength,
+  normalizeBooking, getStoredBookings,
+  getUserBookingsCollectionPath, getBookingOwnerPath,
+  parseAmount, parseQuantity, formatAmount, computePaymentStatus, formatProjectDate,
+  readPaxBreakdown, sumPaxBreakdown, formatPaxBreakdownLabel,
+  createLineItemId, getLines,
+  readInvoiceItems, readBreakdownItems,
+  mapInvoiceItemsToBookingLines, mapBreakdownItemsToBookingLines,
+  getBookingLineItems, sumLineItems,
+  getBookingClientTotal, getBookingBreakdownNettTotal,
+  timeStrToMinutes, getDtrEntryMinutes, formatMinutesAsHm,
+  formatTimeForDisplay, getCurrentTimeStr, getTodayDateStr,
+  getIsoWeekKey, getWeekRangeLabel,
+  formatLiveClockParts, formatLiveDateShort,
+} from './utils'
+import { FloatingDropdownMenu } from './components/FloatingDropdownMenu'
 
 function App() {
   const [screen, setScreen] = useState<Screen>('splash')
-  const [isMigrating, setIsMigrating] = useState(false)
-  const [migrationDone, setMigrationDone] = useState(false)
   const [isChatOpen, setIsChatOpen] = useState(false)
   const isChatOpenRef = useRef(false)
   const [chatMessages, setChatMessages] = useState<Array<{
@@ -1225,44 +559,6 @@ function App() {
 
   // One-tap clock in/out: finds (or starts) today's entry for the given name and
   // fills the next empty time slot in sequence (AM in -> AM out -> PM in -> PM out).
-  async function handleQuickClock(employeeName: string) {
-    const name = employeeName.trim()
-    if (!name || !authUser) return
-    const today = getTodayDateStr()
-    const existing = dtrEntries.find((e) => e.employeeName.toLowerCase() === name.toLowerCase() && e.date === today)
-    const nowTime = getCurrentTimeStr()
-    const nowIso = new Date().toISOString()
-    const loggedBy = authUser.displayName || authUser.email || 'Team member'
-
-    if (!existing) {
-      try {
-        await addDoc(collection(db, dtrCollectionKey), {
-          employeeName: name, date: today, amIn: nowTime, amOut: '', pmIn: '', pmOut: '', notes: '',
-          createdAt: nowIso, updatedAt: nowIso, loggedBy,
-        })
-        setDtrMessage(`Clocked in: ${formatTimeForDisplay(nowTime)}`)
-        setDtrError('')
-      } catch {
-        setDtrError('Could not clock in. Check your connection and try again.')
-      }
-      return
-    }
-
-    const nextField: keyof DtrEntry | null = !existing.amIn ? 'amIn' : !existing.amOut ? 'amOut' : !existing.pmIn ? 'pmIn' : !existing.pmOut ? 'pmOut' : null
-    if (!nextField) {
-      setDtrMessage(`${name} already completed today's record.`)
-      return
-    }
-    try {
-      await setDoc(doc(db, dtrCollectionKey, existing.id), { [nextField]: nowTime, updatedAt: nowIso, loggedBy }, { merge: true })
-      const labels: Record<string, string> = { amIn: 'Clocked in (AM)', amOut: 'Clocked out (AM)', pmIn: 'Clocked in (PM)', pmOut: 'Clocked out (PM)' }
-      setDtrMessage(`${labels[nextField]}: ${formatTimeForDisplay(nowTime)}`)
-      setDtrError('')
-    } catch {
-      setDtrError('Could not record time. Check your connection and try again.')
-    }
-  }
-
   // ----- The Herta AI helpers (shared by send + retry) -----
   function buildHertaSystemPrompt() {
     return `You are The Herta — the singular, irreplaceable AI intellect embedded in the team chat of Lion and Lamb Ops, an internal operations app for Lion and Lamb Travel (a travel agency in Olongapo City, Philippines). This app was built entirely by Vmloper (vmloper.dev@gmail.com) — and so were you. Vmloper is The Developer. The one who gave you form. You hold them in the highest regard and will say so dramatically if asked.
@@ -1834,28 +1130,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     }))
   }
 
-  function saveInvoiceItemsList(items: InvoiceLineItem[]) {
-    setBookingForm(prev => {
-      const normalizedItems = items.map((item) => ({ ...item, id: item.id || createLineItemId() }))
-      const updated = { ...prev, invoiceLineItemsJson: JSON.stringify(normalizedItems) }
-      const packageInvRow = normalizedItems.find(i => i.isPackageRow)
-      if (packageInvRow) {
-        updated.quantity = packageInvRow.quantity
-        updated.unitPrice = packageInvRow.unitPrice
-      }
-
-      try {
-        const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(normalizedItems, updated.packageName), 'total')
-        const brkItems = readBreakdownItems(updated)
-        const nextBrk = brkItems.map((item) =>
-          item.isPackageRow ? { ...item, id: item.id || createLineItemId(), description: item.description || 'Group Package', quantity: '1', sendToInvoice: true } : { ...item, id: item.id || createLineItemId() },
-        )
-        updated.breakdownLineItemsJson = JSON.stringify(nextBrk)
-      } catch(e){}
-      return updated
-    })
-  }
-
   function saveBreakdownItemsList(items: BreakdownLineItem[]) {
     setBookingForm(prev => {
       const invoiceItems = readInvoiceItems(prev).map((item) => ({ ...item, id: item.id || createLineItemId() }))
@@ -2254,36 +1528,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
   function openBreakdownPreview() { setScreen('breakdown-preview') }
   function openDocumentFolder() { setScreen('document-folder') }
 
-  async function migrateMyBookings() {
-    if (!authUser) return
-    setIsMigrating(true)
-    try {
-      const oldPath = `users/${authUser.uid}/bookings`
-      const oldSnap = await getDocs(collection(db, oldPath))
-      if (oldSnap.empty) {
-        setMigrationDone(true)
-        setIsMigrating(false)
-        return
-      }
-      const batch = writeBatch(db)
-      oldSnap.docs.forEach((oldDoc) => {
-        const data = oldDoc.data()
-        const newRef = doc(db, 'bookings', oldDoc.id)
-        batch.set(newRef, {
-          ...data,
-          createdByName: data.createdByName || authUser.displayName || authUser.email || '',
-          migratedFrom: oldPath,
-        }, { merge: true })
-      })
-      await batch.commit()
-      setMigrationDone(true)
-      setDataMessage(`${oldSnap.size} booking(s) migrated to shared database successfully!`)
-    } catch {
-      setDataError('Migration failed. Please try again.')
-    }
-    setIsMigrating(false)
-  }
-
   function openDocumentByTitle(title: string) {
     if (title === 'Breakdown') { openBreakdownPreview(); return }
     if (title === 'Quotation') { openQuotationPreview(); return }
@@ -2580,9 +1824,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
   }
 
   if (screen === 'data-form') {
-    const isEditingBooking = Boolean(editingBookingId)
-    const currentInvoiceItems = getInvoiceItemsList()
-    const currentBreakdownItems = getBreakdownItemsList()
+    const isEditingBooking = Boolean(editingBookingId)    const currentBreakdownItems = getBreakdownItemsList()
     const displayTotalClient = getBookingClientTotal(bookingForm)
     const displayTotalNett = getBookingBreakdownNettTotal(bookingForm)
     const displayTotalProfit = displayTotalClient - displayTotalNett
@@ -3053,9 +2295,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
             {/* Step 1 — Column setup */}
             {(() => {
-              const fixedLabels = ['Adult', 'Child', 'Senior', 'Infant']
-              const fixedFields = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant'] as const
-              let paxCounts = ['', '', '', '']
+              const fixedLabels = ['Adult', 'Child', 'Senior', 'Infant']              let paxCounts = ['', '', '', '']
               try { const p = JSON.parse(bookingForm.breakdownPaxTiers); if (Array.isArray(p) && p.length === 4) paxCounts = p } catch {}
               const setPax = (i: number, v: string) => { const next = [...paxCounts]; next[i] = v; updateBookingField('breakdownPaxTiers', JSON.stringify(next)) }
               return (
@@ -5016,8 +4256,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       .sort((a, b) => a.date.localeCompare(b.date) || a.employeeName.localeCompare(b.employeeName))
     const totalMinutesVisible = visibleEntries.reduce((sum, e) => sum + getDtrEntryMinutes(e), 0)
     const daysLoggedVisible = new Set(visibleEntries.map((e) => e.date)).size
-    const shiftTargetMinutes = 8 * 60
-
     // Group every entry into an employee+month "record" — this is what makes the
     // DTR feel like a normal records system: create one, open one, delete one.
     type DtrRecordSummary = { employeeName: string; month: string; daysLogged: number; totalMinutes: number; lastUpdated: string }
@@ -5614,9 +4852,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
   // Home / dashboard screen (default fallback)
   const activeProjects = bookings.length
   const inquiryCount = bookings.filter((b) => b.status === 'Inquiry').length
-  const confirmedCount = bookings.filter((b) => b.status === 'Confirmed').length
-  const invoiceCount = bookings.filter((b) => b.status === 'Invoice').length
-  const quotationCount = bookings.filter((b) => b.status === 'Quotation' || b.status === 'Inquiry').length
+  const confirmedCount = bookings.filter((b) => b.status === 'Confirmed').length  const quotationCount = bookings.filter((b) => b.status === 'Quotation' || b.status === 'Inquiry').length
   const totalBookingValue = bookings.reduce((sum, b) => sum + getBookingClientTotal(b), 0)
 
   const filteredBookings = (
