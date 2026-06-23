@@ -1084,7 +1084,6 @@ input, select, textarea { font: inherit; }
 .field-grid { display: grid; gap: 12px; }
 .field-grid.three { grid-template-columns: repeat(3,minmax(0,1fr)); }
 .field-grid.two   { grid-template-columns: repeat(2,minmax(0,1fr)); }
-.field-grid
 /* Field labels */
 .field-grid label, .textarea-field {
   display: grid; gap: 5px;
@@ -1776,7 +1775,7 @@ input, select, textarea { font: inherit; }
 .invoice-table th:not(:first-child):not(.desc-col), .invoice-table td:not(:first-child):not(.desc-col) { text-align: right; }
 .invoice-table .item-col { font-weight: 600; word-break: break-word; min-width: 100px; }
 .invoice-table .desc-col { color: #3a4f60; line-height: 1.4; word-break: break-word; white-space: pre-wrap; padding-left: 12px; border-left: 1px solid #e6ecf1; min-width: 120px; }
-.invoice-table /* Totals panel - right side column */
+/* Totals panel - right side column */
 .invoice-total-panel { display: grid; gap: 0; border-left: 2px solid #102a43; min-width: 200px; font-size: 0.72rem; }
 .invoice-total-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; align-items: center; padding: 5px 8px; border-bottom: 1px solid #e6ecf1; text-align: right; }
 .invoice-total-row span { color: #52667f; font-weight: 900; text-transform: uppercase; font-size: 0.62rem; text-align: left; }
@@ -1968,7 +1967,7 @@ input, select, textarea { font: inherit; }
   .po-table,.voucher-table { font-size: 0.74rem; }
   .po-table th,.po-table td,.voucher-table th,.voucher-table td,.breakdown-table th,.breakdown-table td { padding: 5px 4px; }
           .po-notes-grid div { grid-template-columns: 1fr; }
-  .field-grid.three,.field-grid.two,.field-grid  }
+  .field-grid.three,.field-grid.two,.field-grid { grid-template-columns: 1fr; } }
 
 /* ── Breakdown Quotation Template (pax-tier columns) ── */
 .breakdown-quotation-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
