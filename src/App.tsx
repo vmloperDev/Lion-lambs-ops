@@ -137,6 +137,7 @@ type BookingFormData = {
   clientName: string
   contactNumber: string
   clientEmail: string
+  clientFacebook: string
   currency: string
   packageName: string
   destination: string
@@ -231,6 +232,7 @@ const emptyBookingForm: BookingFormData = {
   clientName: '',
   contactNumber: '',
   clientEmail: '',
+  clientFacebook: '',
   currency: 'PHP',
   packageName: '',
   destination: '',
@@ -2688,6 +2690,10 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 Email address
                 <input type="email" value={bookingForm.clientEmail} onChange={(e) => updateBookingField('clientEmail', e.target.value)} placeholder="client@email.com" />
               </label>
+              <label>
+                Facebook
+                <input value={bookingForm.clientFacebook} onChange={(e) => updateBookingField('clientFacebook', e.target.value)} placeholder="facebook.com/clientname" />
+              </label>
             </div>
           </section>
 
@@ -3396,6 +3402,13 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <article>
                 <span>Email</span>
                 <strong>{selectedBooking.clientEmail || 'Not provided'}</strong>
+              </article>
+              <article>
+                <span>Facebook</span>
+                <strong>{selectedBooking.clientFacebook
+                  ? <a href={selectedBooking.clientFacebook.startsWith('http') ? selectedBooking.clientFacebook : `https://${selectedBooking.clientFacebook}`} target="_blank" rel="noopener noreferrer">{selectedBooking.clientFacebook}</a>
+                  : 'Not provided'
+                }</strong>
               </article>
               <article>
                 <span>Destination</span>
