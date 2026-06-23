@@ -2409,7 +2409,7 @@ input, select, textarea { font: inherit; }
 /* Remove old max-width from .chat-bubble since wrap handles it */
 .chat-bubble { max-width: 100%; }
 
-[data-theme="dark"] @keyframes fadeInUp {
+@keyframes fadeInUp {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
