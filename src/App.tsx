@@ -772,7 +772,7 @@ function App() {
     senderEmail: string
     createdAt: any
     reactions?: Record<string, string[]>
-    seenBy?: string[]
+    seenBy?: Array<string | { email: string; name: string }>
     isNexus?: boolean
     isNexusThinking?: boolean
     isNexusError?: boolean
@@ -1518,17 +1518,37 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
   async function markMessagesSeen() {
     if (!authUser?.email) return
+    const myEmail = authUser.email
+    const myName = authUser.displayName || getDisplayName(myEmail)
+
+    // Normalize a seenBy entry — old entries were plain strings (email only)
+    function getEntryEmail(entry: string | { email: string; name: string }): string {
+      return typeof entry === 'string' ? entry : entry.email
+    }
+
     const unseenMsgs = chatMessages.filter(
-      m => !m.seenBy?.includes(authUser.email!) && m.senderEmail !== authUser.email
+      m => m.senderEmail !== myEmail &&
+        !((m.seenBy || []) as Array<string | { email: string; name: string }>).some(
+          e => getEntryEmail(e) === myEmail
+        )
     )
+    if (unseenMsgs.length === 0) return
     await Promise.all(
-      unseenMsgs.map(m =>
-        setDoc(doc(db, 'team_chat', m.id), {
-          seenBy: [...(m.seenBy || []), authUser.email!]
+      unseenMsgs.map(m => {
+        const existing = (m.seenBy || []) as Array<string | { email: string; name: string }>
+        return setDoc(doc(db, 'team_chat', m.id), {
+          seenBy: [...existing, { email: myEmail, name: myName }]
         }, { merge: true })
-      )
+      })
     )
   }
+
+  // Auto-mark seen whenever the chat is open and new messages arrive
+  useEffect(() => {
+    if (isChatOpen && authUser?.emailVerified) {
+      void markMessagesSeen()
+    }
+  }, [isChatOpen, chatMessages.length])
 
   function getAuthErrorMessage(error: unknown) {
     const code = typeof error === 'object' && error && 'code' in error ? (error as AuthError).code : ''
@@ -5929,12 +5949,36 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 : ''
               const initials = msg.senderName ? msg.senderName.split(' ').map((n: string) => n[0]).join('').slice(0,2).toUpperCase() : '?'
               const reactions = msg.reactions as Record<string, string[]> | undefined
-              const seenBy = (msg.seenBy || []) as string[]
-              const seenByOthers = seenBy.filter((e: string) => e !== authUser?.email)
-              const showSeen = isMe && isLast && seenByOthers.length > 0
               const isUnsent = !!msg.unsent
               const isHovered = hoveredMsgId === msg.id
               const replyTo = msg.replyTo as { id: string; text: string; senderName: string } | undefined
+
+              // Normalize seenBy — may be old plain strings (email) or new {email, name} objects
+              type SeenEntry = string | { email: string; name: string }
+              const rawSeenBy = (msg.seenBy || []) as SeenEntry[]
+              const seenEntries = rawSeenBy
+                .map(e => typeof e === 'string' ? { email: e, name: e.split('@')[0] } : e)
+                .filter(e => e.email !== authUser?.email)
+
+              // For per-message WhatsApp-style seen: show a name under the LAST message
+              // each teammate has seen among MY sent messages
+              const seenHereBy: { email: string; name: string }[] = []
+              if (isMe && !isUnsent) {
+                seenEntries.forEach(entry => {
+                  // Find the last index of MY messages that this person has seen
+                  let lastSeenIdx = -1
+                  chatMessages.forEach((m, i) => {
+                    if (m.senderEmail !== authUser?.email) return
+                    const raw = (m.seenBy || []) as SeenEntry[]
+                    const hasEntry = raw.some(e =>
+                      typeof e === 'string' ? e === entry.email : e.email === entry.email
+                    )
+                    if (hasEntry) lastSeenIdx = i
+                  })
+                  if (lastSeenIdx === idx) seenHereBy.push(entry)
+                })
+              }
+              const showSeen = seenHereBy.length > 0
               return (
                 <div
                   key={msg.id}
@@ -6056,10 +6100,22 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                       </div>
                     )}
 
-                    {/* Seen indicator */}
+                    {/* Seen indicator — shows first name of each person who last read here */}
                     {showSeen && (
-                      <div className="chat-seen">
-                        Seen by {seenByOthers.map((e: string) => e.split('@')[0]).join(', ')}
+                      <div className="chat-seen-row">
+                        <span className="chat-seen-check">✓✓</span>
+                        <span className="chat-seen-label">
+                          {'Seen by '}
+                          {seenHereBy.map((e, i) => {
+                            const firstName = e.name.trim().split(/\s+/)[0]
+                            return (
+                              <span key={e.email}>
+                                {i > 0 && ', '}
+                                <strong>{firstName}</strong>
+                              </span>
+                            )
+                          })}
+                        </span>
                       </div>
                     )}
                   </div>

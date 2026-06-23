@@ -2498,11 +2498,28 @@ input, select, textarea { font: inherit; }
 [data-theme="dark"] .chat-reaction-pill.reacted { background: #134e4a; border-color: var(--teal); }
 
 /* ── Seen indicator ── */
-.chat-seen {
-  font-size: 0.6rem; color: var(--teal);
-  text-align: right; margin-top: 2px;
-  padding-right: 4px; font-weight: 600;
-  opacity: .8;
+.chat-seen-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 3px;
+  padding-right: 2px;
+}
+.chat-seen-check {
+  font-size: 0.6rem;
+  color: var(--teal);
+  font-weight: 800;
+  letter-spacing: -1px;
+}
+.chat-seen-label {
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.chat-seen-label strong {
+  color: var(--teal);
+  font-weight: 700;
 }
 
 /* Remove old max-width from .chat-bubble since wrap handles it */
