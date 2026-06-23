@@ -1824,7 +1824,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
   }
 
   if (screen === 'data-form') {
-    const isEditingBooking = Boolean(editingBookingId)    const currentBreakdownItems = getBreakdownItemsList()
+    const isEditingBooking = Boolean(editingBookingId)
+    const currentBreakdownItems = getBreakdownItemsList()
     const displayTotalClient = getBookingClientTotal(bookingForm)
     const displayTotalNett = getBookingBreakdownNettTotal(bookingForm)
     const displayTotalProfit = displayTotalClient - displayTotalNett
@@ -2295,7 +2296,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
             {/* Step 1 — Column setup */}
             {(() => {
-              const fixedLabels = ['Adult', 'Child', 'Senior', 'Infant']              let paxCounts = ['', '', '', '']
+              const fixedLabels = ['Adult', 'Child', 'Senior', 'Infant']
+              let paxCounts = ['', '', '', '']
               try { const p = JSON.parse(bookingForm.breakdownPaxTiers); if (Array.isArray(p) && p.length === 4) paxCounts = p } catch {}
               const setPax = (i: number, v: string) => { const next = [...paxCounts]; next[i] = v; updateBookingField('breakdownPaxTiers', JSON.stringify(next)) }
               return (
@@ -4852,7 +4854,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
   // Home / dashboard screen (default fallback)
   const activeProjects = bookings.length
   const inquiryCount = bookings.filter((b) => b.status === 'Inquiry').length
-  const confirmedCount = bookings.filter((b) => b.status === 'Confirmed').length  const quotationCount = bookings.filter((b) => b.status === 'Quotation' || b.status === 'Inquiry').length
+  const confirmedCount = bookings.filter((b) => b.status === 'Confirmed').length
+  const quotationCount = bookings.filter((b) => b.status === 'Quotation' || b.status === 'Inquiry').length
   const totalBookingValue = bookings.reduce((sum, b) => sum + getBookingClientTotal(b), 0)
 
   const filteredBookings = (
