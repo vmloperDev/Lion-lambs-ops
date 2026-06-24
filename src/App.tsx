@@ -2003,7 +2003,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               </label>
               <label>
                 Prepared by
-                <input value={bookingForm.preparedBy} onChange={(e) => updateBookingField('preparedBy', e.target.value)} placeholder="Agent Name" />
+                <input required value={bookingForm.preparedBy} onChange={(e) => updateBookingField('preparedBy', e.target.value)} placeholder="Agent Name" />
               </label>
             </div>
 
@@ -3092,7 +3092,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </section>
 
           <footer className="quote-footer-line">
-            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
+            Prepared By: {selectedBooking.preparedBy || 'LLT Staff'}
           </footer>
         </section>
       </main>
@@ -3667,7 +3667,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <div>
               <span>Vendor:</span>
               <strong>{first.vendor || 'To be assigned'}</strong>
-              <small>Agent: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}</small>
+              <small>Agent: {selectedBooking.preparedBy || 'LLT Staff'}</small>
               <small>Contact No.: {first.contactNumber || 'N/A'}</small>
             </div>
             <div>
@@ -3752,7 +3752,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </section>
 
           <footer className="po-footer">
-            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
+            Prepared By: {selectedBooking.preparedBy || 'LLT Staff'}
           </footer>
         </section>
       )
@@ -4065,7 +4065,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </section>
 
           <footer className="voucher-footer">
-            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
+            Prepared By: {selectedBooking.preparedBy || 'LLT Staff'}
           </footer>
         </section>
       </main>
