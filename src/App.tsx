@@ -3608,17 +3608,32 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const supplierPayment = (item: BreakdownLineItem) =>
       item.paymentMethod || selectedBooking.paymentMethod || 'Bank Transfer'
 
-    const renderPODocument = (item: BreakdownLineItem, itemIndex: number, isLast: boolean) => {
-      const paxBreakdown = readPaxBreakdown(item.paxBreakdown)
-      const paxTotal = sumPaxBreakdown(paxBreakdown)
-      const paxLabel = formatPaxBreakdownLabel(paxBreakdown) || item.quantity || '1'
-      const quantity = paxTotal > 0 ? paxTotal : parseQuantity(item.quantity)
-      const itemDescription = item.description || (item.isPackageRow ? selectedBooking.packageName || 'Basic Package' : 'Item')
-      const poUnitPrice = parseAmount(item.nettCost) || parseAmount(item.unitPrice)
-      const poAmount = poUnitPrice * quantity
+    // Group items by vendor name (case-insensitive, trimmed) so same operator = one P.O.
+    const poGroups: BreakdownLineItem[][] = []
+    const vendorKeyMap = new Map<string, number>()
+    for (const item of poBreakdownItems) {
+      const key = (item.vendor || '').trim().toLowerCase() || `__no_vendor_${poGroups.length}`
+      if (vendorKeyMap.has(key)) {
+        poGroups[vendorKeyMap.get(key)!].push(item)
+      } else {
+        vendorKeyMap.set(key, poGroups.length)
+        poGroups.push([item])
+      }
+    }
+
+    const renderPODocument = (items: BreakdownLineItem[], groupIndex: number, isLast: boolean) => {
+      // Use the first item for vendor-level fields (name, contact, payment method)
+      const first = items[0]
+      const groupTotal = items.reduce((sum, item) => {
+        const paxBreakdown = readPaxBreakdown(item.paxBreakdown)
+        const paxTotal = sumPaxBreakdown(paxBreakdown)
+        const quantity = paxTotal > 0 ? paxTotal : parseQuantity(item.quantity)
+        const poUnitPrice = parseAmount(item.nettCost) || parseAmount(item.unitPrice)
+        return sum + poUnitPrice * quantity
+      }, 0)
 
       return (
-        <section key={itemIndex} className={`po-preview print-document${!isLast ? ' po-page-break' : ''}`}>
+        <section key={groupIndex} className={`po-preview print-document${!isLast ? ' po-page-break' : ''}`}>
           <header className="po-header">
             <img src={logo} alt="Lion and Lamb Travel logo" />
             <div>
@@ -3644,21 +3659,21 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </article>
             <article>
               <span>P.O. No.</span>
-              <strong>{poNumber}-{itemIndex + 1}</strong>
+              <strong>{poNumber}-{groupIndex + 1}</strong>
             </article>
           </section>
 
           <section className="po-party-grid">
             <div>
               <span>Vendor:</span>
-              <strong>{item.vendor || 'To be assigned'}</strong>
+              <strong>{first.vendor || 'To be assigned'}</strong>
               <small>Agent: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}</small>
-              <small>Contact No.: {item.contactNumber || 'N/A'}</small>
+              <small>Contact No.: {first.contactNumber || 'N/A'}</small>
             </div>
             <div>
               <span>Client Details:</span>
               <strong>{selectedBooking.clientName}</strong>
-              <small>No. of pax: {paxLabel}</small>
+              <small>No. of pax: {selectedBooking.pax || '—'}</small>
               <small>Contact No.: {selectedBooking.contactNumber || 'N/A'}</small>
             </div>
           </section>
@@ -3674,8 +3689,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </thead>
             <tbody>
               <tr>
-                <td>{supplierPayment(item)}</td>
-                <td>{itemDescription}</td>
+                <td>{supplierPayment(first)}</td>
+                <td>{items.map(i => i.description || selectedBooking.packageName || 'Item').join(', ')}</td>
                 <td>{travelDateStr}</td>
                 <td>{optionDateStr}</td>
               </tr>
@@ -3694,20 +3709,31 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>{quantity}</td>
-                <td>{paxLabel}</td>
-                <td>{itemDescription}</td>
-                <td>{item.details || '—'}</td>
-                <td>{convertAndFormat(poUnitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
-                <td>{convertAndFormat(poAmount, selectedBooking.currency || 'PHP', exchangeRates)}</td>
-              </tr>
+              {items.map((item, rowIndex) => {
+                const paxBreakdown = readPaxBreakdown(item.paxBreakdown)
+                const paxTotal = sumPaxBreakdown(paxBreakdown)
+                const paxLabel = formatPaxBreakdownLabel(paxBreakdown) || item.quantity || '1'
+                const quantity = paxTotal > 0 ? paxTotal : parseQuantity(item.quantity)
+                const itemDescription = item.description || (item.isPackageRow ? selectedBooking.packageName || 'Basic Package' : 'Item')
+                const poUnitPrice = parseAmount(item.nettCost) || parseAmount(item.unitPrice)
+                const poAmount = poUnitPrice * quantity
+                return (
+                  <tr key={rowIndex}>
+                    <td>{quantity}</td>
+                    <td>{paxLabel}</td>
+                    <td>{itemDescription}</td>
+                    <td>{item.details || '—'}</td>
+                    <td>{convertAndFormat(poUnitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                    <td>{convertAndFormat(poAmount, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
 
           <section className="po-total">
             <span>Total Amount:</span>
-            <strong>{convertAndFormat(poAmount, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+            <strong>{convertAndFormat(groupTotal, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
           </section>
 
           <section className="po-notes-grid">
@@ -3807,7 +3833,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <p className="po-empty-row">No items marked "Send to P.O." yet — toggle a row in section 05a to add it here.</p>
           </section>
         ) : (
-          poBreakdownItems.map((item, index) => renderPODocument(item, index, index === poBreakdownItems.length - 1))
+          poGroups.map((group, index) => renderPODocument(group, index, index === poGroups.length - 1))
         )}
       </main>
     )
