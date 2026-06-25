@@ -1206,7 +1206,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     return readBreakdownItems(bookingForm).map((item) => ({
       ...item,
       id: item.id || createLineItemId(),
-      ...(item.isPackageRow ? { quantity: '1', sendToInvoice: true } : {}),
+      ...(item.isPackageRow ? { sendToInvoice: true } : {}),
     }))
   }
 
@@ -1217,7 +1217,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       const normalizedBreakdown = items.map((item) => ({
         ...item,
         id: item.id || createLineItemId(),
-        ...(item.isPackageRow ? { quantity: '1', sendToInvoice: true } : {}),
+        ...(item.isPackageRow ? { sendToInvoice: true } : {}),
       }))
       const manualInvoiceItems = invoiceItems.filter((item) => item.source !== 'breakdown' && !item.isPackageRow)
       const breakdownInvoiceItems: InvoiceLineItem[] = normalizedBreakdown
@@ -2321,8 +2321,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                           value={item.quantity || '1'}
                           onChange={(e) => changeBreakdownQuantity(index, e.target.value)}
                           placeholder="1"
-                          disabled={item.isPackageRow}
-                          title={item.isPackageRow ? 'Package quantity is fixed at 1' : 'Qty — sent to the invoice along with the client price'}
+                          
+                          title="Qty — sent to the invoice along with the client price"
                         />
                         <button
                           type="button"
