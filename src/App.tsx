@@ -445,6 +445,7 @@ function App() {
   }, [authUser])
 
   // Auto-flip bookings to "Flown" once their travel end date has passed
+  const bookingsFlownKey = bookings.map(b => b.id + b.status + b.travelEnd).join(',')
   useEffect(() => {
     if (!authUser || bookings.length === 0) return
     const today = new Date().toISOString().slice(0, 10)
@@ -462,7 +463,9 @@ function App() {
         updatedAt: new Date().toISOString(),
       }, { merge: true })
     })
-  }, [bookings.map(b => b.id + b.status + b.travelEnd).join(','), authUser])
+  }, [bookingsFlownKey, authUser])
+
+  async function handleSaveDtrEntry(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!authUser) return
     if (!dtrForm.employeeName.trim()) {
