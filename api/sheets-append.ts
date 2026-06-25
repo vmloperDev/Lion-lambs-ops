@@ -116,9 +116,9 @@ const HEADER_ROW = [
   'Client Name',
   'Travel Date',
   'Package',
-  'Selling Price',
-  'Nett Cost',
-  'Est. Profit',
+  'Gross',
+  'NETT',
+  'LLTP',
   'Balance',
   'Status',
 ]
