@@ -1733,6 +1733,13 @@ input, select, textarea { font: inherit; }
   transition: background var(--t);
 }
 .folder-card button:hover, .folder-card-action:hover { background: var(--teal-mid); }
+.folder-card.folder-card-highlight {
+  border-color: var(--teal);
+  background: linear-gradient(135deg, var(--teal-light, #e8f7f5) 0%, var(--bg) 100%);
+  box-shadow: 0 0 0 1.5px var(--teal), var(--sh);
+}
+.folder-card.folder-card-highlight h2 { color: var(--teal); }
+.folder-card.folder-card-highlight:hover { border-color: var(--teal); box-shadow: 0 0 0 2px var(--teal), var(--sh); transform: translateY(-2px); }
 .folder-note { width: min(700px,100%); }
 .missing-detail {
   display: grid; place-items: center; gap: 9px;

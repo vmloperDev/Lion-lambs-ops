@@ -3006,7 +3006,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
           <div className="folder-grid">
             {documentFolderItems.map((item) => (
-              <article className="folder-card" key={item.title}>
+              <article className={`folder-card${['Invoice', 'Quotation', 'Purchase Order'].includes(item.title) ? ' folder-card-highlight' : ''}`} key={item.title}>
                 <div className="folder-card-top">
                   <FileText size={22} />
                   <span className={item.ready ? 'ready' : 'needs-data'}>
@@ -5114,8 +5114,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           <button type="button" onClick={handleLogout} title="Log out">
             <LogOut size={18} />
           </button>
-          {isAdmin && (
-            <button
+          <button
               type="button"
               className="nav-text-action"
               onClick={() => {
@@ -5127,7 +5126,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             >
               {isSyncingAll ? '⏳ Syncing...' : '📤 Sync Sheets'}
             </button>
-          )}
         </div>
       </nav>
 
