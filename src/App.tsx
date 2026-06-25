@@ -495,6 +495,7 @@ function App() {
             nettCost: String(nettTotal),
             estProfit: String(clientTotal - nettTotal),
             invoiceAmountPaid: booking.invoiceAmountPaid,
+            invoiceBalance: String(Math.max(clientTotal - parseFloat(booking.invoiceAmountPaid || '0'), 0)),
             status: booking.status,
             currency: (booking as any).currency || 'PHP',
           }),

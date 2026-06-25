@@ -100,6 +100,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     nettCost,
     estProfit,
     invoiceAmountPaid,
+    invoiceBalance,
     status,
     currency = 'PHP',
   } = req.body as Record<string, string>
@@ -112,7 +113,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const nett = parseFloat(nettCost || '0')
   const lltp = estProfit !== undefined ? parseFloat(estProfit) : gross - nett
   const paid = parseFloat(invoiceAmountPaid || '0')
-  const balance = gross - paid
+  const balance = invoiceBalance !== undefined ? parseFloat(invoiceBalance) : Math.max(gross - paid, 0)
   const isPaid = paid >= gross && gross > 0
 
   const fmt = (n: number) =>

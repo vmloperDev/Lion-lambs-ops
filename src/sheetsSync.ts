@@ -19,6 +19,10 @@ export async function syncBookingToSheets(booking: BookingRecord): Promise<void>
   const nettTotal = getBookingBreakdownNettTotal(booking)
   const estProfit = clientTotal - nettTotal
 
+  // Invoice balance = what the client still owes, matching the invoice screen exactly
+  const amountPaid = parseFloat(booking.invoiceAmountPaid || '0')
+  const invoiceBalance = Math.max(clientTotal - amountPaid, 0)
+
   try {
     const res = await fetch('/api/sheets-append', {
       method: 'POST',
@@ -29,10 +33,11 @@ export async function syncBookingToSheets(booking: BookingRecord): Promise<void>
         travelStart: booking.travelStart,
         travelEnd: booking.travelEnd,
         packageName: booking.packageName,
-        sellingPrice: String(clientTotal),   // GROSS — from 5A Client Total
-        nettCost: String(nettTotal),         // NETT  — from 5A Supplier Nett
-        estProfit: String(estProfit),        // LLTP  — from 5A Est. Profit
+        sellingPrice: String(clientTotal),        // GROSS — from 5A Client Total
+        nettCost: String(nettTotal),              // NETT  — from 5A Supplier Nett
+        estProfit: String(estProfit),             // LLTP  — from 5A Est. Profit
         invoiceAmountPaid: booking.invoiceAmountPaid,
+        invoiceBalance: String(invoiceBalance),   // BALANCE — from invoice screen
         status: booking.status,
         currency: booking.currency || 'PHP',
       }),
