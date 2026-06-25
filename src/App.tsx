@@ -5136,7 +5136,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>{activeProjects} total</span>
             </div>
             <div className="pipeline-list">
-              {bookingListFilters.slice(1).map((filter, index) => {
+              {bookingListFilters.slice(1).filter(f => !['Inquiry','Breakdown','Purchase Order'].includes(f.value)).map((filter, index) => {
                 const count = statusCounts[filter.value]
                 const progress = activeProjects > 0 ? (count / activeProjects) * 100 : 0
 
@@ -5193,7 +5193,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </label>
 
           <div className="booking-tabs" role="tablist">
-            {bookingListFilters.map((f) => (
+            {bookingListFilters.filter(f => !['Inquiry','Breakdown','Purchase Order'].includes(f.value)).map((f) => (
               <button
                 key={f.value}
                 type="button"
