@@ -4965,16 +4965,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     {} as Record<BookingListFilter, number>,
   )
 
-  const statusCounts = bookingListFilters.reduce(
-    (acc, f) => ({
-      ...acc,
-      [f.value]: f.value === 'All'
-        ? bookings.length
-        : bookings.filter((b) => b.status === f.value).length,
-    }),
-    {} as Record<BookingListFilter, number>,
-  )
-
   // Group filteredBookings by month (e.g. "January 2026"), newest month first
   const bookingsByMonth: Array<{ monthKey: string; label: string; items: typeof filteredBookings }> = []
   const monthMap = new Map<string, typeof filteredBookings>()
