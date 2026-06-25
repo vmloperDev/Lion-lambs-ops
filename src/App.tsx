@@ -514,35 +514,43 @@ function App() {
       try {
         const clientTotal = getBookingClientTotal(booking)
         const nettTotal = getBookingBreakdownNettTotal(booking)
-        const res = await fetch('/api/sheets-append', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            createdAt: booking.createdAt,
-            clientName: booking.clientName,
-            travelStart: booking.travelStart,
-            travelEnd: booking.travelEnd,
-            packageName: booking.packageName,
-            sellingPrice: String(clientTotal),
-            nettCost: String(nettTotal),
-            estProfit: String(clientTotal - nettTotal),
-            invoiceAmountPaid: booking.invoiceAmountPaid,
-            invoiceBalance: String(Math.max(clientTotal - parseFloat(booking.invoiceAmountPaid || '0'), 0)),
-            status: booking.status,
-            currency: (booking as any).currency || 'PHP',
-          }),
+        const payload = JSON.stringify({
+          createdAt: booking.createdAt,
+          clientName: booking.clientName,
+          travelStart: booking.travelStart,
+          travelEnd: booking.travelEnd,
+          packageName: booking.packageName,
+          sellingPrice: String(clientTotal),
+          nettCost: String(nettTotal),
+          estProfit: String(clientTotal - nettTotal),
+          invoiceAmountPaid: booking.invoiceAmountPaid,
+          invoiceBalance: String(Math.max(clientTotal - parseFloat(booking.invoiceAmountPaid || '0'), 0)),
+          status: booking.status,
+          currency: (booking as any).currency || 'PHP',
         })
-        if (res.ok) {
+        // Retry up to 3 times on 429 rate limit, with exponential backoff
+        let res: Response | null = null
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (attempt > 0) await new Promise(r => setTimeout(r, 10000 * attempt)) // 10s, 20s
+          res = await fetch('/api/sheets-append', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+          })
+          if (res.status !== 429) break
+          setDataMessage(`Rate limited — waiting before retrying ${booking.clientName}...`)
+        }
+        if (res && res.ok) {
           success++
         } else {
-          const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string }
-          failures.push(`${booking.clientName}: ${body.error ?? `HTTP ${res.status}`}`)
+          const body = await res?.json().catch(() => ({ error: `HTTP ${res?.status}` })) as { error?: string }
+          failures.push(`${booking.clientName}: ${body?.error ?? `HTTP ${res?.status}`}`)
         }
       } catch (err) {
         failures.push(`${booking.clientName}: ${err instanceof Error ? err.message : 'Network error'}`)
       }
-      // 1.5s between each row to stay under Google's rate limit
-      if (i < eligible.length) await new Promise(r => setTimeout(r, 1500))
+      // 3s between each booking to stay well under Google's 60 writes/min limit
+      if (i < eligible.length) await new Promise(r => setTimeout(r, 3000))
     }
 
     setIsSyncingAll(false)
@@ -5161,7 +5169,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           <button
               type="button"
               className="nav-text-action"
-              onClick={() => { void syncAllToSheets() }}
+              onClick={() => { void syncAllToSheets().then(() => { window.open('https://docs.google.com/spreadsheets/d/1zG7bnW7p8SYF6-CpU4fKUdmA3wmlnvrXhMQE02wQRtc/edit', '_blank') }) }}
               disabled={isSyncingAll}
               title="Sync all Confirmed/Flown bookings to Google Sheets"
             >

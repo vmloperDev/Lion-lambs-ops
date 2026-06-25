@@ -469,32 +469,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Row index to format (0-based). New rows land at end of current rows.
     const targetRowIndex = existingRowIndex > 0 ? existingRowIndex : rows.length
 
-    // ── Apply row formatting + resort + column widths ───────────────────────
+    // ── Single batchUpdate: row style + status cell only (skip col widths + sort to save quota) ──
     await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}:batchUpdate`,
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          requests: [
-            // Style the written row
-            ...buildDataRowRequests(sheetId, targetRowIndex, isPaid),
-            // Re-apply column widths every sync so existing tabs stay consistent
-            ...COL_WIDTHS.map((px, i) => ({
-              updateDimensionProperties: {
-                range: { sheetId, dimension: 'COLUMNS', startIndex: i, endIndex: i + 1 },
-                properties: { pixelSize: px },
-                fields: 'pixelSize',
-              },
-            })),
-            // Sort data rows by date column A ascending (skip header row 0)
-            {
-              sortRange: {
-                range: { sheetId, startRowIndex: 1, startColumnIndex: 0, endColumnIndex: 9 },
-                sortSpecs: [{ dimensionIndex: 0, sortOrder: 'ASCENDING' }],
-              },
-            },
-          ],
+          requests: buildDataRowRequests(sheetId, targetRowIndex, isPaid),
         }),
       },
     )
