@@ -4971,15 +4971,19 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
   const quotationCount = bookings.filter((b) => b.status === 'Quotation' || b.status === 'Inquiry').length
   const totalBookingValue = bookings.reduce((sum, b) => sum + getBookingClientTotal(b), 0)
 
+  const currentYear = new Date().getFullYear()
+  const currentMonth = new Date().getMonth() // 0-indexed
+
   const filteredBookings = (
     activeBookingFilter === 'All'
       ? bookings
       : bookings.filter((b) => b.status === activeBookingFilter)
   ).filter((b) => {
     const q = searchTerm.trim().toLowerCase()
-    if (!q) return true
-    return [b.clientName, b.packageName, b.destination, b.quotationNo, b.status]
+    const matchesSearch = !q || [b.clientName, b.packageName, b.destination, b.quotationNo, b.status]
       .join(' ').toLowerCase().includes(q)
+    const bookingYear = new Date(b.createdAt || Date.now()).getFullYear()
+    return matchesSearch && bookingYear === activeYear
   })
 
   const statusCounts = bookingListFilters.reduce(
@@ -4992,8 +4996,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     {} as Record<BookingListFilter, number>,
   )
 
-  // Build all 12 months for the active year, map projects into them
+  // Build months up to current month for the current year, all 12 for past years
   const ALL_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
+  const visibleMonths = ALL_MONTHS.filter((_, i) => activeYear < currentYear || i <= currentMonth)
   const monthMap = new Map<string, typeof filteredBookings>()
   for (const b of filteredBookings) {
     const d = b.createdAt ? new Date(b.createdAt) : new Date()
@@ -5001,8 +5006,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     if (!monthMap.has(monthKey)) monthMap.set(monthKey, [])
     monthMap.get(monthKey)!.push(b)
   }
-  const bookingsByMonth = ALL_MONTHS.map((name, i) => {
-    const monthKey = `${activeYear}-${String(i + 1).padStart(2, '0')}`
+  const bookingsByMonth = visibleMonths.map((name, i) => {
+    const monthIndex = activeYear < currentYear ? i + 1 : ALL_MONTHS.indexOf(name) + 1
+    const monthKey = `${activeYear}-${String(monthIndex).padStart(2, '0')}`
     return { monthKey, label: name, items: monthMap.get(monthKey) ?? [] }
   })
   const availableYears = Array.from(
