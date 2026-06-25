@@ -315,6 +315,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const {
+    initTabOnly,
+    tabName: initTabName,
     createdAt,
     clientName,
     travelStart,
@@ -328,6 +330,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     status,
     currency = 'PHP',
   } = req.body as Record<string, string>
+
+  // initTabOnly mode — just create the tab + write header + apply styling, no data row
+  if (initTabOnly && initTabName) {
+    try {
+      const token = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY)
+      const metaRes = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}?fields=sheets.properties`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      )
+      const meta = await metaRes.json() as { sheets?: { properties: { title: string; sheetId: number } }[] }
+      const existingSheets = (meta.sheets || []).map(s => ({
+        title: s.properties.title,
+        sheetId: s.properties.sheetId,
+      }))
+      await ensureTab(token, GOOGLE_SHEET_ID, initTabName, existingSheets)
+      return res.status(200).json({ ok: true, tab: initTabName, initOnly: true })
+    } catch (err) {
+      console.error('[sheets-append initTabOnly]', err)
+      return res.status(500).json({ error: String(err) })
+    }
+  }
 
   if (!clientName || !status) {
     return res.status(400).json({ error: 'Missing required booking fields.' })

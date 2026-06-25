@@ -476,11 +476,41 @@ function App() {
     setIsSyncingAll(true)
     setDataError('')
     setDataMessage('')
+
+    // Group bookings by month tab so we can init each tab once before writing rows
+    const byTab = new Map<string, typeof eligible>()
+    for (const booking of eligible) {
+      const d = new Date(booking.createdAt)
+      const tabName = isNaN(d.getTime())
+        ? 'Unknown'
+        : d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+      if (!byTab.has(tabName)) byTab.set(tabName, [])
+      byTab.get(tabName)!.push(booking)
+    }
+
+    // Step 1 — init each tab first (creates tab + writes header + applies styling)
+    // Done sequentially, one tab at a time, before any data rows
+    setDataMessage('Setting up month tabs...')
+    for (const tabName of byTab.keys()) {
+      try {
+        await fetch('/api/sheets-append', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ initTabOnly: true, tabName }),
+        })
+      } catch {
+        // non-fatal — data write will still attempt
+      }
+      await new Promise(r => setTimeout(r, 1000))
+    }
+
+    // Step 2 — write each booking row sequentially
     let success = 0
     const failures: string[] = []
-    for (let i = 0; i < eligible.length; i++) {
-      const booking = eligible[i]
-      setDataMessage(`Syncing ${i + 1} of ${eligible.length}: ${booking.clientName}...`)
+    let i = 0
+    for (const booking of eligible) {
+      i++
+      setDataMessage(`Syncing ${i} of ${eligible.length}: ${booking.clientName}...`)
       try {
         const clientTotal = getBookingClientTotal(booking)
         const nettTotal = getBookingBreakdownNettTotal(booking)
@@ -511,9 +541,10 @@ function App() {
       } catch (err) {
         failures.push(`${booking.clientName}: ${err instanceof Error ? err.message : 'Network error'}`)
       }
-      // Wait 2s between each booking to stay under Google's 60 writes/min limit
-      if (i < eligible.length - 1) await new Promise(r => setTimeout(r, 2000))
+      // 1.5s between each row to stay under Google's rate limit
+      if (i < eligible.length) await new Promise(r => setTimeout(r, 1500))
     }
+
     setIsSyncingAll(false)
     if (failures.length === 0) {
       setDataMessage(`✅ Synced ${success} of ${eligible.length} booking(s) to Google Sheets.`)
