@@ -315,7 +315,11 @@ function App() {
   const [isFullyPaidModalOpen, setIsFullyPaidModalOpen] = useState(false)
   const [fullyPaidDateInput, setFullyPaidDateInput] = useState(new Date().toISOString().slice(0, 10))
   const [activeBookingFilter, setActiveBookingFilter] = useState<BookingListFilter>('All')
-  const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set())
+  const [activeYear, setActiveYear] = useState(() => new Date().getFullYear())
+  const [expandedMonth, setExpandedMonth] = useState<string | null>(() => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  })
   const [selectedBookingId, setSelectedBookingId] = useState('')
   const [editingBookingId, setEditingBookingId] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
@@ -4965,8 +4969,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     {} as Record<BookingListFilter, number>,
   )
 
-  // Group filteredBookings by month (e.g. "January 2026"), newest month first
-  const bookingsByMonth: Array<{ monthKey: string; label: string; items: typeof filteredBookings }> = []
+  // Build all 12 months for the active year, map projects into them
+  const ALL_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
   const monthMap = new Map<string, typeof filteredBookings>()
   for (const b of filteredBookings) {
     const d = b.createdAt ? new Date(b.createdAt) : new Date()
@@ -4974,19 +4978,17 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     if (!monthMap.has(monthKey)) monthMap.set(monthKey, [])
     monthMap.get(monthKey)!.push(b)
   }
-  const sortedMonthKeys = Array.from(monthMap.keys()).sort((a, b) => b.localeCompare(a))
-  for (const monthKey of sortedMonthKeys) {
-    const [year, month] = monthKey.split('-')
-    const label = new Date(Number(year), Number(month) - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-    bookingsByMonth.push({ monthKey, label, items: monthMap.get(monthKey)! })
-  }
+  const bookingsByMonth = ALL_MONTHS.map((name, i) => {
+    const monthKey = `${activeYear}-${String(i + 1).padStart(2, '0')}`
+    return { monthKey, label: name, items: monthMap.get(monthKey) ?? [] }
+  })
+  const availableYears = Array.from(
+    new Set(bookings.map(b => new Date(b.createdAt || Date.now()).getFullYear()))
+  ).sort((a, b) => b - a)
+  if (!availableYears.includes(activeYear)) availableYears.unshift(activeYear)
 
   function toggleMonth(monthKey: string) {
-    setCollapsedMonths(prev => {
-      const next = new Set(prev)
-      next.has(monthKey) ? next.delete(monthKey) : next.add(monthKey)
-      return next
-    })
+    setExpandedMonth(prev => prev === monthKey ? null : monthKey)
   }
 
   return (
@@ -5206,58 +5208,65 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             ))}
           </div>
 
+          {/* Year selector */}
+          <div className="year-selector">
+            {availableYears.map(y => (
+              <button
+                key={y}
+                type="button"
+                className={`year-tab ${y === activeYear ? 'active' : ''}`}
+                onClick={() => setActiveYear(y)}
+              >{y}</button>
+            ))}
+          </div>
+
           <div className="project-list">
-            {filteredBookings.length === 0 && (
-              <div className="empty-list">
-                <FileText size={26} />
-                <strong>{searchTerm.trim() ? 'No matching records' : 'No records yet'}</strong>
-                <span>
-                  {searchTerm.trim()
-                    ? 'Try a different client name, package, or quotation number.'
-                    : 'New inquiries saved here will appear after data gathering.'}
-                </span>
-              </div>
-            )}
             {bookingsByMonth.map(({ monthKey, label, items }) => {
-              const isCollapsed = collapsedMonths.has(monthKey)
+              const isOpen = expandedMonth === monthKey
               return (
                 <div key={monthKey} className="month-group">
                   <button
                     type="button"
-                    className="month-group-header"
+                    className={`month-group-header ${isOpen ? 'open' : ''}`}
                     onClick={() => toggleMonth(monthKey)}
                   >
-                    <ChevronDown size={14} style={{ transform: isCollapsed ? 'rotate(-90deg)' : 'none', transition: 'transform 0.2s' }} />
+                    <ChevronDown size={14} style={{ transform: isOpen ? 'none' : 'rotate(-90deg)', transition: 'transform 0.2s' }} />
                     <span>{label}</span>
-                    <strong>{items.length}</strong>
+                    {items.length > 0 && <strong>{items.length}</strong>}
                   </button>
-                  {!isCollapsed && items.map((booking) => (
-                    <button
-                      key={booking.id}
-                      type="button"
-                      className={`project-card status-${booking.status.toLowerCase().replaceAll(' ', '-')}`}
-                      onClick={() => openBookingDetail(booking.id)}
-                    >
-                      <div className="project-main">
-                        <div className="project-icon"><FileText size={20} /></div>
-                        <div>
-                          <strong>{booking.packageName}</strong>
-                          <span>{booking.clientName}</span>
-                        </div>
-                      </div>
-                      <div className="project-meta">
-                        <span className="status-pill">{booking.status}</span>
-                        <span><CalendarDays size={14} />{formatProjectDate(booking.createdAt)}</span>
-                        <span><MapPin size={14} />{formatAmount(String(getBookingClientTotal(booking)))}</span>
-                        {(booking.createdByName || (booking as any).createdByEmail) && (
-                          <span className="booking-by-tag">
-                            By: {booking.createdByName || getDisplayName((booking as any).createdByEmail)}
-                          </span>
-                        )}
-                        <ChevronRight size={17} />
-                      </div>
-                    </button>
-                  ))}
+                  {isOpen && (
+                    <div className="month-group-items">
+                      {items.length === 0 ? (
+                        <p className="month-empty">No projects in {label}.</p>
+                      ) : items.map((booking) => (
+                        <button
+                          key={booking.id}
+                          type="button"
+                          className={`project-card status-${booking.status.toLowerCase().replaceAll(' ', '-')}`}
+                          onClick={() => openBookingDetail(booking.id)}
+                        >
+                          <div className="project-main">
+                            <div className="project-icon"><FileText size={20} /></div>
+                            <div>
+                              <strong>{booking.packageName}</strong>
+                              <span>{booking.clientName}</span>
+                            </div>
+                          </div>
+                          <div className="project-meta">
+                            <span className="status-pill">{booking.status}</span>
+                            <span><CalendarDays size={14} />{formatProjectDate(booking.createdAt)}</span>
+                            <span><MapPin size={14} />{formatAmount(String(getBookingClientTotal(booking)))}</span>
+                            {(booking.createdByName || (booking as any).createdByEmail) && (
+                              <span className="booking-by-tag">
+                                By: {booking.createdByName || getDisplayName((booking as any).createdByEmail)}
+                              </span>
+                            )}
+                            <ChevronRight size={17} />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )
             })}

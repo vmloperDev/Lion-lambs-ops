@@ -927,25 +927,36 @@ input, select, textarea { font: inherit; }
 
 /* Booking cards */
 .project-list {
-  display: grid; flex: 1; min-height: 0;
+  display: flex; flex-direction: column; flex: 1; min-height: 0;
   overflow-y: auto; overscroll-behavior: contain;
-  gap: 7px; padding-right: 4px;
+  gap: 2px; padding-right: 4px;
 }
-.month-group { display: grid; gap: 6px; }
+.year-selector {
+  display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap;
+}
+.year-tab {
+  padding: 4px 14px; border-radius: 99px; font-size: .75rem; font-weight: 700;
+  border: 1.5px solid var(--border); background: none; color: var(--muted); cursor: pointer;
+  transition: all var(--t);
+}
+.year-tab.active, .year-tab:hover { border-color: var(--teal); color: var(--teal); background: rgba(15,127,160,.07); }
+.month-group { display: flex; flex-direction: column; }
 .month-group-header {
-  display: flex; align-items: center; gap: 7px;
-  width: 100%; padding: 6px 4px;
-  background: none; border: none; cursor: pointer;
-  color: var(--muted); font-size: .72rem; font-weight: 800;
-  letter-spacing: .1em; text-transform: uppercase;
-  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 9px 6px;
+  background: none; border: none; border-bottom: 1px solid var(--border);
+  cursor: pointer; color: var(--muted);
+  font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+  transition: color var(--t);
 }
 .month-group-header span { flex: 1; text-align: left; }
 .month-group-header strong {
-  font-size: .72rem; background: var(--border);
-  padding: 1px 7px; border-radius: 99px; font-weight: 700;
+  font-size: .7rem; background: var(--teal); color: #fff;
+  padding: 1px 8px; border-radius: 99px; font-weight: 700;
 }
-.month-group-header:hover { color: var(--teal); }
+.month-group-header:hover, .month-group-header.open { color: var(--teal); }
+.month-group-items { display: flex; flex-direction: column; gap: 6px; padding: 8px 0 10px 0; }
+.month-empty { font-size: .8rem; color: var(--muted); padding: 6px 4px; margin: 0; }
 .project-card {
   display: flex; align-items: center; justify-content: space-between;
   gap: 14px; width: 100%; padding: 13px 14px;
