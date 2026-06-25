@@ -2028,6 +2028,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   <option>Purchase Order</option>
                   <option>Invoice</option>
                   <option>Confirmed</option>
+                  <option>Flown</option>
                 </select>
               </label>
             </div>
@@ -2676,6 +2677,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                     <option>Purchase Order</option>
                     <option>Invoice</option>
                     <option>Confirmed</option>
+                    <option>Flown</option>
                   </select>
                 </label>
                 <button

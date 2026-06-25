@@ -12,6 +12,7 @@ export const bookingListFilters: Array<{ label: string; value: BookingListFilter
   { label: 'P.O.', value: 'Purchase Order' },
   { label: 'Invoices', value: 'Invoice' },
   { label: 'Confirmed', value: 'Confirmed' },
+  { label: 'Flown', value: 'Flown' },
 ]
 
 export const emptyBookingForm: BookingFormData = {
