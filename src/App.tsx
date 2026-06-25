@@ -1342,6 +1342,32 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     }
   }
 
+  function updateSelectedBookingCreatedAt(dateStr: string) {
+    if (!dateStr) return
+    const targetBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
+    const createdAt = new Date(dateStr + 'T00:00:00').toISOString()
+
+    setBookings((currentBookings) =>
+      currentBookings.map((booking) => booking.id === selectedBookingId ? { ...booking, createdAt } : booking)
+    )
+    if (lastSavedBookingRef.current?.id === selectedBookingId) {
+      lastSavedBookingRef.current = { ...lastSavedBookingRef.current, createdAt }
+    }
+
+    if (selectedBookingId) {
+      if (!authUser) {
+        setDataError('Log in again before updating cloud records.')
+        return
+      }
+      void setDoc(doc(db, getBookingOwnerPath(targetBooking, authUser.uid), selectedBookingId), {
+        createdAt,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true }).catch(() => {
+        setDataError('Date updated locally, but cloud update failed.')
+      })
+    }
+  }
+
   function openQuotationPreview() { setScreen('quotation-preview') }
   
   function openInvoiceEditor() {
@@ -1875,10 +1901,22 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <h1>{isEditingBooking ? 'Edit Booking Info' : 'Data Gathering Form'}</h1>
               <span>Configure client, travel, pricing, and document details from a single workspace.</span>
             </div>
-            <button type="submit" className="save-booking-btn">
-              <Save size={18} />
-              {isEditingBooking ? 'Save Changes' : 'Save Inquiry'}
-            </button>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', fontSize: '0.75rem', gap: '4px', opacity: 0.75 }}>
+                Date created
+                <input
+                  type="date"
+                  value={bookingCreatedAt}
+                  onChange={(e) => setBookingCreatedAt(e.target.value)}
+                  max={new Date().toISOString().slice(0, 10)}
+                  style={{ font: 'inherit', fontSize: '0.85rem' }}
+                />
+              </label>
+              <button type="submit" className="save-booking-btn">
+                <Save size={18} />
+                {isEditingBooking ? 'Save Changes' : 'Save Inquiry'}
+              </button>
+            </div>
           </header>
 
           <section className="ai-autofill-panel">
@@ -2013,15 +2051,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <label>
                 Prepared by
                 <input required value={bookingForm.preparedBy} onChange={(e) => updateBookingField('preparedBy', e.target.value)} placeholder="Agent Name" />
-              </label>
-              <label>
-                Date created
-                <input
-                  type="date"
-                  value={bookingCreatedAt}
-                  onChange={(e) => setBookingCreatedAt(e.target.value)}
-                  max={new Date().toISOString().slice(0, 10)}
-                />
               </label>
             </div>
 
@@ -2688,6 +2717,18 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <article>
                 <span>Quotation no.</span>
                 <strong>{selectedBooking.quotationNo || 'Not assigned'}</strong>
+              </article>
+              <article>
+                <span>Date created</span>
+                <strong>
+                  <input
+                    type="date"
+                    defaultValue={selectedBooking.createdAt ? new Date(selectedBooking.createdAt).toISOString().slice(0, 10) : ''}
+                    max={new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => updateSelectedBookingCreatedAt(e.target.value)}
+                    style={{ font: 'inherit', border: 'none', background: 'transparent', color: 'inherit', padding: 0, cursor: 'pointer', width: '100%' }}
+                  />
+                </strong>
               </article>
               <article>
                 <span>Flight details</span>
