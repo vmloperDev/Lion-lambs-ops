@@ -1,5 +1,7 @@
 // api/sheets-append.ts
 // Vercel Serverless Function — appends a confirmed/flown booking row to Google Sheets.
+// Each month gets its own tab (e.g. "Jan 2026") based on the booking's createdAt date.
+// The tab is created automatically if it doesn't exist yet, with a header row.
 //
 // ENV VARS required (set in Vercel dashboard → Settings → Environment Variables):
 //   GOOGLE_SERVICE_ACCOUNT_EMAIL   — e.g. lion-lamb@your-project.iam.gserviceaccount.com
@@ -7,7 +9,6 @@
 //                                    (paste the full "-----BEGIN RSA PRIVATE KEY-----\n..." value)
 //   GOOGLE_SHEET_ID                — the ID from your sheet URL:
 //                                    https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit
-//   GOOGLE_SHEET_NAME              — the tab name, e.g. "Bookings" (defaults to "Sheet1")
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
@@ -72,6 +73,99 @@ async function getAccessToken(email: string, privateKey: string): Promise<string
   return access_token
 }
 
+// ── Derive month tab name from a createdAt value ─────────────────────────────
+// Returns e.g. "Jan 2026"
+
+function getMonthTabName(createdAt: string): string {
+  let d: Date
+  const n = Number(createdAt)
+  if (!isNaN(n) && String(createdAt).length >= 10) {
+    d = n > 1e10 ? new Date(n) : new Date(n * 1000)
+  } else if (/^\d{4}-\d{2}-\d{2}/.test(createdAt)) {
+    // ISO date string — parse as local to avoid timezone shifting the day
+    const [y, m] = createdAt.split('-').map(Number)
+    d = new Date(y, m - 1, 1)
+  } else {
+    d = new Date(createdAt)
+  }
+  if (isNaN(d.getTime())) d = new Date()
+  return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) // "Jan 2026"
+}
+
+// ── Ensure a tab exists; create it with a header row if not ─────────────────
+// Returns the sheetId (numeric) of the tab.
+
+const HEADER_ROW = ['Date Created', 'Client Name', 'Travel Date', 'Package', 'Selling Price', 'Nett Cost', 'Est. Profit', 'Balance', 'Status']
+
+async function ensureTab(
+  token: string,
+  spreadsheetId: string,
+  tabName: string,
+  existingSheets: { title: string; sheetId: number }[],
+): Promise<number> {
+  const found = existingSheets.find(s => s.title === tabName)
+  if (found) return found.sheetId
+
+  // Create the tab
+  const createRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: [{ addSheet: { properties: { title: tabName } } }],
+      }),
+    },
+  )
+  if (!createRes.ok) {
+    const err = await createRes.text()
+    throw new Error(`Failed to create tab "${tabName}": ${err}`)
+  }
+  const createData = await createRes.json() as {
+    replies: { addSheet: { properties: { sheetId: number } } }[]
+  }
+  const newSheetId = createData.replies[0].addSheet.properties.sheetId
+
+  // Write header row
+  const headerRange = encodeURIComponent(`${tabName}!A1:I1`)
+  await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${headerRange}?valueInputOption=RAW`,
+    {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: [HEADER_ROW] }),
+    },
+  )
+
+  // Bold + freeze the header row
+  await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: [
+          {
+            repeatCell: {
+              range: { sheetId: newSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 9 },
+              cell: { userEnteredFormat: { textFormat: { bold: true } } },
+              fields: 'userEnteredFormat.textFormat.bold',
+            },
+          },
+          {
+            updateSheetProperties: {
+              properties: { sheetId: newSheetId, gridProperties: { frozenRowCount: 1 } },
+              fields: 'gridProperties.frozenRowCount',
+            },
+          },
+        ],
+      }),
+    },
+  )
+
+  return newSheetId
+}
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -83,7 +177,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     GOOGLE_SERVICE_ACCOUNT_EMAIL,
     GOOGLE_PRIVATE_KEY,
     GOOGLE_SHEET_ID,
-    GOOGLE_SHEET_NAME = 'Sheet1',
   } = process.env
 
   if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY || !GOOGLE_SHEET_ID) {
@@ -151,38 +244,61 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     isPaid ? 'PAID' : 'NOT PAID',
   ]
 
+  // Determine which month tab this booking belongs to
+  const tabName = getMonthTabName(createdAt || new Date().toISOString())
+
   try {
     const token = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY)
 
+    // Fetch spreadsheet metadata to get existing tabs
+    const metaRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}?fields=sheets.properties`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    )
+    const meta = await metaRes.json() as { sheets?: { properties: { title: string; sheetId: number } }[] }
+    const existingSheets = (meta.sheets || []).map(s => ({
+      title: s.properties.title,
+      sheetId: s.properties.sheetId,
+    }))
+
+    // Ensure the month tab exists (creates it + header if missing)
+    const sheetId = await ensureTab(token, GOOGLE_SHEET_ID, tabName, existingSheets)
+
+    // Read existing rows in this tab to check for duplicates
     const existingRes = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${encodeURIComponent(GOOGLE_SHEET_NAME + '!A:I')}`,
-      { headers: { Authorization: `Bearer ${token}` } }
+      `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${encodeURIComponent(tabName + '!A:I')}`,
+      { headers: { Authorization: `Bearer ${token}` } },
     )
     const existing = await existingRes.json() as { values?: string[][] }
     const rows = existing.values || []
+
     const travelDateStr = travelStart && travelEnd
       ? `${fmtDate(travelStart)} – ${fmtDate(travelEnd)}`
       : fmtDate(travelStart || travelEnd)
-    const existingRowIndex = rows.findIndex((r: string[]) =>
-      r[1] === clientName && r[2] === travelDateStr
+
+    // Match on client name + travel date (skip row 0 which is the header)
+    const existingRowIndex = rows.findIndex((r, i) =>
+      i > 0 && r[1] === clientName && r[2] === travelDateStr,
     )
 
     if (existingRowIndex !== -1) {
-      const updateRange = encodeURIComponent(`${GOOGLE_SHEET_NAME}!A${existingRowIndex + 1}:I${existingRowIndex + 1}`)
+      // Update the existing row in place
+      const updateRange = encodeURIComponent(`${tabName}!A${existingRowIndex + 1}:I${existingRowIndex + 1}`)
       const updateRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=RAW`,
         {
           method: 'PUT',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ values: [row] }),
-        }
+        },
       )
       if (!updateRes.ok) {
         const err = await updateRes.text()
         throw new Error(`Sheets update error: ${err}`)
       }
     } else {
-      const range = encodeURIComponent(`${GOOGLE_SHEET_NAME}!A:I`)
+      // Append a new row
+      const range = encodeURIComponent(`${tabName}!A:I`)
       const sheetsRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
         {
@@ -197,19 +313,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // ── Get sheet tab ID for formatting ────────────────────────────────────
-    const metaRes = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}?fields=sheets.properties`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    )
-    const meta = await metaRes.json() as { sheets?: { properties: { title: string; sheetId: number } }[] }
-    const sheetObj = (meta.sheets || []).find((s: any) => s.properties.title === GOOGLE_SHEET_NAME)
-    const sheetId = sheetObj?.properties.sheetId ?? 0
+    // Which row index to target for status formatting
+    const targetRowIndex = existingRowIndex > 0
+      ? existingRowIndex
+      : rows.length // new row appended at end
 
-    // Never target row 0 (header) — if somehow matched, skip to end
-    const targetRowIndex = existingRowIndex > 0 ? existingRowIndex : (existingRowIndex === -1 ? rows.length : rows.length)
-
-    // ── Formatting ─────────────────────────────────────────────────────────
+    // ── Formatting ──────────────────────────────────────────────────────────
     await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}:batchUpdate`,
       {
@@ -217,7 +326,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           requests: [
-            // 1. Wrap text on all data rows so nothing gets cropped
+            // 1. Wrap text on all data rows
             {
               repeatCell: {
                 range: { sheetId, startRowIndex: 1, startColumnIndex: 0, endColumnIndex: 9 },
@@ -230,39 +339,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 fields: 'userEnteredFormat.wrapStrategy,userEnteredFormat.backgroundColor',
               },
             },
-            // 2. Status cell: bold colored text, no background fill
+            // 2. Status cell — bold, colored text
             {
               repeatCell: {
                 range: {
                   sheetId,
                   startRowIndex: targetRowIndex,
                   endRowIndex: targetRowIndex + 1,
-                  startColumnIndex: 8, // column I — STATUS
+                  startColumnIndex: 8,
                   endColumnIndex: 9,
                 },
                 cell: {
                   userEnteredFormat: {
-                    backgroundColor: { red: 1, green: 1, blue: 1, alpha: 1 }, // white / no fill
+                    backgroundColor: { red: 1, green: 1, blue: 1, alpha: 1 },
                     textFormat: {
                       bold: true,
-                      // Dark green for PAID, dark red for NOT PAID
                       foregroundColor: isPaid
-                        ? { red: 0.106, green: 0.490, blue: 0.216, alpha: 1 } // #1B7C37
-                        : { red: 0.714, green: 0.110, blue: 0.110, alpha: 1 }, // #B61C1C
+                        ? { red: 0.106, green: 0.490, blue: 0.216, alpha: 1 } // #1B7C37 green
+                        : { red: 0.714, green: 0.110, blue: 0.110, alpha: 1 }, // #B61C1C red
                     },
                   },
                 },
                 fields: 'userEnteredFormat.backgroundColor,userEnteredFormat.textFormat',
               },
             },
-            // 3. Sort all data rows by date column A — oldest first (ascending)
+            // 3. Sort data rows by date column A ascending
             {
               sortRange: {
                 range: { sheetId, startRowIndex: 1, startColumnIndex: 0, endColumnIndex: 9 },
                 sortSpecs: [{ dimensionIndex: 0, sortOrder: 'ASCENDING' }],
               },
             },
-            // 4. Auto-resize all columns A–I
+            // 4. Auto-resize all columns
             {
               autoResizeDimensions: {
                 dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 9 },
@@ -273,7 +381,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
     )
 
-    return res.status(200).json({ ok: true })
+    return res.status(200).json({ ok: true, tab: tabName })
   } catch (err) {
     console.error('[sheets-append]', err)
     return res.status(500).json({ error: String(err) })
