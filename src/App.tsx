@@ -2404,7 +2404,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <article>
                   <span>Est. profit</span>
                   <strong className={displayTotalProfit >= 0 ? 'profit-total' : 'profit-negative'}>
-                    {formatWithCurrency(displayTotalProfit)}
+                    {displayTotalProfit < 0 ? `−${formatWithCurrency(Math.abs(displayTotalProfit))}` : formatWithCurrency(displayTotalProfit)}
                   </strong>
                   {currentCurrency !== 'PHP' && <small className="php-equiv-total">{toPhpEquivalent(displayTotalProfit, currentCurrency)}</small>}
                 </article>
