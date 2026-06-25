@@ -315,6 +315,7 @@ function App() {
   const [isFullyPaidModalOpen, setIsFullyPaidModalOpen] = useState(false)
   const [fullyPaidDateInput, setFullyPaidDateInput] = useState(new Date().toISOString().slice(0, 10))
   const [activeBookingFilter, setActiveBookingFilter] = useState<BookingListFilter>('All')
+  const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set())
   const [selectedBookingId, setSelectedBookingId] = useState('')
   const [editingBookingId, setEditingBookingId] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
@@ -4964,6 +4965,40 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     {} as Record<BookingListFilter, number>,
   )
 
+  const statusCounts = bookingListFilters.reduce(
+    (acc, f) => ({
+      ...acc,
+      [f.value]: f.value === 'All'
+        ? bookings.length
+        : bookings.filter((b) => b.status === f.value).length,
+    }),
+    {} as Record<BookingListFilter, number>,
+  )
+
+  // Group filteredBookings by month (e.g. "January 2026"), newest month first
+  const bookingsByMonth: Array<{ monthKey: string; label: string; items: typeof filteredBookings }> = []
+  const monthMap = new Map<string, typeof filteredBookings>()
+  for (const b of filteredBookings) {
+    const d = b.createdAt ? new Date(b.createdAt) : new Date()
+    const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    if (!monthMap.has(monthKey)) monthMap.set(monthKey, [])
+    monthMap.get(monthKey)!.push(b)
+  }
+  const sortedMonthKeys = Array.from(monthMap.keys()).sort((a, b) => b.localeCompare(a))
+  for (const monthKey of sortedMonthKeys) {
+    const [year, month] = monthKey.split('-')
+    const label = new Date(Number(year), Number(month) - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    bookingsByMonth.push({ monthKey, label, items: monthMap.get(monthKey)! })
+  }
+
+  function toggleMonth(monthKey: string) {
+    setCollapsedMonths(prev => {
+      const next = new Set(prev)
+      next.has(monthKey) ? next.delete(monthKey) : next.add(monthKey)
+      return next
+    })
+  }
+
   return (
     <main className="home-screen">
       <nav className="app-nav">
@@ -5193,33 +5228,49 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 </span>
               </div>
             )}
-            {filteredBookings.map((booking) => (
-              <button
-                key={booking.id}
-                type="button"
-                className={`project-card status-${booking.status.toLowerCase().replaceAll(' ', '-')}`}
-                onClick={() => openBookingDetail(booking.id)}
-              >
-                <div className="project-main">
-                  <div className="project-icon"><FileText size={20} /></div>
-                  <div>
-                    <strong>{booking.packageName}</strong>
-                    <span>{booking.clientName}</span>
-                  </div>
+            {bookingsByMonth.map(({ monthKey, label, items }) => {
+              const isCollapsed = collapsedMonths.has(monthKey)
+              return (
+                <div key={monthKey} className="month-group">
+                  <button
+                    type="button"
+                    className="month-group-header"
+                    onClick={() => toggleMonth(monthKey)}
+                  >
+                    <ChevronDown size={14} style={{ transform: isCollapsed ? 'rotate(-90deg)' : 'none', transition: 'transform 0.2s' }} />
+                    <span>{label}</span>
+                    <strong>{items.length}</strong>
+                  </button>
+                  {!isCollapsed && items.map((booking) => (
+                    <button
+                      key={booking.id}
+                      type="button"
+                      className={`project-card status-${booking.status.toLowerCase().replaceAll(' ', '-')}`}
+                      onClick={() => openBookingDetail(booking.id)}
+                    >
+                      <div className="project-main">
+                        <div className="project-icon"><FileText size={20} /></div>
+                        <div>
+                          <strong>{booking.packageName}</strong>
+                          <span>{booking.clientName}</span>
+                        </div>
+                      </div>
+                      <div className="project-meta">
+                        <span className="status-pill">{booking.status}</span>
+                        <span><CalendarDays size={14} />{formatProjectDate(booking.createdAt)}</span>
+                        <span><MapPin size={14} />{formatAmount(String(getBookingClientTotal(booking)))}</span>
+                        {(booking.createdByName || (booking as any).createdByEmail) && (
+                          <span className="booking-by-tag">
+                            By: {booking.createdByName || getDisplayName((booking as any).createdByEmail)}
+                          </span>
+                        )}
+                        <ChevronRight size={17} />
+                      </div>
+                    </button>
+                  ))}
                 </div>
-                <div className="project-meta">
-                  <span className="status-pill">{booking.status}</span>
-                  <span><CalendarDays size={14} />{formatProjectDate(booking.createdAt)}</span>
-                  <span><MapPin size={14} />{formatAmount(String(getBookingClientTotal(booking)))}</span>
-                  {(booking.createdByName || (booking as any).createdByEmail) && (
-                    <span className="booking-by-tag">
-                      By: {booking.createdByName || getDisplayName((booking as any).createdByEmail)}
-                    </span>
-                  )}
-                  <ChevronRight size={17} />
-                </div>
-              </button>
-            ))}
+              )
+            })}
           </div>
 
           <div style={{ marginTop: 'auto', paddingTop: '14px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

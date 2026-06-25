@@ -931,6 +931,21 @@ input, select, textarea { font: inherit; }
   overflow-y: auto; overscroll-behavior: contain;
   gap: 7px; padding-right: 4px;
 }
+.month-group { display: grid; gap: 6px; }
+.month-group-header {
+  display: flex; align-items: center; gap: 7px;
+  width: 100%; padding: 6px 4px;
+  background: none; border: none; cursor: pointer;
+  color: var(--muted); font-size: .72rem; font-weight: 800;
+  letter-spacing: .1em; text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+.month-group-header span { flex: 1; text-align: left; }
+.month-group-header strong {
+  font-size: .72rem; background: var(--border);
+  padding: 1px 7px; border-radius: 99px; font-weight: 700;
+}
+.month-group-header:hover { color: var(--teal); }
 .project-card {
   display: flex; align-items: center; justify-content: space-between;
   gap: 14px; width: 100%; padding: 13px 14px;
