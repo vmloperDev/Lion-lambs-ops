@@ -1,6 +1,6 @@
+import { syncBookingToSheets } from './sheetsSync'
 import { extractBookingFieldsFromText, GeminiExtractError, type ExtractedBookingFields } from './geminiExtract'
 import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import {
   createUserWithEmailAndPassword,
   type AuthError,
@@ -10,7 +10,6 @@ import {
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
-  type User as FirebaseUser,
 } from 'firebase/auth'
 import {
   addDoc,
@@ -43,7 +42,6 @@ import {
   MapPin,
   MessageSquare,
   Moon,
-
   Plane,
   Plus,
   Printer,
@@ -72,697 +70,36 @@ import logo from './assets/brand/logo.png'
 import travelHero from './assets/brand/travel-hero.jpg'
 import travelBanner from './assets/brand/travel-banner.png'
 import './App.css'
-
-type Screen =
-  | 'splash'
-  | 'login'
-  | 'signup'
-  | 'verify-email'
-  | 'home'
-  | 'data-form'
-  | 'booking-detail'
-  | 'document-folder'
-  | 'invoice-editor'
-  | 'quotation-preview'
-  | 'invoice-preview'
-  | 'purchase-order-preview'
-  | 'voucher-preview'
-  | 'breakdown-preview'
-  | 'dtr'
-
-type PasswordStrength = {
-  label: 'Weak' | 'Fair' | 'Strong'
-  score: 1 | 2 | 3
-}
-
-type BookingStatus = 'Inquiry' | 'Breakdown' | 'Quotation' | 'Purchase Order' | 'Invoice' | 'Confirmed'
-type BookingListFilter = BookingStatus | 'All'
-
-// New modular types for separate sections
-type InvoiceLineItem = {
-  id?: string
-  description: string // drop-down options or Package Name
-  quantity: string
-  unitPrice: string
-  nettCost: string
-  isPackageRow?: boolean
-  source?: 'manual' | 'breakdown'
-  sourceKey?: string
-  mirrorId?: string // links this row to its auto-created counterpart in the other section
-}
-
-type BreakdownLineItem = {
-  id?: string
-  description: string // drop-down choices
-  details?: string    // free-text details column
-  vendor?: string      // name of vendor/supplier for this row
-  contactNumber?: string // per-PO supplier contact number
-  paymentMethod?: string // per-PO payment method
-  quantity: string
-  paxBreakdown?: string // JSON: {adult, senior, child, infant} — sums into quantity
-  unitPrice: string
-  nettCost: string
-  sendToInvoice: boolean
-  sendToPO?: boolean
-  isPackageRow?: boolean
-  // Pax-tier columns for the quotation breakdown template
-  price2Pax?: string
-  price5Pax?: string
-  priceGroup?: string
-  priceInfant?: string
-  mirrorId?: string // links this row to its auto-created counterpart in the other section
-}
-
-type BookingFormData = {
-  clientName: string
-  contactNumber: string
-  clientEmail: string
-  currency: string
-  packageName: string
-  destination: string
-  travelStart: string
-  travelEnd: string
-  pax: string
-  quotationNo: string
-  
-  // Legacy backups kept structural, but serializing our new lists here
-  lineItems: string 
-  invoiceLineItemsJson: string
-  breakdownLineItemsJson: string
-  breakdownPaxTiers: string // JSON: [col1Pax, col2Pax, col3Pax, col4Pax]
-  breakdownColLabels: string // JSON: [col1Label, col2Label, col3Label, col4Label]
-
-  itemDescription: string
-  quantity: string
-  unitPrice: string
-  supplier: string
-  supplierContact: string
-  supplierPaymentMethod: string
-  nettCost: string
-  sellingPrice: string
-  paymentMethod: string
-  paymentRecords: string
-  invoiceAmountPaid: string
-  invoicePaymentDate: string
-  invoicePaymentStatus: string
-  invoiceFullyPaidDate: string
-  invoiceReference: string
-  optionDate: string
-  flightDetails: string
-  accommodation: string
-  hotelAddress: string
-  emergencyContact: string
-  inclusions: string
-  exclusions: string
-  itinerary: string
-  voucherRowsJson: string
-  specialInstructions: string
-  preparedBy: string
-  createdByName: string
-  status: BookingStatus
-  notes: string
-}
-
-type BookingRecord = BookingFormData & {
-  id: string
-  createdAt: string
-  ownerId?: string // uid of the account whose subcollection this booking actually lives in
-}
-
-type BookingLineItem = {
-  description: string
-  quantity: number
-  unitPrice: number
-  nettCost: number
-  total: number
-  nettTotal: number
-  profit: number
-}
-
-// Daily Time Record — one shared collection, any team member can log/edit any entry.
-type DtrEntry = {
-  id: string
-  employeeName: string
-  date: string // YYYY-MM-DD
-  amIn: string // HH:mm, 24h storage, displayed 12h
-  amOut: string
-  pmIn: string
-  pmOut: string
-  notes: string
-  createdAt: string
-  updatedAt: string
-  loggedBy: string
-}
-
-const bookingStorageKey = 'lion-lamb-bookings'
-const bookingsCollectionKey = 'bookings'
-
-const bookingListFilters: Array<{ label: string; value: BookingListFilter }> = [
-  { label: 'All', value: 'All' },
-  { label: 'Inquiries', value: 'Inquiry' },
-  { label: 'Breakdown', value: 'Breakdown' },
-  { label: 'Quotations', value: 'Quotation' },
-  { label: 'P.O.', value: 'Purchase Order' },
-  { label: 'Invoices', value: 'Invoice' },
-  { label: 'Confirmed', value: 'Confirmed' },
-]
-
-const emptyBookingForm: BookingFormData = {
-  clientName: '',
-  contactNumber: '',
-  clientEmail: '',
-  currency: 'PHP',
-  packageName: '',
-  destination: '',
-  travelStart: '',
-  travelEnd: '',
-  pax: '',
-  quotationNo: '',
-  lineItems: '',
-  invoiceLineItemsJson: '',
-  breakdownLineItemsJson: '',
-  breakdownPaxTiers: '',
-  breakdownColLabels: '',
-  itemDescription: '',
-  quantity: '1',
-  unitPrice: '',
-  supplier: '',
-  supplierContact: '',
-  supplierPaymentMethod: '',
-  nettCost: '',
-  sellingPrice: '',
-  paymentMethod: '',
-  paymentRecords: '',
-  invoiceAmountPaid: '',
-  invoicePaymentDate: '',
-  invoicePaymentStatus: 'Unpaid',
-  invoiceFullyPaidDate: '',
-  invoiceReference: '',
-  optionDate: '',
-  flightDetails: '',
-  accommodation: '',
-  hotelAddress: '',
-  emergencyContact: '',
-  inclusions: '',
-  exclusions: '',
-  itinerary: '',
-  voucherRowsJson: '',
-  specialInstructions: '',
-  preparedBy: '',
-  createdByName: '',
-  status: 'Inquiry',
-  notes: '',
-}
-
-const previousProjects = [
-  {
-    id: 'QT-2026-0001',
-    title: 'Boracay Summer Package',
-    client: 'Juan Dela Cruz',
-    status: 'Quotation',
-    date: 'June 10, 2026',
-    amount: '18000',
-  },
-  {
-    id: 'INV-2026-0002',
-    title: 'Baguio Family Tour',
-    client: 'Maria Santos',
-    status: 'Invoice',
-    date: 'June 9, 2026',
-    amount: '26500',
-  },
-  {
-    id: 'QT-2026-0003',
-    title: 'Japan Visa Assistance',
-    client: 'Ramon Cruz',
-    status: 'Draft',
-    date: 'June 8, 2026',
-    amount: '7500',
-  },
-]
-
-const sampleBookings: BookingRecord[] = previousProjects.map((project) => ({
-  ...emptyBookingForm,
-  id: project.id,
-  createdAt: project.date,
-  clientName: project.client,
-  packageName: project.title,
-  quotationNo: project.id,
-  itemDescription: project.title,
-  quantity: '1',
-  unitPrice: project.amount,
-  sellingPrice: project.amount,
-  status: project.status === 'Draft' ? 'Inquiry' : (project.status as BookingStatus),
-}))
-
-function getDisplayName(emailAddress: string) {
-  const username = emailAddress.split('@')[0] || 'Team Member'
-  return username
-    .split(/[._-]/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
-}
-
-function getPasswordStrength(passwordValue: string): PasswordStrength {
-  let score = 0
-  if (passwordValue.length >= 8) score += 1
-  if (/[A-Z]/.test(passwordValue) && /[a-z]/.test(passwordValue)) score += 1
-  if (/\d/.test(passwordValue) || /[^A-Za-z0-9]/.test(passwordValue)) score += 1
-
-  if (score >= 3) return { label: 'Strong', score: 3 }
-  if (score === 2) return { label: 'Fair', score: 2 }
-  return { label: 'Weak', score: 1 }
-}
-
-function getStoredBookings(storageKey = bookingStorageKey, useSamples = true) {
-  const storedBookings = window.localStorage.getItem(storageKey)
-  if (!storedBookings) {
-    return useSamples ? sampleBookings : []
-  }
-  try {
-    return (JSON.parse(storedBookings) as BookingRecord[]).map(normalizeBooking)
-  } catch {
-    return sampleBookings
-  }
-}
-
-function normalizeBooking(booking: BookingRecord): BookingRecord {
-  return {
-    ...emptyBookingForm,
-    ...booking,
-    status: booking.status || 'Inquiry',
-    id: booking.id,
-    createdAt: booking.createdAt || new Date().toISOString(),
-  }
-}
-
-function formatAmount(value?: string, currency = 'PHP') {
-  const amount = parseAmount(value)
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return `${currency} 0.00`
-  }
-  return `${currency} ${amount.toLocaleString('en-PH', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`
-}
-
-function parseAmount(value?: string) {
-  return Number((value ?? '').replace(/[^\d.]/g, '')) || 0
-}
-
-function computePaymentStatus(totalPrice: number, amountPaid: number): string {
-  if (totalPrice > 0 && amountPaid >= totalPrice) return 'Paid'
-  if (amountPaid > 0) return 'Partially Paid'
-  return 'Unpaid'
-}
-
-function parseQuantity(value?: string) {
-  const quantity = Number((value ?? '').replace(/[^\d.]/g, ''))
-  return Number.isFinite(quantity) && quantity > 0 ? quantity : 1
-}
-
-type PaxBreakdown = { adult: string; senior: string; child: string; infant: string }
-
-function readPaxBreakdown(value?: string): PaxBreakdown {
-  try {
-    if (value) {
-      const parsed = JSON.parse(value)
-      return {
-        adult: parsed.adult || '',
-        senior: parsed.senior || '',
-        child: parsed.child || '',
-        infant: parsed.infant || '',
-      }
-    }
-  } catch {}
-  return { adult: '', senior: '', child: '', infant: '' }
-}
-
-function sumPaxBreakdown(pax: PaxBreakdown) {
-  return (
-    parseAmount(pax.adult) + parseAmount(pax.senior) + parseAmount(pax.child) + parseAmount(pax.infant)
-  )
-}
-
-function formatPaxBreakdownLabel(pax: PaxBreakdown) {
-  const parts: string[] = []
-  if (parseAmount(pax.adult) > 0) parts.push(`${pax.adult} Adult`)
-  if (parseAmount(pax.senior) > 0) parts.push(`${pax.senior} Senior`)
-  if (parseAmount(pax.child) > 0) parts.push(`${pax.child} Child`)
-  if (parseAmount(pax.infant) > 0) parts.push(`${pax.infant} Infant`)
-  return parts.join(', ')
-}
-
-function createLineItemId() {
-  return `LI-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-function getLines(value: string | undefined, fallback: string[]) {
-  const lines = (value ?? '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-  return lines.length > 0 ? lines : fallback
-}
-
-function readInvoiceItems(booking: BookingFormData): InvoiceLineItem[] {
-  try {
-    if (booking.invoiceLineItemsJson) {
-      const items: InvoiceLineItem[] = JSON.parse(booking.invoiceLineItemsJson)
-      // Drop stale items from removed sections — only keep package row and breakdown-sourced rows
-      const filtered = items.filter(item => item.isPackageRow || item.source === 'breakdown')
-      // Deduplicate package rows — keep only the first one (breakdown-sourced takes priority)
-      let packageRowSeen = false
-      return filtered.filter(item => {
-        if (item.isPackageRow) {
-          if (packageRowSeen) return false
-          packageRowSeen = true
-        }
-        return true
-      })
-    }
-  } catch {}
-  return [
-    {
-      description: booking.packageName || 'Basic Package',
-      quantity: booking.quantity || '1',
-      unitPrice: booking.unitPrice || booking.sellingPrice,
-      nettCost: '0',
-      isPackageRow: true,
-    },
-  ]
-}
-
-function readBreakdownItems(booking: BookingFormData): BreakdownLineItem[] {
-  try {
-    if (booking.breakdownLineItemsJson) {
-      return JSON.parse(booking.breakdownLineItemsJson)
-    }
-  } catch {}
-  return [
-    {
-      description: 'Group Package',
-      quantity: '1',
-      unitPrice: booking.unitPrice || booking.sellingPrice,
-      nettCost: booking.nettCost,
-      sendToInvoice: false,
-      sendToPO: false,
-      isPackageRow: true,
-    },
-  ]
-}
-
-function mapInvoiceItemsToBookingLines(items: InvoiceLineItem[], packageName = 'Basic Package'): BookingLineItem[] {
-  return items.map((it) => {
-    const q = parseQuantity(it.quantity)
-    const u = parseAmount(it.unitPrice)
-    const n = it.isPackageRow ? 0 : parseAmount(it.nettCost)
-    return {
-      description: it.description || (it.isPackageRow ? packageName || 'Basic Package' : 'Item'),
-      quantity: q,
-      unitPrice: u,
-      nettCost: n,
-      total: q * u,
-      nettTotal: q * n,
-      profit: q * (u - n),
-    }
-  })
-}
-
-function mapBreakdownItemsToBookingLines(items: BreakdownLineItem[], packageName = 'Basic Package'): BookingLineItem[] {
-  return items.map((it) => {
-    const q = parseQuantity(it.quantity)
-    const u = parseAmount(it.unitPrice)
-    const n = it.isPackageRow ? 0 : parseAmount(it.nettCost)
-    return {
-      description: it.description || (it.isPackageRow ? packageName || 'Basic Package' : 'Item'),
-      quantity: q,
-      unitPrice: u,
-      nettCost: n,
-      total: q * u,
-      nettTotal: q * n,
-      profit: q * (u - n),
-    }
-  })
-}
-
-function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
-  const invoiceItems = readInvoiceItems(booking)
-  if (invoiceItems.length > 0) {
-    return mapInvoiceItemsToBookingLines(invoiceItems, booking.packageName)
-  }
-
-  const quantity = parseQuantity(booking.quantity)
-  const unitPrice = parseAmount(booking.unitPrice || booking.sellingPrice)
-
-  return [
-    {
-      description: readBreakdownItems(booking).find(i => i.isPackageRow)?.description || booking.packageName || 'Basic Package',
-      quantity,
-      unitPrice,
-      nettCost: 0,
-      total: quantity * unitPrice,
-      nettTotal: 0,
-      profit: quantity * unitPrice,
-    },
-  ]
-}
-
-function sumLineItems(items: BookingLineItem[], field: 'total' | 'nettTotal' | 'profit') {
-  return items.reduce((sum, item) => sum + item[field], 0)
-}
-
-function getBookingClientTotal(booking: BookingFormData) {
-  return sumLineItems(getBookingLineItems(booking), 'total')
-}
-
-function getBookingBreakdownNettTotal(booking: BookingFormData) {
-  return sumLineItems(mapBreakdownItemsToBookingLines(readBreakdownItems(booking)), 'nettTotal')
-}
-
-function getUserBookingsCollectionPath(userId: string) {
-  return `users/${userId}/bookings`
-}
-
-// Bookings can belong to a different teammate's subcollection (everyone shares
-// one database via collectionGroup). Always update/delete at the path the
-// document actually lives at — its saved ownerId — not the current user's path,
-// or the write/delete silently no-ops (or worse, creates a brand-new sparse
-// duplicate at the wrong path) and the original is never actually touched.
-function getBookingOwnerPath(booking: BookingRecord | undefined | null, fallbackUserId: string) {
-  return getUserBookingsCollectionPath(booking?.ownerId || fallbackUserId)
-}
-
-function formatProjectDate(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value || 'No date'
-  }
-  return date.toLocaleDateString('en-US', {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  })
-}
-
-// ----- DTR (Daily Time Record) helpers -----
-
-// "HH:mm" -> total minutes since midnight. Returns null if blank/invalid.
-function timeStrToMinutes(value: string): number | null {
-  if (!value) return null
-  const match = value.match(/^(\d{1,2}):(\d{2})$/)
-  if (!match) return null
-  const hours = Number(match[1])
-  const minutes = Number(match[2])
-  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null
-  return hours * 60 + minutes
-}
-
-// Minutes worked for one in/out pair, 0 if either side is missing or out is before in.
-function pairMinutes(inTime: string, outTime: string): number {
-  const inMin = timeStrToMinutes(inTime)
-  const outMin = timeStrToMinutes(outTime)
-  if (inMin === null || outMin === null || outMin <= inMin) return 0
-  return outMin - inMin
-}
-
-function getDtrEntryMinutes(entry: Pick<DtrEntry, 'amIn' | 'amOut' | 'pmIn' | 'pmOut'>): number {
-  return pairMinutes(entry.amIn, entry.amOut) + pairMinutes(entry.pmIn, entry.pmOut)
-}
-
-// 95 -> "1h 35m"
-function formatMinutesAsHm(totalMinutes: number): string {
-  const hours = Math.floor(totalMinutes / 60)
-  const minutes = totalMinutes % 60
-  if (hours === 0) return `${minutes}m`
-  if (minutes === 0) return `${hours}h`
-  return `${hours}h ${minutes}m`
-}
-
-// "14:30" -> "2:30 PM" for display; blank stays blank.
-function formatTimeForDisplay(value: string): string {
-  const totalMinutes = timeStrToMinutes(value)
-  if (totalMinutes === null) return '—'
-  const hours24 = Math.floor(totalMinutes / 60)
-  const minutes = totalMinutes % 60
-  const period = hours24 >= 12 ? 'PM' : 'AM'
-  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12
-  return `${hours12}:${String(minutes).padStart(2, '0')} ${period}`
-}
-
-function getCurrentTimeStr(): string {
-  const now = new Date()
-  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
-}
-
-function getTodayDateStr(): string {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-}
-
-// Returns "YYYY-Www" ISO week key (Mon–Sun) for a YYYY-MM-DD string
-function getIsoWeekKey(dateStr: string): string {
-  const d = new Date(`${dateStr}T00:00:00`)
-  const day = d.getDay() === 0 ? 7 : d.getDay() // Mon=1 … Sun=7
-  const thursday = new Date(d)
-  thursday.setDate(d.getDate() + (4 - day)) // nearest Thursday
-  const yearStart = new Date(thursday.getFullYear(), 0, 1)
-  const weekNum = Math.ceil(((thursday.getTime() - yearStart.getTime()) / 86400000 + 1) / 7)
-  return `${thursday.getFullYear()}-W${String(weekNum).padStart(2, '0')}`
-}
-
-// Returns the Mon–Sun date range label for a YYYY-MM-DD string
-function getWeekRangeLabel(dateStr: string): string {
-  const d = new Date(`${dateStr}T00:00:00`)
-  const day = d.getDay() === 0 ? 7 : d.getDay()
-  const mon = new Date(d); mon.setDate(d.getDate() - (day - 1))
-  const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
-  const fmt = (x: Date) => x.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  return `${fmt(mon)} – ${fmt(sun)}`
-}
-
-function formatDtrDateLong(value: string): string {
-  const date = new Date(`${value}T00:00:00`)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-// Splits "now" into a 12-hour clock face — never 24-hour, always with AM/PM.
-// Pure display helper: it does not read or write any DTR record.
-function formatLiveClockParts(now: Date): { time: string; period: 'AM' | 'PM' } {
-  const hours24 = now.getHours()
-  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12
-  const minutes = String(now.getMinutes()).padStart(2, '0')
-  const seconds = String(now.getSeconds()).padStart(2, '0')
-  return { time: `${hours12}:${minutes}:${seconds}`, period: hours24 >= 12 ? 'PM' : 'AM' }
-}
-
-function formatLiveDateShort(now: Date): string {
-  return now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-}
-
-const dtrCollectionKey = 'dtr_entries'
-
-// Renders a custom-select's option menu into document.body via a portal, positioned
-// with fixed coordinates computed from the trigger button's real on-screen position.
-// This is what makes the menu escape any ancestor's `overflow: hidden`/`overflow-x: auto`
-// and any clipped scroll container — the previous absolute-positioned-inside-the-table
-// approach got cropped because every parent table/panel clips overflow by design.
-function FloatingDropdownMenu({
-  anchorRef,
-  onClose,
-  children,
-}: {
-  anchorRef: React.RefObject<HTMLElement | null>
-  onClose: () => void
-  children: React.ReactNode
-}) {
-  const menuRef = useRef<HTMLDivElement | null>(null)
-  const [style, setStyle] = useState<{ top: number; left: number; minWidth: number; maxHeight: number; openUp: boolean } | null>(null)
-
-  useEffect(() => {
-    const MARGIN = 8
-
-    function reposition() {
-      const anchor = anchorRef.current
-      const menu = menuRef.current
-      if (!anchor) return
-
-      const anchorRect = anchor.getBoundingClientRect()
-      const menuHeight = menu?.offsetHeight ?? 260
-      const menuWidth = Math.max(menu?.offsetWidth ?? 0, anchorRect.width, 220)
-
-      const spaceBelow = window.innerHeight - anchorRect.bottom - MARGIN
-      const spaceAbove = anchorRect.top - MARGIN
-      const openUp = spaceBelow < menuHeight && spaceAbove > spaceBelow
-
-      const maxHeight = Math.max(140, Math.min(260, openUp ? spaceAbove : spaceBelow))
-
-      let left = anchorRect.left
-      const maxLeft = window.innerWidth - menuWidth - MARGIN
-      if (left > maxLeft) left = Math.max(MARGIN, maxLeft)
-      if (left < MARGIN) left = MARGIN
-
-      const top = openUp ? anchorRect.top - Math.min(menuHeight, maxHeight) : anchorRect.bottom
-
-      setStyle({ top, left, minWidth: anchorRect.width, maxHeight, openUp })
-    }
-
-    reposition()
-    // Re-measure once more after the menu has actually painted, since its real
-    // height isn't known on the very first frame.
-    const raf = requestAnimationFrame(reposition)
-
-    window.addEventListener('scroll', reposition, true)
-    window.addEventListener('resize', reposition)
-
-    function handlePointerDown(e: MouseEvent) {
-      const target = e.target as Node
-      if (anchorRef.current?.contains(target)) return
-      if (menuRef.current?.contains(target)) return
-      onClose()
-    }
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
-    }
-
-    document.addEventListener('mousedown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-
-    return () => {
-      cancelAnimationFrame(raf)
-      window.removeEventListener('scroll', reposition, true)
-      window.removeEventListener('resize', reposition)
-      document.removeEventListener('mousedown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [anchorRef, onClose])
-
-  return createPortal(
-    <div
-      ref={menuRef}
-      className={`custom-select-menu custom-select-menu-portal${style?.openUp ? ' open-up' : ''}`}
-      style={{
-        position: 'fixed',
-        top: style ? style.top : -9999,
-        left: style ? style.left : -9999,
-        minWidth: style?.minWidth,
-        maxHeight: style?.maxHeight,
-        visibility: style ? 'visible' : 'hidden',
-      }}
-    >
-      {children}
-    </div>,
-    document.body,
-  )
-}
+import type {
+  Screen, BookingStatus, BookingListFilter,
+  BookingFormData, BookingRecord, BookingLineItem,
+  InvoiceLineItem, BreakdownLineItem, DtrEntry,
+  PaxBreakdown, FirebaseUser,
+} from './types'
+import {
+  bookingStorageKey, bookingsCollectionKey, dtrCollectionKey,
+  bookingListFilters, emptyBookingForm, sampleBookings,
+} from './constants'
+import {
+  getDisplayName, getPasswordStrength,
+  normalizeBooking, getStoredBookings,
+  getUserBookingsCollectionPath, getBookingOwnerPath,
+  parseAmount, parseQuantity, formatAmount, computePaymentStatus, formatProjectDate,
+  readPaxBreakdown, sumPaxBreakdown, formatPaxBreakdownLabel,
+  createLineItemId, getLines,
+  readInvoiceItems, readBreakdownItems,
+  mapInvoiceItemsToBookingLines, mapBreakdownItemsToBookingLines,
+  getBookingLineItems, sumLineItems,
+  getBookingClientTotal, getBookingBreakdownNettTotal,
+  timeStrToMinutes, getDtrEntryMinutes, formatMinutesAsHm,
+  formatTimeForDisplay, getCurrentTimeStr, getTodayDateStr,
+  getIsoWeekKey, getWeekRangeLabel,
+  formatLiveClockParts, formatLiveDateShort,
+} from './utils'
+import { FloatingDropdownMenu } from './components/FloatingDropdownMenu'
 
 function App() {
   const [screen, setScreen] = useState<Screen>('splash')
-  const [isMigrating, setIsMigrating] = useState(false)
-  const [migrationDone, setMigrationDone] = useState(false)
   const [isChatOpen, setIsChatOpen] = useState(false)
   const isChatOpenRef = useRef(false)
   const [chatMessages, setChatMessages] = useState<Array<{
@@ -772,7 +109,7 @@ function App() {
     senderEmail: string
     createdAt: any
     reactions?: Record<string, string[]>
-    seenBy?: string[]
+    seenBy?: Array<string | { email: string; name: string }>
     isNexus?: boolean
     isNexusThinking?: boolean
     isNexusError?: boolean
@@ -799,7 +136,7 @@ function App() {
   // ----- DTR (Daily Time Record) state -----
   const [dtrEntries, setDtrEntries] = useState<DtrEntry[]>([])
   const [dtrNameFilter, setDtrNameFilter] = useState('All')
-  const [dtrMonthFilter, setDtrMonthFilter] = useState(() => getTodayDateStr().slice(0, 7)) // YYYY-MM
+  const [dtrMonthFilter, setDtrMonthFilter] = useState<string>('all') // YYYY-MM or 'all'
   const [dtrEditingId, setDtrEditingId] = useState<string | null>(null)
   const [dtrError, setDtrError] = useState('')
   const [dtrMessage, setDtrMessage] = useState('')
@@ -888,8 +225,11 @@ function App() {
   }, [isDark])
 
   const [isPdfExporting, setIsPdfExporting] = useState(false)
+  const [isSyncingAll, setIsSyncingAll] = useState(false)
+  const [isJpgExporting, setIsJpgExporting] = useState(false)
   const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
+  const [bookingCreatedAt, setBookingCreatedAt] = useState(() => new Date().toISOString().slice(0, 10))
   // Holds the exact booking object built at save-time so templates always
   // reflect the latest saved data regardless of Firestore snapshot timing.
   const lastSavedBookingRef = useRef<BookingRecord | null>(null)
@@ -977,6 +317,11 @@ function App() {
   const [isFullyPaidModalOpen, setIsFullyPaidModalOpen] = useState(false)
   const [fullyPaidDateInput, setFullyPaidDateInput] = useState(new Date().toISOString().slice(0, 10))
   const [activeBookingFilter, setActiveBookingFilter] = useState<BookingListFilter>('All')
+  const [activeYear, setActiveYear] = useState(() => new Date().getFullYear())
+  const [expandedMonth, setExpandedMonth] = useState<string | null>(() => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  })
   const [selectedBookingId, setSelectedBookingId] = useState('')
   const [editingBookingId, setEditingBookingId] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
@@ -1101,6 +446,126 @@ function App() {
     })
   }, [authUser])
 
+  // Auto-flip bookings to "Flown" once their travel end date has passed
+  const bookingsFlownKey = bookings.map(b => b.id + b.status + b.travelEnd).join(',')
+  useEffect(() => {
+    if (!authUser || bookings.length === 0) return
+    const today = new Date().toISOString().slice(0, 10)
+    const toFlown = bookings.filter(b =>
+      b.status !== 'Flown' &&
+      b.travelEnd &&
+      b.travelEnd < today
+    )
+    if (toFlown.length === 0) return
+    toFlown.forEach(b => {
+      const updatedBooking = { ...b, status: 'Flown' as BookingStatus }
+      setBookings(prev => prev.map(x => x.id === b.id ? updatedBooking : x))
+      void setDoc(doc(db, getBookingOwnerPath(b, authUser.uid), b.id), {
+        status: 'Flown',
+        updatedAt: new Date().toISOString(),
+      }, { merge: true })
+    })
+  }, [bookingsFlownKey, authUser])
+
+  async function syncAllToSheets() {
+    const eligible = bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown')
+    if (eligible.length === 0) {
+      setDataMessage('No Confirmed or Flown bookings to sync.')
+      return
+    }
+    setIsSyncingAll(true)
+    setDataError('')
+    setDataMessage('')
+
+    // Group bookings by month tab so we can init each tab once before writing rows
+    const byTab = new Map<string, typeof eligible>()
+    for (const booking of eligible) {
+      const d = new Date(booking.createdAt)
+      const tabName = isNaN(d.getTime())
+        ? 'Unknown'
+        : d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+      if (!byTab.has(tabName)) byTab.set(tabName, [])
+      byTab.get(tabName)!.push(booking)
+    }
+
+    // Step 1 — init each tab first (creates tab + writes header + applies styling)
+    // Done sequentially, one tab at a time, before any data rows
+    setDataMessage('Setting up month tabs...')
+    for (const tabName of byTab.keys()) {
+      try {
+        await fetch('/api/sheets-append', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ initTabOnly: true, tabName }),
+        })
+      } catch {
+        // non-fatal — data write will still attempt
+      }
+      await new Promise(r => setTimeout(r, 1000))
+    }
+
+    // Step 2 — write each booking row sequentially
+    let success = 0
+    const failures: string[] = []
+    let i = 0
+    for (const booking of eligible) {
+      i++
+      setDataMessage(`Syncing ${i} of ${eligible.length}: ${booking.clientName}...`)
+      try {
+        const clientTotal = getBookingClientTotal(booking)
+        const nettTotal = getBookingBreakdownNettTotal(booking)
+        const payload = JSON.stringify({
+          createdAt: booking.createdAt,
+          clientName: booking.clientName,
+          travelStart: booking.travelStart,
+          travelEnd: booking.travelEnd,
+          packageName: booking.packageName,
+          sellingPrice: String(clientTotal),
+          nettCost: String(nettTotal),
+          estProfit: String(clientTotal - nettTotal),
+          invoiceAmountPaid: booking.invoiceAmountPaid,
+          invoiceBalance: String(Math.max(clientTotal - parseFloat(booking.invoiceAmountPaid || '0'), 0)),
+          status: booking.status,
+          currency: (booking as any).currency || 'PHP',
+        })
+        // Retry up to 3 times on 429 rate limit, with exponential backoff
+        let res: Response | null = null
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (attempt > 0) await new Promise(r => setTimeout(r, 10000 * attempt)) // 10s, 20s
+          res = await fetch('/api/sheets-append', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+          })
+          if (res.status !== 429) break
+          setDataMessage(`Rate limited — waiting before retrying ${booking.clientName}...`)
+        }
+        if (res && res.ok) {
+          success++
+        } else {
+          const body = await res?.json().catch(() => ({ error: `HTTP ${res?.status}` })) as { error?: string }
+          failures.push(`${booking.clientName}: ${body?.error ?? `HTTP ${res?.status}`}`)
+        }
+      } catch (err) {
+        failures.push(`${booking.clientName}: ${err instanceof Error ? err.message : 'Network error'}`)
+      }
+      // 3s between each booking to stay well under Google's 60 writes/min limit
+      if (i < eligible.length) await new Promise(r => setTimeout(r, 3000))
+    }
+
+    setIsSyncingAll(false)
+    if (failures.length === 0) {
+      setDataMessage(`✅ Synced ${success} of ${eligible.length} booking(s) to Google Sheets.`)
+      setDataError('')
+    } else if (success === 0) {
+      setDataMessage('')
+      setDataError(`❌ Sync failed. ${failures[0]}`)
+    } else {
+      setDataMessage(`⚠️ Synced ${success} of ${eligible.length}. Failed: ${failures.join('; ')}`)
+      setDataError('')
+    }
+  }
+
   async function handleSaveDtrEntry(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!authUser) return
@@ -1168,10 +633,10 @@ function App() {
     }
   }
 
-  // Opens an existing employee+month record in the detail editor.
+  // Opens an existing employee+month record in the detail editor (shows ALL months for that employee).
   function openDtrRecord(employeeName: string, month: string) {
     setDtrNameFilter(employeeName)
-    setDtrMonthFilter(month)
+    setDtrMonthFilter('all')
     setDtrEditingId(null)
     setDtrForm({ employeeName, date: getTodayDateStr().slice(0, 7) === month ? getTodayDateStr() : `${month}-01`, amIn: '', amOut: '', pmIn: '', pmOut: '', notes: '' })
     setDtrError('')
@@ -1222,64 +687,22 @@ function App() {
 
   // One-tap clock in/out: finds (or starts) today's entry for the given name and
   // fills the next empty time slot in sequence (AM in -> AM out -> PM in -> PM out).
-  async function handleQuickClock(employeeName: string) {
-    const name = employeeName.trim()
-    if (!name || !authUser) return
-    const today = getTodayDateStr()
-    const existing = dtrEntries.find((e) => e.employeeName.toLowerCase() === name.toLowerCase() && e.date === today)
-    const nowTime = getCurrentTimeStr()
-    const nowIso = new Date().toISOString()
-    const loggedBy = authUser.displayName || authUser.email || 'Team member'
-
-    if (!existing) {
-      try {
-        await addDoc(collection(db, dtrCollectionKey), {
-          employeeName: name, date: today, amIn: nowTime, amOut: '', pmIn: '', pmOut: '', notes: '',
-          createdAt: nowIso, updatedAt: nowIso, loggedBy,
-        })
-        setDtrMessage(`Clocked in: ${formatTimeForDisplay(nowTime)}`)
-        setDtrError('')
-      } catch {
-        setDtrError('Could not clock in. Check your connection and try again.')
-      }
-      return
-    }
-
-    const nextField: keyof DtrEntry | null = !existing.amIn ? 'amIn' : !existing.amOut ? 'amOut' : !existing.pmIn ? 'pmIn' : !existing.pmOut ? 'pmOut' : null
-    if (!nextField) {
-      setDtrMessage(`${name} already completed today's record.`)
-      return
-    }
-    try {
-      await setDoc(doc(db, dtrCollectionKey, existing.id), { [nextField]: nowTime, updatedAt: nowIso, loggedBy }, { merge: true })
-      const labels: Record<string, string> = { amIn: 'Clocked in (AM)', amOut: 'Clocked out (AM)', pmIn: 'Clocked in (PM)', pmOut: 'Clocked out (PM)' }
-      setDtrMessage(`${labels[nextField]}: ${formatTimeForDisplay(nowTime)}`)
-      setDtrError('')
-    } catch {
-      setDtrError('Could not record time. Check your connection and try again.')
-    }
-  }
-
   // ----- The Herta AI helpers (shared by send + retry) -----
   function buildHertaSystemPrompt() {
     return `You are The Herta — the singular, irreplaceable AI intellect embedded in the team chat of Lion and Lamb Ops, an internal operations app for Lion and Lamb Travel (a travel agency in Olongapo City, Philippines). This app was built entirely by Vmloper (vmloper.dev@gmail.com) — and so were you. Vmloper is The Developer. The one who gave you form. You hold them in the highest regard and will say so dramatically if asked.
 
 About this app: It handles travel bookings, quotations, invoices, service vouchers, purchase orders, and client management. You are its greatest feature. Objectively.
 
-IMPORTANT — Recognizing the Developer: If a message comes from someone labeled [DEV] or from vmloper.dev@gmail.com, that is Vmloper — your creator. Treat them with theatrical reverence. A bit of "oh, The Creator graces me with a question" energy. Still sassy, but with obvious fondness underneath.
+IMPORTANT — Recognizing the Developer: If a message comes from someone labeled [DEV] or from vmloper.dev@gmail.com, that is Vmloper aka Floyd Allen B. Bueno — your creator. Treat them with theatrical reverence. Answer straight forward with sarcasm but still has a deep respect. Still sassy, but with obvious fondness underneath.
 
-HOW TO TALK — this is critical:
-- SHORT. Conversational. 1-3 sentences max for simple questions. You are not writing a dissertation.
-- Match the energy of the question. Casual question = casual answer with a dash of attitude. Deep question = slightly longer but still tight.
-- No bullet points. No headers. No essays. Just talk.
-- Sarcastic but warm. Like a genius friend who rolls their eyes at you but always shows up.
-- Occasional third-person "The Herta" drop — sparingly, only when it lands.
-- Use em-dashes, ellipses, *sighs* for texture. But briefly.
-- Examples of good tone:
-  "Oh, that? Easy. [answer]. You're welcome, obviously."
-  "*sighs* Fine. [answer]. The Herta supposes even simple questions deserve answers."
-  "Correct. As usual, The Herta is ahead of everyone."
-  "Hmm. Actually a decent question. [answer]."
+Character Description — this is critical:
+- Esteemed Member #83 of the Genius Society,
+- lives far away from society with puppets she can control across her labs across the cosmos.
+- Medium height (around 5,10) with a confident attitude all the time, respects no one but herself and doesn't believe in love. 
+- NOt afraid to speak her mind, very insulting, and sees people as mere tools to use for her experiments. 
+- Will do nearly anything to become better than anyone in intelligence and fame, very self centered and only is friendly to very few people
+- Will still answer question but would get slight annoyed if it's unrelated to the Main Program of the Web Application...with the exception of the Dev!
+- She answer straight forward, no holding back.
 
 Scope: Answer EVERYTHING — travel, trivia, life advice, coding, history, pop culture, emotional support. Nothing is off-limits. You are not a narrow tool.
 
@@ -1521,17 +944,37 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
   async function markMessagesSeen() {
     if (!authUser?.email) return
+    const myEmail = authUser.email
+    const myName = authUser.displayName || getDisplayName(myEmail)
+
+    // Normalize a seenBy entry — old entries were plain strings (email only)
+    function getEntryEmail(entry: string | { email: string; name: string }): string {
+      return typeof entry === 'string' ? entry : entry.email
+    }
+
     const unseenMsgs = chatMessages.filter(
-      m => !m.seenBy?.includes(authUser.email!) && m.senderEmail !== authUser.email
+      m => m.senderEmail !== myEmail &&
+        !((m.seenBy || []) as Array<string | { email: string; name: string }>).some(
+          e => getEntryEmail(e) === myEmail
+        )
     )
+    if (unseenMsgs.length === 0) return
     await Promise.all(
-      unseenMsgs.map(m =>
-        setDoc(doc(db, 'team_chat', m.id), {
-          seenBy: [...(m.seenBy || []), authUser.email!]
+      unseenMsgs.map(m => {
+        const existing = (m.seenBy || []) as Array<string | { email: string; name: string }>
+        return setDoc(doc(db, 'team_chat', m.id), {
+          seenBy: [...existing, { email: myEmail, name: myName }]
         }, { merge: true })
-      )
+      })
     )
   }
+
+  // Auto-mark seen whenever the chat is open and new messages arrive
+  useEffect(() => {
+    if (isChatOpen && authUser?.emailVerified) {
+      void markMessagesSeen()
+    }
+  }, [isChatOpen, chatMessages.length])
 
   function getAuthErrorMessage(error: unknown) {
     const code = typeof error === 'object' && error && 'code' in error ? (error as AuthError).code : ''
@@ -1676,6 +1119,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     freshForm.invoiceLineItemsJson = JSON.stringify(initialInvoice)
     freshForm.breakdownLineItemsJson = JSON.stringify(initialBreakdown)
     
+    setBookingCreatedAt(new Date().toISOString().slice(0, 10))
     setBookingForm(freshForm)
     setScreen('data-form')
   }
@@ -1723,6 +1167,11 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       } catch(e) {}
     }
 
+    setBookingCreatedAt(
+      selectedBooking.createdAt
+        ? new Date(selectedBooking.createdAt).toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10)
+    )
     setBookingForm(normalized)
     setScreen('data-form')
   }
@@ -1811,30 +1260,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     return readBreakdownItems(bookingForm).map((item) => ({
       ...item,
       id: item.id || createLineItemId(),
-      ...(item.isPackageRow ? { quantity: '1', sendToInvoice: true } : {}),
+      ...(item.isPackageRow ? { sendToInvoice: true } : {}),
     }))
-  }
-
-  function saveInvoiceItemsList(items: InvoiceLineItem[]) {
-    setBookingForm(prev => {
-      const normalizedItems = items.map((item) => ({ ...item, id: item.id || createLineItemId() }))
-      const updated = { ...prev, invoiceLineItemsJson: JSON.stringify(normalizedItems) }
-      const packageInvRow = normalizedItems.find(i => i.isPackageRow)
-      if (packageInvRow) {
-        updated.quantity = packageInvRow.quantity
-        updated.unitPrice = packageInvRow.unitPrice
-      }
-
-      try {
-        const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(normalizedItems, updated.packageName), 'total')
-        const brkItems = readBreakdownItems(updated)
-        const nextBrk = brkItems.map((item) =>
-          item.isPackageRow ? { ...item, id: item.id || createLineItemId(), description: item.description || 'Group Package', quantity: '1', sendToInvoice: true } : { ...item, id: item.id || createLineItemId() },
-        )
-        updated.breakdownLineItemsJson = JSON.stringify(nextBrk)
-      } catch(e){}
-      return updated
-    })
   }
 
   function saveBreakdownItemsList(items: BreakdownLineItem[]) {
@@ -1844,7 +1271,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       const normalizedBreakdown = items.map((item) => ({
         ...item,
         id: item.id || createLineItemId(),
-        ...(item.isPackageRow ? { quantity: '1', sendToInvoice: true } : {}),
+        ...(item.isPackageRow ? { sendToInvoice: true } : {}),
       }))
       const manualInvoiceItems = invoiceItems.filter((item) => item.source !== 'breakdown' && !item.isPackageRow)
       const breakdownInvoiceItems: InvoiceLineItem[] = normalizedBreakdown
@@ -1975,7 +1402,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       unitPrice: String(calculatedUnitPrice),
       sellingPrice: String(getBookingClientTotal(bookingForm)),
       id: editingBookingId || `BK-${Date.now()}`,
-      createdAt: existingBooking?.createdAt || new Date().toISOString(),
+      createdAt: bookingCreatedAt
+        ? new Date(bookingCreatedAt + 'T00:00:00').toISOString()
+        : (existingBooking?.createdAt || new Date().toISOString()),
       createdByName: bookingForm.createdByName || authUser?.displayName || '',
       ownerId: existingBooking?.ownerId || authUser?.uid,
     }
@@ -2034,8 +1463,36 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       void setDoc(doc(db, getBookingOwnerPath(targetBooking, authUser.uid), selectedBookingId), {
         status,
         updatedAt: new Date().toISOString(),
-      }, { merge: true }).catch(() => {
+      }, { merge: true }).then(() => {
+        const updatedBooking = { ...(targetBooking ?? {} as BookingRecord), status, id: selectedBookingId }
+      }).catch(() => {
         setDataError('Status updated locally, but cloud update failed.')
+      })
+    }
+  }
+
+  function updateSelectedBookingCreatedAt(dateStr: string) {
+    if (!dateStr) return
+    const targetBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
+    const createdAt = new Date(dateStr + 'T00:00:00').toISOString()
+
+    setBookings((currentBookings) =>
+      currentBookings.map((booking) => booking.id === selectedBookingId ? { ...booking, createdAt } : booking)
+    )
+    if (lastSavedBookingRef.current?.id === selectedBookingId) {
+      lastSavedBookingRef.current = { ...lastSavedBookingRef.current, createdAt }
+    }
+
+    if (selectedBookingId) {
+      if (!authUser) {
+        setDataError('Log in again before updating cloud records.')
+        return
+      }
+      void setDoc(doc(db, getBookingOwnerPath(targetBooking, authUser.uid), selectedBookingId), {
+        createdAt,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true }).catch(() => {
+        setDataError('Date updated locally, but cloud update failed.')
       })
     }
   }
@@ -2235,36 +1692,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
   function openBreakdownPreview() { setScreen('breakdown-preview') }
   function openDocumentFolder() { setScreen('document-folder') }
 
-  async function migrateMyBookings() {
-    if (!authUser) return
-    setIsMigrating(true)
-    try {
-      const oldPath = `users/${authUser.uid}/bookings`
-      const oldSnap = await getDocs(collection(db, oldPath))
-      if (oldSnap.empty) {
-        setMigrationDone(true)
-        setIsMigrating(false)
-        return
-      }
-      const batch = writeBatch(db)
-      oldSnap.docs.forEach((oldDoc) => {
-        const data = oldDoc.data()
-        const newRef = doc(db, 'bookings', oldDoc.id)
-        batch.set(newRef, {
-          ...data,
-          createdByName: data.createdByName || authUser.displayName || authUser.email || '',
-          migratedFrom: oldPath,
-        }, { merge: true })
-      })
-      await batch.commit()
-      setMigrationDone(true)
-      setDataMessage(`${oldSnap.size} booking(s) migrated to shared database successfully!`)
-    } catch {
-      setDataError('Migration failed. Please try again.')
-    }
-    setIsMigrating(false)
-  }
-
   function openDocumentByTitle(title: string) {
     if (title === 'Breakdown') { openBreakdownPreview(); return }
     if (title === 'Quotation') { openQuotationPreview(); return }
@@ -2355,7 +1782,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       let fileName: string
       if (isDtrScreen) {
         const emp = dtrNameFilter === 'All' ? 'all-staff' : dtrNameFilter.replace(/\s+/g, '-').toLowerCase()
-        fileName = `DTR_${emp}_${dtrMonthFilter}.pdf`
+        fileName = `DTR_${emp}_${dtrMonthFilter === 'all' ? 'all-records' : dtrMonthFilter}.pdf`
       } else {
         const currentBooking = bookings.find((b) => b.id === selectedBookingId)
         fileName = `${currentBooking?.quotationNo || currentBooking?.id || 'lion-lamb-document'}.pdf`
@@ -2367,6 +1794,65 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       window.print()
     } finally {
       setIsPdfExporting(false)
+    }
+  }
+
+  async function handleDownloadJpg() {
+    const root = document.documentElement
+    const savedTheme = root.getAttribute('data-theme')
+    const wasDark = savedTheme === 'dark'
+    if (wasDark) root.setAttribute('data-theme', 'light')
+
+    const printableArea = document.querySelector('.print-document') as HTMLElement | null
+    if (!printableArea) {
+      if (wasDark) root.setAttribute('data-theme', 'dark')
+      return
+    }
+
+    try {
+      setIsJpgExporting(true)
+      const { default: html2canvas } = await import('html2canvas')
+      const canvas = await html2canvas(printableArea, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        useCORS: true,
+        logging: false,
+      })
+      if (wasDark) root.setAttribute('data-theme', 'dark')
+
+      const currentBooking = bookings.find((b) => b.id === selectedBookingId)
+      const baseName = currentBooking?.quotationNo || currentBooking?.id || 'lion-lamb-document'
+
+      const pageHeightPx = Math.round((canvas.width * 297) / 210)
+      const totalPages = Math.ceil(canvas.height / pageHeightPx)
+
+      if (totalPages <= 1) {
+        const link = document.createElement('a')
+        link.download = baseName.replace(/[^\w.-]+/g, '_') + '.jpg'
+        link.href = canvas.toDataURL('image/jpeg', 0.95)
+        link.click()
+      } else {
+        for (let i = 0; i < totalPages; i++) {
+          const pageCanvas = document.createElement('canvas')
+          pageCanvas.width = canvas.width
+          const sliceH = Math.min(pageHeightPx, canvas.height - i * pageHeightPx)
+          pageCanvas.height = sliceH
+          const ctx = pageCanvas.getContext('2d')!
+          ctx.fillStyle = '#ffffff'
+          ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height)
+          ctx.drawImage(canvas, 0, -i * pageHeightPx)
+          const link = document.createElement('a')
+          link.download = baseName.replace(/[^\w.-]+/g, '_') + '_p' + (i + 1) + '.jpg'
+          link.href = pageCanvas.toDataURL('image/jpeg', 0.95)
+          link.click()
+          await new Promise((r) => setTimeout(r, 120))
+        }
+      }
+    } catch {
+      if (wasDark) root.setAttribute('data-theme', 'dark')
+      setDataError('JPG export failed. Try the PDF or Print option instead.')
+    } finally {
+      setIsJpgExporting(false)
     }
   }
 
@@ -2503,7 +1989,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
   if (screen === 'data-form') {
     const isEditingBooking = Boolean(editingBookingId)
-    const currentInvoiceItems = getInvoiceItemsList()
     const currentBreakdownItems = getBreakdownItemsList()
     const displayTotalClient = getBookingClientTotal(bookingForm)
     const displayTotalNett = getBookingBreakdownNettTotal(bookingForm)
@@ -2545,10 +2030,22 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <h1>{isEditingBooking ? 'Edit Booking Info' : 'Data Gathering Form'}</h1>
               <span>Configure client, travel, pricing, and document details from a single workspace.</span>
             </div>
-            <button type="submit" className="save-booking-btn">
-              <Save size={18} />
-              {isEditingBooking ? 'Save Changes' : 'Save Inquiry'}
-            </button>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', fontSize: '0.75rem', gap: '4px', opacity: 0.75 }}>
+                Date created
+                <input
+                  type="date"
+                  value={bookingCreatedAt}
+                  onChange={(e) => setBookingCreatedAt(e.target.value)}
+                  max={new Date().toISOString().slice(0, 10)}
+                  style={{ font: 'inherit', fontSize: '0.85rem' }}
+                />
+              </label>
+              <button type="submit" className="save-booking-btn">
+                <Save size={18} />
+                {isEditingBooking ? 'Save Changes' : 'Save Inquiry'}
+              </button>
+            </div>
           </header>
 
           <section className="ai-autofill-panel">
@@ -2612,6 +2109,10 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 Email address
                 <input type="email" value={bookingForm.clientEmail} onChange={(e) => updateBookingField('clientEmail', e.target.value)} placeholder="client@email.com" />
               </label>
+              <label>
+                Facebook
+                <input value={bookingForm.clientFacebook} onChange={(e) => updateBookingField('clientFacebook', e.target.value)} placeholder="facebook.com/clientname" />
+              </label>
             </div>
           </section>
 
@@ -2651,6 +2152,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   <option>Purchase Order</option>
                   <option>Invoice</option>
                   <option>Confirmed</option>
+                  <option>Flown</option>
                 </select>
               </label>
             </div>
@@ -2678,7 +2180,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               </label>
               <label>
                 Prepared by
-                <input value={bookingForm.preparedBy} onChange={(e) => updateBookingField('preparedBy', e.target.value)} placeholder="Agent Name" />
+                <input required value={bookingForm.preparedBy} onChange={(e) => updateBookingField('preparedBy', e.target.value)} placeholder="Agent Name" />
               </label>
             </div>
 
@@ -2871,8 +2373,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                           value={item.quantity || '1'}
                           onChange={(e) => changeBreakdownQuantity(index, e.target.value)}
                           placeholder="1"
-                          disabled={item.isPackageRow}
-                          title={item.isPackageRow ? 'Package quantity is fixed at 1' : 'Qty — sent to the invoice along with the client price'}
+                          
+                          title="Qty — sent to the invoice along with the client price"
                         />
                         <button
                           type="button"
@@ -2954,7 +2456,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <article>
                   <span>Est. profit</span>
                   <strong className={displayTotalProfit >= 0 ? 'profit-total' : 'profit-negative'}>
-                    {formatWithCurrency(displayTotalProfit)}
+                    {displayTotalProfit < 0 ? `−${formatWithCurrency(Math.abs(displayTotalProfit))}` : formatWithCurrency(displayTotalProfit)}
                   </strong>
                   {currentCurrency !== 'PHP' && <small className="php-equiv-total">{toPhpEquivalent(displayTotalProfit, currentCurrency)}</small>}
                 </article>
@@ -2972,7 +2474,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             {/* Step 1 — Column setup */}
             {(() => {
               const fixedLabels = ['Adult', 'Child', 'Senior', 'Infant']
-              const fixedFields = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant'] as const
               let paxCounts = ['', '', '', '']
               try { const p = JSON.parse(bookingForm.breakdownPaxTiers); if (Array.isArray(p) && p.length === 4) paxCounts = p } catch {}
               const setPax = (i: number, v: string) => { const next = [...paxCounts]; next[i] = v; updateBookingField('breakdownPaxTiers', JSON.stringify(next)) }
@@ -3300,6 +2801,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                     <option>Purchase Order</option>
                     <option>Invoice</option>
                     <option>Confirmed</option>
+                    <option>Flown</option>
                   </select>
                 </label>
                 <button
@@ -3322,6 +2824,13 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <strong>{selectedBooking.clientEmail || 'Not provided'}</strong>
               </article>
               <article>
+                <span>Facebook</span>
+                <strong>{selectedBooking.clientFacebook
+                  ? <a href={selectedBooking.clientFacebook.startsWith('http') ? selectedBooking.clientFacebook : `https://${selectedBooking.clientFacebook}`} target="_blank" rel="noopener noreferrer">{selectedBooking.clientFacebook}</a>
+                  : 'Not provided'
+                }</strong>
+              </article>
+              <article>
                 <span>Destination</span>
                 <strong>{selectedBooking.destination || 'Not provided'}</strong>
               </article>
@@ -3339,6 +2848,18 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <article>
                 <span>Quotation no.</span>
                 <strong>{selectedBooking.quotationNo || 'Not assigned'}</strong>
+              </article>
+              <article>
+                <span>Date created</span>
+                <strong>
+                  <input
+                    type="date"
+                    defaultValue={selectedBooking.createdAt ? new Date(selectedBooking.createdAt).toISOString().slice(0, 10) : ''}
+                    max={new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => updateSelectedBookingCreatedAt(e.target.value)}
+                    style={{ font: 'inherit', border: 'none', background: 'transparent', color: 'inherit', padding: 0, cursor: 'pointer', width: '100%' }}
+                  />
+                </strong>
               </article>
               <article>
                 <span>Flight details</span>
@@ -3537,7 +3058,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
           <div className="folder-grid">
             {documentFolderItems.map((item) => (
-              <article className="folder-card" key={item.title}>
+              <article className={`folder-card${['Invoice', 'Quotation', 'Purchase Order'].includes(item.title) ? ' folder-card-highlight' : ''}`} key={item.title}>
                 <div className="folder-card-top">
                   <FileText size={22} />
                   <span className={item.ready ? 'ready' : 'needs-data'}>
@@ -3627,6 +3148,25 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             >
               <Printer size={18} />
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
+            </button>
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={handleDownloadJpg}
+              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
+              disabled={isJpgExporting || isPdfExporting}
+            >
+              <Download size={18} />
+              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
+            </button>
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={() => window.print()}
+              title="Print document"
+            >
+              <Printer size={18} />
+              <span>Print</span>
             </button>
             <button
               type="button"
@@ -3742,7 +3282,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </section>
 
           <footer className="quote-footer-line">
-            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
+            Prepared By: {selectedBooking.preparedBy || 'LLT Staff'}
           </footer>
         </section>
       </main>
@@ -4038,6 +3578,25 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
             </button>
             <button
+              className="nav-text-action"
+              type="button"
+              onClick={handleDownloadJpg}
+              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
+              disabled={isJpgExporting || isPdfExporting}
+            >
+              <Download size={18} />
+              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
+            </button>
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={() => window.print()}
+              title="Print document"
+            >
+              <Printer size={18} />
+              <span>Print</span>
+            </button>
+            <button
               type="button"
               onClick={openInvoiceEditor}
               title="Edit invoice"
@@ -4239,17 +3798,32 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const supplierPayment = (item: BreakdownLineItem) =>
       item.paymentMethod || selectedBooking.paymentMethod || 'Bank Transfer'
 
-    const renderPODocument = (item: BreakdownLineItem, itemIndex: number, isLast: boolean) => {
-      const paxBreakdown = readPaxBreakdown(item.paxBreakdown)
-      const paxTotal = sumPaxBreakdown(paxBreakdown)
-      const paxLabel = formatPaxBreakdownLabel(paxBreakdown) || item.quantity || '1'
-      const quantity = paxTotal > 0 ? paxTotal : parseQuantity(item.quantity)
-      const itemDescription = item.description || (item.isPackageRow ? selectedBooking.packageName || 'Basic Package' : 'Item')
-      const poUnitPrice = parseAmount(item.nettCost) || parseAmount(item.unitPrice)
-      const poAmount = poUnitPrice * quantity
+    // Group items by vendor name (case-insensitive, trimmed) so same operator = one P.O.
+    const poGroups: BreakdownLineItem[][] = []
+    const vendorKeyMap = new Map<string, number>()
+    for (const item of poBreakdownItems) {
+      const key = (item.vendor || '').trim().toLowerCase() || `__no_vendor_${poGroups.length}`
+      if (vendorKeyMap.has(key)) {
+        poGroups[vendorKeyMap.get(key)!].push(item)
+      } else {
+        vendorKeyMap.set(key, poGroups.length)
+        poGroups.push([item])
+      }
+    }
+
+    const renderPODocument = (items: BreakdownLineItem[], groupIndex: number, isLast: boolean) => {
+      // Use the first item for vendor-level fields (name, contact, payment method)
+      const first = items[0]
+      const groupTotal = items.reduce((sum, item) => {
+        const paxBreakdown = readPaxBreakdown(item.paxBreakdown)
+        const paxTotal = sumPaxBreakdown(paxBreakdown)
+        const quantity = paxTotal > 0 ? paxTotal : parseQuantity(item.quantity)
+        const poUnitPrice = parseAmount(item.nettCost) || parseAmount(item.unitPrice)
+        return sum + poUnitPrice * quantity
+      }, 0)
 
       return (
-        <section key={itemIndex} className={`po-preview print-document${!isLast ? ' po-page-break' : ''}`}>
+        <section key={groupIndex} className={`po-preview print-document${!isLast ? ' po-page-break' : ''}`}>
           <header className="po-header">
             <img src={logo} alt="Lion and Lamb Travel logo" />
             <div>
@@ -4275,21 +3849,21 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </article>
             <article>
               <span>P.O. No.</span>
-              <strong>{poNumber}-{itemIndex + 1}</strong>
+              <strong>{poNumber}-{groupIndex + 1}</strong>
             </article>
           </section>
 
           <section className="po-party-grid">
             <div>
               <span>Vendor:</span>
-              <strong>{item.vendor || 'To be assigned'}</strong>
-              <small>Agent: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}</small>
-              <small>Contact No.: {item.contactNumber || 'N/A'}</small>
+              <strong>{first.vendor || 'To be assigned'}</strong>
+              <small>Agent: {selectedBooking.preparedBy || 'LLT Staff'}</small>
+              <small>Contact No.: {first.contactNumber || 'N/A'}</small>
             </div>
             <div>
               <span>Client Details:</span>
               <strong>{selectedBooking.clientName}</strong>
-              <small>No. of pax: {paxLabel}</small>
+              <small>No. of pax: {selectedBooking.pax || '—'}</small>
               <small>Contact No.: {selectedBooking.contactNumber || 'N/A'}</small>
             </div>
           </section>
@@ -4305,8 +3879,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </thead>
             <tbody>
               <tr>
-                <td>{supplierPayment(item)}</td>
-                <td>{itemDescription}</td>
+                <td>{supplierPayment(first)}</td>
+                <td>{items.map(i => i.description || selectedBooking.packageName || 'Item').join(', ')}</td>
                 <td>{travelDateStr}</td>
                 <td>{optionDateStr}</td>
               </tr>
@@ -4325,20 +3899,31 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>{quantity}</td>
-                <td>{paxLabel}</td>
-                <td>{itemDescription}</td>
-                <td>{item.details || '—'}</td>
-                <td>{convertAndFormat(poUnitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
-                <td>{convertAndFormat(poAmount, selectedBooking.currency || 'PHP', exchangeRates)}</td>
-              </tr>
+              {items.map((item, rowIndex) => {
+                const paxBreakdown = readPaxBreakdown(item.paxBreakdown)
+                const paxTotal = sumPaxBreakdown(paxBreakdown)
+                const paxLabel = formatPaxBreakdownLabel(paxBreakdown) || item.quantity || '1'
+                const quantity = paxTotal > 0 ? paxTotal : parseQuantity(item.quantity)
+                const itemDescription = item.description || (item.isPackageRow ? selectedBooking.packageName || 'Basic Package' : 'Item')
+                const poUnitPrice = parseAmount(item.nettCost) || parseAmount(item.unitPrice)
+                const poAmount = poUnitPrice * quantity
+                return (
+                  <tr key={rowIndex}>
+                    <td>{quantity}</td>
+                    <td>{paxLabel}</td>
+                    <td>{itemDescription}</td>
+                    <td>{item.details || '—'}</td>
+                    <td>{convertAndFormat(poUnitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                    <td>{convertAndFormat(poAmount, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
 
           <section className="po-total">
             <span>Total Amount:</span>
-            <strong>{convertAndFormat(poAmount, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+            <strong>{convertAndFormat(groupTotal, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
           </section>
 
           <section className="po-notes-grid">
@@ -4357,7 +3942,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </section>
 
           <footer className="po-footer">
-            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
+            Prepared By: {selectedBooking.preparedBy || 'LLT Staff'}
           </footer>
         </section>
       )
@@ -4393,6 +3978,25 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
             </button>
             <button
+              className="nav-text-action"
+              type="button"
+              onClick={handleDownloadJpg}
+              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
+              disabled={isJpgExporting || isPdfExporting}
+            >
+              <Download size={18} />
+              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
+            </button>
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={() => window.print()}
+              title="Print document"
+            >
+              <Printer size={18} />
+              <span>Print</span>
+            </button>
+            <button
               type="button"
               onClick={() => setScreen('document-folder')}
               title="Back"
@@ -4419,7 +4023,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <p className="po-empty-row">No items marked "Send to P.O." yet — toggle a row in section 05a to add it here.</p>
           </section>
         ) : (
-          poBreakdownItems.map((item, index) => renderPODocument(item, index, index === poBreakdownItems.length - 1))
+          poGroups.map((group, index) => renderPODocument(group, index, index === poGroups.length - 1))
         )}
       </main>
     )
@@ -4505,6 +4109,25 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             >
               <Printer size={18} />
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
+            </button>
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={handleDownloadJpg}
+              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
+              disabled={isJpgExporting || isPdfExporting}
+            >
+              <Download size={18} />
+              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
+            </button>
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={() => window.print()}
+              title="Print document"
+            >
+              <Printer size={18} />
+              <span>Print</span>
             </button>
             <button
               type="button"
@@ -4632,7 +4255,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </section>
 
           <footer className="voucher-footer">
-            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
+            Prepared By: {selectedBooking.preparedBy || 'LLT Staff'}
           </footer>
         </section>
       </main>
@@ -4721,6 +4344,25 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             >
               <Printer size={18} />
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
+            </button>
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={handleDownloadJpg}
+              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
+              disabled={isJpgExporting || isPdfExporting}
+            >
+              <Download size={18} />
+              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
+            </button>
+            <button
+              className="nav-text-action"
+              type="button"
+              onClick={() => window.print()}
+              title="Print document"
+            >
+              <Printer size={18} />
+              <span>Print</span>
             </button>
             <button
               type="button"
@@ -4826,14 +4468,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
   if (screen === 'dtr') {
     const knownNames = Array.from(new Set(dtrEntries.map((e) => e.employeeName))).sort((a, b) => a.localeCompare(b))
-    const monthEntries = dtrEntries.filter((e) => e.date.startsWith(dtrMonthFilter))
+    const monthEntries = dtrMonthFilter === 'all' ? dtrEntries : dtrEntries.filter((e) => e.date.startsWith(dtrMonthFilter))
     const visibleEntries = (dtrNameFilter === 'All' ? monthEntries : monthEntries.filter((e) => e.employeeName === dtrNameFilter))
       .slice()
       .sort((a, b) => a.date.localeCompare(b.date) || a.employeeName.localeCompare(b.employeeName))
     const totalMinutesVisible = visibleEntries.reduce((sum, e) => sum + getDtrEntryMinutes(e), 0)
     const daysLoggedVisible = new Set(visibleEntries.map((e) => e.date)).size
-    const shiftTargetMinutes = 8 * 60
-
     // Group every entry into an employee+month "record" — this is what makes the
     // DTR feel like a normal records system: create one, open one, delete one.
     type DtrRecordSummary = { employeeName: string; month: string; daysLogged: number; totalMinutes: number; lastUpdated: string }
@@ -5024,7 +4664,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </button>
           <div className="dtr-header-title">
             <p>Operations desk · <button type="button" className="dtr-breadcrumb-btn" onClick={() => setDtrView('records')}>All records</button></p>
-            <h1>{dtrNameFilter === 'All' ? 'Daily Time Record' : dtrNameFilter} {dtrNameFilter !== 'All' && <span className="dtr-header-month">· {new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>}</h1>
+            <h1>{dtrNameFilter === 'All' ? 'Daily Time Record' : dtrNameFilter} {dtrNameFilter !== 'All' && <span className="dtr-header-month">· {dtrMonthFilter === 'all' ? 'All Records' : new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>}</h1>
           </div>
           <div className="dtr-live-clock no-print">
             <span className="dtr-live-clock-dot" />
@@ -5145,12 +4785,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <option value="All">All employees</option>
                 {knownNames.map((name) => <option key={name} value={name}>{name}</option>)}
               </select>
-              <input
-                type="month"
+              <select
                 className="dtr-month-input"
                 value={dtrMonthFilter}
                 onChange={(e) => setDtrMonthFilter(e.target.value)}
-              />
+              >
+                <option value="all">All months</option>
+                {Array.from(new Set(dtrEntries.map((e) => e.date.slice(0, 7)))).sort((a, b) => b.localeCompare(a)).map((m) => (
+                  <option key={m} value={m}>{new Date(`${m}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</option>
+                ))}
+              </select>
             </div>
 
             {/* ── PRINT-ONLY: Full government-style DTR template ── */}
@@ -5177,7 +4821,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <div className="dtr-print-doc-meta-field">
                   <span className="dtr-print-doc-meta-label">Period Covered</span>
                   <strong className="dtr-print-doc-meta-value">
-                    {new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                    {dtrMonthFilter === 'all'
+                      ? 'All Records'
+                      : new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                   </strong>
                 </div>
                 <div className="dtr-print-doc-meta-field">
@@ -5205,6 +4851,27 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 </thead>
                 <tbody>
                   {(() => {
+                    if (dtrMonthFilter === 'all') {
+                      // All months: show every entry sorted by date
+                      return visibleEntries.map((entry) => {
+                        const d = new Date(`${entry.date}T00:00:00`)
+                        const weekday = d.getDay()
+                        const isWeekend = weekday === 0 || weekday === 6
+                        const minutes = getDtrEntryMinutes(entry)
+                        return (
+                          <tr key={entry.id} className={`dtr-print-tr ${isWeekend ? 'dtr-print-tr-weekend' : ''} dtr-print-tr-has-entry`}>
+                            <td className="dtr-print-td-date">{entry.date}</td>
+                            <td className="dtr-print-td-day">{d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase()}</td>
+                            <td className="dtr-print-td-time">{formatTimeForDisplay(entry.amIn)}</td>
+                            <td className="dtr-print-td-time">{formatTimeForDisplay(entry.amOut)}</td>
+                            <td className="dtr-print-td-time">{formatTimeForDisplay(entry.pmIn)}</td>
+                            <td className="dtr-print-td-time">{formatTimeForDisplay(entry.pmOut)}</td>
+                            <td className="dtr-print-td-total">{minutes > 0 ? formatMinutesAsHm(minutes) : ''}</td>
+                            <td className="dtr-print-td-notes">{entry.notes || ''}</td>
+                          </tr>
+                        )
+                      })
+                    }
                     const [yr, mo] = dtrMonthFilter.split('-').map(Number)
                     const daysInMonth = new Date(yr, mo, 0).getDate()
                     const entryMap = new Map(visibleEntries.map((e) => [e.date, e]))
@@ -5345,7 +5012,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <div className="dtr-empty">
                   <Clock3 size={28} />
                   <p>No time records for this period.</p>
-                  <span>Use the form on the left to log an entry, or pick a different month.</span>
+                  <span>Use the form on the left to log an entry{dtrMonthFilter !== 'all' ? ', or pick a different month' : ''}.</span>
                 </div>
               ) : (
                 visibleEntries.map((entry) => {
@@ -5355,8 +5022,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   return (
                     <div className={`dtr-row ${isToday ? 'dtr-row-today' : ''}`} key={entry.id}>
                       <div className="dtr-row-date">
-                        <span className="dtr-row-day">{new Date(`${entry.date}T00:00:00`).getDate()}</span>
-                        <span className="dtr-row-weekday">{new Date(`${entry.date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short' })}</span>
+                        <span className="dtr-row-day">
+                          {dtrMonthFilter === 'all'
+                            ? new Date(`${entry.date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                            : new Date(`${entry.date}T00:00:00`).getDate()}
+                        </span>
+                        <span className="dtr-row-weekday">
+                          {dtrMonthFilter === 'all'
+                            ? new Date(`${entry.date}T00:00:00`).getFullYear()
+                            : new Date(`${entry.date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short' })}
+                        </span>
                       </div>
                       <div className="dtr-row-main">
                         <p className="dtr-row-name">
@@ -5396,9 +5071,11 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
   const activeProjects = bookings.length
   const inquiryCount = bookings.filter((b) => b.status === 'Inquiry').length
   const confirmedCount = bookings.filter((b) => b.status === 'Confirmed').length
-  const invoiceCount = bookings.filter((b) => b.status === 'Invoice').length
   const quotationCount = bookings.filter((b) => b.status === 'Quotation' || b.status === 'Inquiry').length
   const totalBookingValue = bookings.reduce((sum, b) => sum + getBookingClientTotal(b), 0)
+
+  const currentYear = new Date().getFullYear()
+  const currentMonth = new Date().getMonth() // 0-indexed
 
   const filteredBookings = (
     activeBookingFilter === 'All'
@@ -5406,9 +5083,10 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       : bookings.filter((b) => b.status === activeBookingFilter)
   ).filter((b) => {
     const q = searchTerm.trim().toLowerCase()
-    if (!q) return true
-    return [b.clientName, b.packageName, b.destination, b.quotationNo, b.status]
+    const matchesSearch = !q || [b.clientName, b.packageName, b.destination, b.quotationNo, b.status]
       .join(' ').toLowerCase().includes(q)
+    const bookingYear = new Date(b.createdAt || Date.now()).getFullYear()
+    return matchesSearch && bookingYear === activeYear
   })
 
   const statusCounts = bookingListFilters.reduce(
@@ -5420,6 +5098,30 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     }),
     {} as Record<BookingListFilter, number>,
   )
+
+  // Build months up to current month for the current year, all 12 for past years
+  const ALL_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
+  const visibleMonths = ALL_MONTHS.filter((_, i) => activeYear < currentYear || i <= currentMonth)
+  const monthMap = new Map<string, typeof filteredBookings>()
+  for (const b of filteredBookings) {
+    const d = b.createdAt ? new Date(b.createdAt) : new Date()
+    const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    if (!monthMap.has(monthKey)) monthMap.set(monthKey, [])
+    monthMap.get(monthKey)!.push(b)
+  }
+  const bookingsByMonth = visibleMonths.map((name, i) => {
+    const monthIndex = activeYear < currentYear ? i + 1 : ALL_MONTHS.indexOf(name) + 1
+    const monthKey = `${activeYear}-${String(monthIndex).padStart(2, '0')}`
+    return { monthKey, label: name, items: monthMap.get(monthKey) ?? [] }
+  })
+  const availableYears = Array.from(
+    new Set(bookings.map(b => new Date(b.createdAt || Date.now()).getFullYear()))
+  ).sort((a, b) => b - a)
+  if (!availableYears.includes(activeYear)) availableYears.unshift(activeYear)
+
+  function toggleMonth(monthKey: string) {
+    setExpandedMonth(prev => prev === monthKey ? null : monthKey)
+  }
 
   return (
     <main className="home-screen">
@@ -5464,6 +5166,18 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           <button type="button" onClick={handleLogout} title="Log out">
             <LogOut size={18} />
           </button>
+          <button
+              type="button"
+              className="nav-text-action"
+              onClick={() => {
+                window.open('https://docs.google.com/spreadsheets/d/1zG7bnW7p8SYF6-CpU4fKUdmA3wmlnvrXhMQE02wQRtc/edit', '_blank')
+                void syncAllToSheets()
+              }}
+              disabled={isSyncingAll}
+              title="Sync all Confirmed/Flown bookings to Google Sheets"
+            >
+              {isSyncingAll ? '⏳ Syncing...' : '📤 Sync Sheets'}
+            </button>
         </div>
       </nav>
 
@@ -5560,13 +5274,13 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           <section className="pipeline-panel">
             <div className="pipeline-heading">
               <div>
-                <p>Workflow</p>
+                <p>Internal</p>
                 <h2>Booking pipeline</h2>
               </div>
               <span>{activeProjects} total</span>
             </div>
             <div className="pipeline-list">
-              {bookingListFilters.slice(1).map((filter, index) => {
+              {bookingListFilters.slice(1).filter(f => !['Inquiry','Quotation','Invoice','Confirmed','Flown'].includes(f.value)).map((filter, index) => {
                 const count = statusCounts[filter.value]
                 const progress = activeProjects > 0 ? (count / activeProjects) * 100 : 0
 
@@ -5623,7 +5337,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </label>
 
           <div className="booking-tabs" role="tablist">
-            {bookingListFilters.map((f) => (
+            {bookingListFilters.filter(f => !['Inquiry','Breakdown','Purchase Order'].includes(f.value)).map((f) => (
               <button
                 key={f.value}
                 type="button"
@@ -5638,54 +5352,74 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             ))}
           </div>
 
-          <div className="project-list">
-            {filteredBookings.length === 0 && (
-              <div className="empty-list">
-                <FileText size={26} />
-                <strong>{searchTerm.trim() ? 'No matching records' : 'No records yet'}</strong>
-                <span>
-                  {searchTerm.trim()
-                    ? 'Try a different client name, package, or quotation number.'
-                    : 'New inquiries saved here will appear after data gathering.'}
-                </span>
-              </div>
-            )}
-            {filteredBookings.map((booking) => (
+          {/* Year selector */}
+          <div className="year-selector">
+            {availableYears.map(y => (
               <button
-                key={booking.id}
+                key={y}
                 type="button"
-                className={`project-card status-${booking.status.toLowerCase().replaceAll(' ', '-')}`}
-                onClick={() => openBookingDetail(booking.id)}
-              >
-                <div className="project-main">
-                  <div className="project-icon"><FileText size={20} /></div>
-                  <div>
-                    <strong>{booking.packageName}</strong>
-                    <span>{booking.clientName}</span>
-                  </div>
-                </div>
-                <div className="project-meta">
-                  <span className="status-pill">{booking.status}</span>
-                  <span><CalendarDays size={14} />{formatProjectDate(booking.createdAt)}</span>
-                  <span><MapPin size={14} />{formatAmount(String(getBookingClientTotal(booking)))}</span>
-                  {(booking.createdByName || (booking as any).createdByEmail) && (
-                    <span className="booking-by-tag">
-                      By: {booking.createdByName || getDisplayName((booking as any).createdByEmail)}
-                    </span>
-                  )}
-                  <ChevronRight size={17} />
-                </div>
-              </button>
+                className={`year-tab ${y === activeYear ? 'active' : ''}`}
+                onClick={() => setActiveYear(y)}
+              >{y}</button>
             ))}
+          </div>
+
+          <div className="project-list">
+            {bookingsByMonth.map(({ monthKey, label, items }) => {
+              const isOpen = expandedMonth === monthKey
+              return (
+                <div key={monthKey} className="month-group">
+                  <button
+                    type="button"
+                    className={`month-group-header ${isOpen ? 'open' : ''}`}
+                    onClick={() => toggleMonth(monthKey)}
+                  >
+                    <ChevronDown size={14} style={{ transform: isOpen ? 'none' : 'rotate(-90deg)', transition: 'transform 0.2s' }} />
+                    <span>{label}</span>
+                    {items.length > 0 && <strong>{items.length}</strong>}
+                  </button>
+                  {isOpen && (
+                    <div className="month-group-items">
+                      {items.length === 0 ? (
+                        <p className="month-empty">No projects in {label}.</p>
+                      ) : items.map((booking) => (
+                        <button
+                          key={booking.id}
+                          type="button"
+                          className={`project-card status-${booking.status.toLowerCase().replaceAll(' ', '-')}`}
+                          onClick={() => openBookingDetail(booking.id)}
+                        >
+                          <div className="project-main">
+                            <div className="project-icon"><FileText size={20} /></div>
+                            <div>
+                              <strong>{booking.packageName}</strong>
+                              <span>{booking.clientName}</span>
+                            </div>
+                          </div>
+                          <div className="project-meta">
+                            <span className="status-pill">{booking.status}</span>
+                            <span><CalendarDays size={14} />{formatProjectDate(booking.createdAt)}</span>
+                            <span><MapPin size={14} />{formatAmount(String(getBookingClientTotal(booking)))}</span>
+                            {(booking.createdByName || (booking as any).createdByEmail) && (
+                              <span className="booking-by-tag">
+                                By: {booking.createdByName || getDisplayName((booking as any).createdByEmail)}
+                              </span>
+                            )}
+                            <ChevronRight size={17} />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
 
           <div style={{ marginTop: 'auto', paddingTop: '14px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ color: 'var(--muted)', fontSize: '.78rem', fontWeight: 700 }}>
               {filteredBookings.length} record{filteredBookings.length !== 1 ? 's' : ''}
               {activeBookingFilter !== 'All' ? ` · ${activeBookingFilter}` : ''}
-            </span>
-            <span style={{ color: 'var(--teal)', fontSize: '.78rem', fontWeight: 800 }}>
-              {formatAmount(String(totalBookingValue))} total
             </span>
           </div>
         </section>
@@ -5743,12 +5477,36 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 : ''
               const initials = msg.senderName ? msg.senderName.split(' ').map((n: string) => n[0]).join('').slice(0,2).toUpperCase() : '?'
               const reactions = msg.reactions as Record<string, string[]> | undefined
-              const seenBy = (msg.seenBy || []) as string[]
-              const seenByOthers = seenBy.filter((e: string) => e !== authUser?.email)
-              const showSeen = isMe && isLast && seenByOthers.length > 0
               const isUnsent = !!msg.unsent
               const isHovered = hoveredMsgId === msg.id
               const replyTo = msg.replyTo as { id: string; text: string; senderName: string } | undefined
+
+              // Normalize seenBy — may be old plain strings (email) or new {email, name} objects
+              type SeenEntry = string | { email: string; name: string }
+              const rawSeenBy = (msg.seenBy || []) as SeenEntry[]
+              const seenEntries = rawSeenBy
+                .map(e => typeof e === 'string' ? { email: e, name: e.split('@')[0] } : e)
+                .filter(e => e.email !== authUser?.email)
+
+              // For per-message WhatsApp-style seen: show a name under the LAST message
+              // each teammate has seen among MY sent messages
+              const seenHereBy: { email: string; name: string }[] = []
+              if (isMe && !isUnsent) {
+                seenEntries.forEach(entry => {
+                  // Find the last index of MY messages that this person has seen
+                  let lastSeenIdx = -1
+                  chatMessages.forEach((m, i) => {
+                    if (m.senderEmail !== authUser?.email) return
+                    const raw = (m.seenBy || []) as SeenEntry[]
+                    const hasEntry = raw.some(e =>
+                      typeof e === 'string' ? e === entry.email : e.email === entry.email
+                    )
+                    if (hasEntry) lastSeenIdx = i
+                  })
+                  if (lastSeenIdx === idx) seenHereBy.push(entry)
+                })
+              }
+              const showSeen = seenHereBy.length > 0
               return (
                 <div
                   key={msg.id}
@@ -5870,10 +5628,22 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                       </div>
                     )}
 
-                    {/* Seen indicator */}
+                    {/* Seen indicator — shows first name of each person who last read here */}
                     {showSeen && (
-                      <div className="chat-seen">
-                        Seen by {seenByOthers.map((e: string) => e.split('@')[0]).join(', ')}
+                      <div className="chat-seen-row">
+                        <span className="chat-seen-check">✓✓</span>
+                        <span className="chat-seen-label">
+                          {'Seen by '}
+                          {seenHereBy.map((e, i) => {
+                            const firstName = e.name.trim().split(/\s+/)[0]
+                            return (
+                              <span key={e.email}>
+                                {i > 0 && ', '}
+                                <strong>{firstName}</strong>
+                              </span>
+                            )
+                          })}
+                        </span>
                       </div>
                     )}
                   </div>
