@@ -225,6 +225,7 @@ function App() {
   }, [isDark])
 
   const [isPdfExporting, setIsPdfExporting] = useState(false)
+  const [isSyncingAll, setIsSyncingAll] = useState(false)
   const [isJpgExporting, setIsJpgExporting] = useState(false)
   const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
@@ -467,6 +468,42 @@ function App() {
       })
     })
   }, [bookingsFlownKey, authUser])
+
+  async function syncAllToSheets() {
+    const eligible = bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown')
+    if (eligible.length === 0) {
+      setDataMessage('No Confirmed or Flown bookings to sync.')
+      return
+    }
+    setIsSyncingAll(true)
+    setDataMessage(`Syncing ${eligible.length} booking(s) to Google Sheets...`)
+    let success = 0
+    for (const booking of eligible) {
+      try {
+        const res = await fetch('/api/sheets-append', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            createdAt: booking.createdAt,
+            clientName: booking.clientName,
+            travelStart: booking.travelStart,
+            travelEnd: booking.travelEnd,
+            packageName: booking.packageName,
+            sellingPrice: booking.sellingPrice,
+            nettCost: booking.nettCost,
+            invoiceAmountPaid: booking.invoiceAmountPaid,
+            status: booking.status,
+            currency: (booking as any).currency || 'PHP',
+          }),
+        })
+        if (res.ok) success++
+      } catch {
+        // continue with next booking
+      }
+    }
+    setIsSyncingAll(false)
+    setDataMessage(`✅ Synced ${success} of ${eligible.length} booking(s) to Google Sheets.`)
+  }
 
   async function handleSaveDtrEntry(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -5070,6 +5107,17 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           <button type="button" onClick={handleLogout} title="Log out">
             <LogOut size={18} />
           </button>
+          {isAdmin && (
+            <button
+              type="button"
+              className="nav-text-action"
+              onClick={() => void syncAllToSheets()}
+              disabled={isSyncingAll}
+              title="Sync all Confirmed/Flown bookings to Google Sheets"
+            >
+              {isSyncingAll ? '⏳ Syncing...' : '📤 Sync Sheets'}
+            </button>
+          )}
         </div>
       </nav>
 
