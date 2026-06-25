@@ -1,0 +1,172 @@
+// api/sheets-append.ts
+// Vercel Serverless Function — appends a confirmed/flown booking row to Google Sheets.
+//
+// ENV VARS required (set in Vercel dashboard → Settings → Environment Variables):
+//   GOOGLE_SERVICE_ACCOUNT_EMAIL   — e.g. lion-lamb@your-project.iam.gserviceaccount.com
+//   GOOGLE_PRIVATE_KEY             — the private key from your service account JSON
+//                                    (paste the full "-----BEGIN RSA PRIVATE KEY-----\n..." value)
+//   GOOGLE_SHEET_ID                — the ID from your sheet URL:
+//                                    https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit
+//   GOOGLE_SHEET_NAME              — the tab name, e.g. "Bookings" (defaults to "Sheet1")
+
+import type { VercelRequest, VercelResponse } from '@vercel/node'
+
+// ── Minimal Google Sheets JWT auth ──────────────────────────────────────────
+
+async function getAccessToken(email: string, privateKey: string): Promise<string> {
+  const now = Math.floor(Date.now() / 1000)
+  const header = { alg: 'RS256', typ: 'JWT' }
+  const payload = {
+    iss: email,
+    scope: 'https://www.googleapis.com/auth/spreadsheets',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600,
+  }
+
+  const encode = (obj: object) =>
+    Buffer.from(JSON.stringify(obj)).toString('base64url')
+
+  const unsigned = `${encode(header)}.${encode(payload)}`
+
+  // Import the RSA private key
+  const keyData = privateKey.replace(/\\n/g, '\n')
+  const pemBody = keyData
+    .replace('-----BEGIN RSA PRIVATE KEY-----', '')
+    .replace('-----END RSA PRIVATE KEY-----', '')
+    .replace('-----BEGIN PRIVATE KEY-----', '')
+    .replace('-----END PRIVATE KEY-----', '')
+    .replace(/\s/g, '')
+
+  const binaryKey = Buffer.from(pemBody, 'base64')
+  const cryptoKey = await crypto.subtle.importKey(
+    'pkcs8',
+    binaryKey,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+
+  const signature = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    cryptoKey,
+    Buffer.from(unsigned),
+  )
+
+  const jwt = `${unsigned}.${Buffer.from(signature).toString('base64url')}`
+
+  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt,
+    }),
+  })
+
+  if (!tokenRes.ok) {
+    const err = await tokenRes.text()
+    throw new Error(`Token exchange failed: ${err}`)
+  }
+
+  const { access_token } = await tokenRes.json() as { access_token: string }
+  return access_token
+}
+
+// ── Handler ──────────────────────────────────────────────────────────────────
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' })
+  }
+
+  const {
+    GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    GOOGLE_PRIVATE_KEY,
+    GOOGLE_SHEET_ID,
+    GOOGLE_SHEET_NAME = 'Sheet1',
+  } = process.env
+
+  if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY || !GOOGLE_SHEET_ID) {
+    return res.status(500).json({ error: 'Missing Google Sheets environment variables.' })
+  }
+
+  // Expected body shape — matches BookingRecord fields
+  const {
+    createdAt,
+    clientName,
+    travelStart,
+    travelEnd,
+    packageName,
+    sellingPrice,
+    nettCost,
+    invoiceAmountPaid,
+    status,
+    currency = 'PHP',
+  } = req.body as Record<string, string>
+
+  if (!clientName || !status) {
+    return res.status(400).json({ error: 'Missing required booking fields.' })
+  }
+
+  // ── Build the row matching your spreadsheet columns ──────────────────────
+  // Columns: DATE | NAME | TRAVEL DATE | SERVICE | GROSS | NETT | LLTP | BALANCE | STATUS
+
+  const gross = parseFloat(sellingPrice || '0')
+  const nett = parseFloat(nettCost || '0')
+  const lltp = gross - nett                                     // Gross margin / profit
+  const paid = parseFloat(invoiceAmountPaid || '0')
+  const balance = gross - paid
+
+  const fmt = (n: number) =>
+    n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+  const fmtDate = (iso: string) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    return isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  }
+
+  const travelDate = travelStart && travelEnd
+    ? `${fmtDate(travelStart)} – ${fmtDate(travelEnd)}`
+    : fmtDate(travelStart || travelEnd)
+
+  const row = [
+    fmtDate(createdAt),           // DATE
+    clientName,                   // NAME
+    travelDate,                   // TRAVEL DATE
+    packageName || '',            // SERVICE
+    `${currency} ${fmt(gross)}`,  // GROSS
+    `${currency} ${fmt(nett)}`,   // NETT
+    `${currency} ${fmt(lltp)}`,   // LLTP (profit)
+    balance > 0 ? `${currency} ${fmt(balance)}` : '',  // BALANCE
+    status,                       // STATUS
+  ]
+
+  try {
+    const token = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY)
+
+    const range = encodeURIComponent(`${GOOGLE_SHEET_NAME}!A:I`)
+    const sheetsRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ values: [row] }),
+      },
+    )
+
+    if (!sheetsRes.ok) {
+      const err = await sheetsRes.text()
+      throw new Error(`Sheets API error: ${err}`)
+    }
+
+    return res.status(200).json({ ok: true })
+  } catch (err) {
+    console.error('[sheets-append]', err)
+    return res.status(500).json({ error: String(err) })
+  }
+}
