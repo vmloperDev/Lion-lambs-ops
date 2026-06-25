@@ -476,9 +476,10 @@ function App() {
       return
     }
     setIsSyncingAll(true)
-    setDataMessage(`Syncing ${eligible.length} booking(s) to Google Sheets...`)
     let success = 0
-    for (const booking of eligible) {
+    for (let i = 0; i < eligible.length; i++) {
+      const booking = eligible[i]
+      setDataMessage(`Syncing ${i + 1} of ${eligible.length}...`)
       try {
         const clientTotal = getBookingClientTotal(booking)
         const nettTotal = getBookingBreakdownNettTotal(booking)
@@ -504,6 +505,8 @@ function App() {
       } catch {
         // continue with next booking
       }
+      // Wait 2s between each booking to stay under Google's 60 writes/min limit
+      if (i < eligible.length - 1) await new Promise(r => setTimeout(r, 2000))
     }
     setIsSyncingAll(false)
     setDataMessage(`✅ Synced ${success} of ${eligible.length} booking(s) to Google Sheets.`)
@@ -5116,7 +5119,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               type="button"
               className="nav-text-action"
               onClick={() => {
-                            void syncAllToSheets()
+                window.open('https://docs.google.com/spreadsheets/d/1zG7bnW7p8SYF6-CpU4fKUdmA3wmlnvrXhMQE02wQRtc/edit?gid=0#gid=0', '_blank')
+                void syncAllToSheets()
               }}
               disabled={isSyncingAll}
               title="Sync all Confirmed/Flown bookings to Google Sheets"

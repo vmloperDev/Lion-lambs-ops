@@ -202,8 +202,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}?fields=sheets.properties`,
       { headers: { Authorization: `Bearer ${token}` } }
     )
-    const meta = await metaRes.json() as { sheets: { properties: { title: string; sheetId: number } }[] }
-    const sheetObj = meta.sheets.find((s: any) => s.properties.title === GOOGLE_SHEET_NAME)
+    const meta = await metaRes.json() as { sheets?: { properties: { title: string; sheetId: number } }[] }
+    const sheetObj = (meta.sheets || []).find((s: any) => s.properties.title === GOOGLE_SHEET_NAME)
     const sheetId = sheetObj?.properties.sheetId ?? 0
 
     // Never target row 0 (header) — if somehow matched, skip to end
