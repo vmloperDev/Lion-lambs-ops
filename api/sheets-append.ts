@@ -140,7 +140,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     `${currency} ${fmt(nett)}`,   // NETT
     `${currency} ${fmt(lltp)}`,   // LLTP (profit)
     balance > 0 ? `${currency} ${fmt(balance)}` : '',  // BALANCE
-    status,                       // STATUS
+    paid >= gross && gross > 0 ? 'PAID' : 'NOT PAID',  // STATUS
   ]
 
   try {
