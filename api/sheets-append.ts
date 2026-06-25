@@ -147,7 +147,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     `${currency} ${fmt(gross)}`,
     `${currency} ${fmt(nett)}`,
     `${currency} ${fmt(lltp)}`,
-    balance > 0 ? `${currency} ${fmt(balance)}` : '',
+    balance > 0 ? `${currency} ${fmt(balance)}` : '0',
     isPaid ? 'PAID' : 'NOT PAID',
   ]
 
