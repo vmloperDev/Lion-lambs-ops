@@ -121,10 +121,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const fmt = (n: number) =>
     n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
-  const fmtDate = (iso: string) => {
+  const fmtDate = (iso: string | number) => {
     if (!iso) return ''
-    const d = new Date(iso)
-    return isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    // Handle Firestore timestamps (numbers), ISO strings, and date-only strings (YYYY-MM-DD)
+    let d: Date
+    if (typeof iso === 'number') {
+      d = new Date(iso)
+    } else if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+      // date-only string — parse as local date to avoid timezone shift
+      const [y, m, day] = iso.split('-').map(Number)
+      d = new Date(y, m - 1, day)
+    } else {
+      d = new Date(iso)
+    }
+    return isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   }
 
   const travelDate = travelStart && travelEnd
@@ -163,6 +173,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const err = await sheetsRes.text()
       throw new Error(`Sheets API error: ${err}`)
     }
+
+    // Get sheet tab ID for formatting
+    const metaRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}?fields=sheets.properties`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+    const meta = await metaRes.json() as { sheets: { properties: { title: string; sheetId: number } }[] }
+    const sheetObj = meta.sheets.find((s: any) => s.properties.title === GOOGLE_SHEET_NAME)
+    const sheetId = sheetObj?.properties.sheetId ?? 0
+
+    // Auto-resize columns A-I and clear background colors
+    await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}:batchUpdate`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          requests: [
+            {
+              autoResizeDimensions: {
+                dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 9 },
+              },
+            },
+            {
+              repeatCell: {
+                range: { sheetId, startRowIndex: 1, startColumnIndex: 0, endColumnIndex: 9 },
+                cell: {
+                  userEnteredFormat: {
+                    backgroundColor: { red: 1, green: 1, blue: 1, alpha: 1 },
+                  },
+                },
+                fields: 'userEnteredFormat.backgroundColor',
+              },
+            },
+          ],
+        }),
+      },
+    )
 
     return res.status(200).json({ ok: true })
   } catch (err) {
