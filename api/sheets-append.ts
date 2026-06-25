@@ -238,7 +238,7 @@ function buildDataRowRequests(sheetId: number, rowIndex: number, isPaid: boolean
   ]
 }
 
-// ── Ensure a tab exists; create it with styled header if not ─────────────────
+// ── Ensure a tab exists; create it if not. Always re-applies header styling. ─
 
 async function ensureTab(
   token: string,
@@ -247,29 +247,33 @@ async function ensureTab(
   existingSheets: { title: string; sheetId: number }[],
 ): Promise<number> {
   const found = existingSheets.find(s => s.title === tabName)
-  if (found) return found.sheetId
+  let sheetId: number
 
-  // Create the tab
-  const createRes = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
-    {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requests: [{ addSheet: { properties: { title: tabName } } }],
-      }),
-    },
-  )
-  if (!createRes.ok) {
-    const err = await createRes.text()
-    throw new Error(`Failed to create tab "${tabName}": ${err}`)
+  if (found) {
+    sheetId = found.sheetId
+  } else {
+    // Create the tab
+    const createRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requests: [{ addSheet: { properties: { title: tabName } } }],
+        }),
+      },
+    )
+    if (!createRes.ok) {
+      const err = await createRes.text()
+      throw new Error(`Failed to create tab "${tabName}": ${err}`)
+    }
+    const createData = await createRes.json() as {
+      replies: { addSheet: { properties: { sheetId: number } } }[]
+    }
+    sheetId = createData.replies[0].addSheet.properties.sheetId
   }
-  const createData = await createRes.json() as {
-    replies: { addSheet: { properties: { sheetId: number } } }[]
-  }
-  const newSheetId = createData.replies[0].addSheet.properties.sheetId
 
-  // Write header values
+  // Always write header values (safe to overwrite row 1)
   const headerRange = encodeURIComponent(`${tabName}!A1:I1`)
   await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${headerRange}?valueInputOption=RAW`,
@@ -280,17 +284,17 @@ async function ensureTab(
     },
   )
 
-  // Apply header styling + column widths
+  // Always re-apply header styling + column widths
   await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
     {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requests: buildHeaderRequests(newSheetId) }),
+      body: JSON.stringify({ requests: buildHeaderRequests(sheetId) }),
     },
   )
 
-  return newSheetId
+  return sheetId
 }
 
 // ── Handler ──────────────────────────────────────────────────────────────────
