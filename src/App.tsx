@@ -5277,9 +5277,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               {filteredBookings.length} record{filteredBookings.length !== 1 ? 's' : ''}
               {activeBookingFilter !== 'All' ? ` · ${activeBookingFilter}` : ''}
             </span>
-            <span style={{ color: 'var(--teal)', fontSize: '.78rem', fontWeight: 800 }}>
-              {formatAmount(String(totalBookingValue))} total
-            </span>
           </div>
         </section>
       </div>
