@@ -474,10 +474,13 @@ function App() {
       return
     }
     setIsSyncingAll(true)
+    setDataError('')
+    setDataMessage('')
     let success = 0
+    const failures: string[] = []
     for (let i = 0; i < eligible.length; i++) {
       const booking = eligible[i]
-      setDataMessage(`Syncing ${i + 1} of ${eligible.length}...`)
+      setDataMessage(`Syncing ${i + 1} of ${eligible.length}: ${booking.clientName}...`)
       try {
         const clientTotal = getBookingClientTotal(booking)
         const nettTotal = getBookingBreakdownNettTotal(booking)
@@ -499,15 +502,29 @@ function App() {
             currency: (booking as any).currency || 'PHP',
           }),
         })
-        if (res.ok) success++
-      } catch {
-        // continue with next booking
+        if (res.ok) {
+          success++
+        } else {
+          const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string }
+          failures.push(`${booking.clientName}: ${body.error ?? `HTTP ${res.status}`}`)
+        }
+      } catch (err) {
+        failures.push(`${booking.clientName}: ${err instanceof Error ? err.message : 'Network error'}`)
       }
       // Wait 2s between each booking to stay under Google's 60 writes/min limit
       if (i < eligible.length - 1) await new Promise(r => setTimeout(r, 2000))
     }
     setIsSyncingAll(false)
-    setDataMessage(`✅ Synced ${success} of ${eligible.length} booking(s) to Google Sheets.`)
+    if (failures.length === 0) {
+      setDataMessage(`✅ Synced ${success} of ${eligible.length} booking(s) to Google Sheets.`)
+      setDataError('')
+    } else if (success === 0) {
+      setDataMessage('')
+      setDataError(`❌ Sync failed. ${failures[0]}`)
+    } else {
+      setDataMessage(`⚠️ Synced ${success} of ${eligible.length}. Failed: ${failures.join('; ')}`)
+      setDataError('')
+    }
   }
 
   async function handleSaveDtrEntry(event: React.FormEvent<HTMLFormElement>) {
@@ -5113,10 +5130,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           <button
               type="button"
               className="nav-text-action"
-              onClick={() => {
-                window.open('https://docs.google.com/spreadsheets/d/1zG7bnW7p8SYF6-CpU4fKUdmA3wmlnvrXhMQE02wQRtc/edit?gid=0#gid=0', '_blank')
-                void syncAllToSheets()
-              }}
+              onClick={() => { void syncAllToSheets() }}
               disabled={isSyncingAll}
               title="Sync all Confirmed/Flown bookings to Google Sheets"
             >
