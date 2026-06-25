@@ -444,7 +444,25 @@ function App() {
     })
   }, [authUser])
 
-  async function handleSaveDtrEntry(event: React.FormEvent<HTMLFormElement>) {
+  // Auto-flip bookings to "Flown" once their travel end date has passed
+  useEffect(() => {
+    if (!authUser || bookings.length === 0) return
+    const today = new Date().toISOString().slice(0, 10)
+    const toFlown = bookings.filter(b =>
+      b.status !== 'Flown' &&
+      b.travelEnd &&
+      b.travelEnd < today
+    )
+    if (toFlown.length === 0) return
+    toFlown.forEach(b => {
+      const updatedBooking = { ...b, status: 'Flown' as BookingStatus }
+      setBookings(prev => prev.map(x => x.id === b.id ? updatedBooking : x))
+      void setDoc(doc(db, getBookingOwnerPath(b, authUser.uid), b.id), {
+        status: 'Flown',
+        updatedAt: new Date().toISOString(),
+      }, { merge: true })
+    })
+  }, [bookings.map(b => b.id + b.status + b.travelEnd).join(','), authUser])
     event.preventDefault()
     if (!authUser) return
     if (!dtrForm.employeeName.trim()) {
@@ -5138,7 +5156,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>{activeProjects} total</span>
             </div>
             <div className="pipeline-list">
-              {bookingListFilters.slice(1).filter(f => !['Inquiry','Quotation','Invoice','Confirmed'].includes(f.value)).map((filter, index) => {
+              {bookingListFilters.slice(1).filter(f => !['Inquiry','Quotation','Invoice','Confirmed','Flown'].includes(f.value)).map((filter, index) => {
                 const count = statusCounts[filter.value]
                 const progress = activeProjects > 0 ? (count / activeProjects) * 100 : 0
 
