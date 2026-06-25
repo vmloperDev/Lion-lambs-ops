@@ -227,6 +227,7 @@ function App() {
   const [isJpgExporting, setIsJpgExporting] = useState(false)
   const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
+  const [bookingCreatedAt, setBookingCreatedAt] = useState(() => new Date().toISOString().slice(0, 10))
   // Holds the exact booking object built at save-time so templates always
   // reflect the latest saved data regardless of Firestore snapshot timing.
   const lastSavedBookingRef = useRef<BookingRecord | null>(null)
@@ -991,6 +992,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     freshForm.invoiceLineItemsJson = JSON.stringify(initialInvoice)
     freshForm.breakdownLineItemsJson = JSON.stringify(initialBreakdown)
     
+    setBookingCreatedAt(new Date().toISOString().slice(0, 10))
     setBookingForm(freshForm)
     setScreen('data-form')
   }
@@ -1038,6 +1040,11 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       } catch(e) {}
     }
 
+    setBookingCreatedAt(
+      selectedBooking.createdAt
+        ? new Date(selectedBooking.createdAt).toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10)
+    )
     setBookingForm(normalized)
     setScreen('data-form')
   }
@@ -1268,7 +1275,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       unitPrice: String(calculatedUnitPrice),
       sellingPrice: String(getBookingClientTotal(bookingForm)),
       id: editingBookingId || `BK-${Date.now()}`,
-      createdAt: existingBooking?.createdAt || new Date().toISOString(),
+      createdAt: bookingCreatedAt
+        ? new Date(bookingCreatedAt + 'T00:00:00').toISOString()
+        : (existingBooking?.createdAt || new Date().toISOString()),
       createdByName: bookingForm.createdByName || authUser?.displayName || '',
       ownerId: existingBooking?.ownerId || authUser?.uid,
     }
@@ -2004,6 +2013,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <label>
                 Prepared by
                 <input required value={bookingForm.preparedBy} onChange={(e) => updateBookingField('preparedBy', e.target.value)} placeholder="Agent Name" />
+              </label>
+              <label>
+                Date created
+                <input
+                  type="date"
+                  value={bookingCreatedAt}
+                  onChange={(e) => setBookingCreatedAt(e.target.value)}
+                  max={new Date().toISOString().slice(0, 10)}
+                />
               </label>
             </div>
 
