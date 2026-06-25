@@ -507,6 +507,7 @@ function App() {
     }
     setIsSyncingAll(false)
     setDataMessage(`✅ Synced ${success} of ${eligible.length} booking(s) to Google Sheets.`)
+    window.open('https://docs.google.com/spreadsheets/d/1zG7bnW7p8SYF6-CpU4fKUdmA3wmlnvrXhMQE02wQRtc/edit?gid=0#gid=0', '_blank')
   }
 
   async function handleSaveDtrEntry(event: React.FormEvent<HTMLFormElement>) {
