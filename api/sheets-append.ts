@@ -255,7 +255,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 fields: 'userEnteredFormat.backgroundColor,userEnteredFormat.textFormat',
               },
             },
-            // 3. Auto-resize all columns A–I
+            // 3. Sort all data rows by date column A — oldest first (ascending)
+            {
+              sortRange: {
+                range: { sheetId, startRowIndex: 1, startColumnIndex: 0, endColumnIndex: 9 },
+                sortSpecs: [{ dimensionIndex: 0, sortOrder: 'ASCENDING' }],
+              },
+            },
+            // 4. Auto-resize all columns A–I
             {
               autoResizeDimensions: {
                 dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 9 },
