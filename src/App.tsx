@@ -5130,13 +5130,13 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           <section className="pipeline-panel">
             <div className="pipeline-heading">
               <div>
-                <p>Workflow</p>
+                <p>Internal</p>
                 <h2>Booking pipeline</h2>
               </div>
               <span>{activeProjects} total</span>
             </div>
             <div className="pipeline-list">
-              {bookingListFilters.slice(1).filter(f => !['Inquiry','Breakdown','Purchase Order'].includes(f.value)).map((filter, index) => {
+              {bookingListFilters.slice(1).filter(f => !['Inquiry','Quotation','Invoice','Confirmed'].includes(f.value)).map((filter, index) => {
                 const count = statusCounts[filter.value]
                 const progress = activeProjects > 0 ? (count / activeProjects) * 100 : 0
 
