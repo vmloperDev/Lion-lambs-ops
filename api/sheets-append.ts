@@ -29,7 +29,6 @@ async function getAccessToken(email: string, privateKey: string): Promise<string
 
   const unsigned = `${encode(header)}.${encode(payload)}`
 
-  // Import the RSA private key
   const keyData = privateKey.replace(/\\n/g, '\n')
   const pemBody = keyData
     .replace('-----BEGIN RSA PRIVATE KEY-----', '')
@@ -91,7 +90,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'Missing Google Sheets environment variables.' })
   }
 
-  // Expected body shape — matches BookingRecord fields
   const {
     createdAt,
     clientName,
@@ -110,15 +108,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Missing required booking fields.' })
   }
 
-  // ── Build the row matching your spreadsheet columns ──────────────────────
-  // Columns: DATE | NAME | TRAVEL DATE | SERVICE | GROSS | NETT | LLTP | BALANCE | STATUS
-  // Values come pre-computed from 5A (Client Total, Supplier Nett, Est. Profit)
-
   const gross = parseFloat(sellingPrice || '0')
   const nett = parseFloat(nettCost || '0')
   const lltp = estProfit !== undefined ? parseFloat(estProfit) : gross - nett
   const paid = parseFloat(invoiceAmountPaid || '0')
   const balance = gross - paid
+  const isPaid = paid >= gross && gross > 0
 
   const fmt = (n: number) =>
     n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -128,7 +123,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let d: Date
     const n = typeof iso === 'string' ? Number(iso) : iso
     if (typeof iso === 'number' || (!isNaN(n) && String(iso).length >= 10)) {
-      // Unix timestamp in milliseconds (13 digits) or seconds (10 digits)
       d = n > 1e10 ? new Date(n) : new Date(n * 1000)
     } else if (typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso)) {
       const [y, m, day] = iso.split('-').map(Number)
@@ -137,7 +131,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       d = new Date(iso)
     }
     if (isNaN(d.getTime())) return String(iso)
-    // Return as plain text string so Sheets never interprets it as a serial number
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   }
 
@@ -146,21 +139,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     : fmtDate(travelStart || travelEnd)
 
   const row = [
-    fmtDate(createdAt),           // DATE
-    clientName,                   // NAME
-    travelDate,                   // TRAVEL DATE
-    packageName || '',            // SERVICE
-    `${currency} ${fmt(gross)}`,  // GROSS
-    `${currency} ${fmt(nett)}`,   // NETT
-    `${currency} ${fmt(lltp)}`,   // LLTP (profit)
-    balance > 0 ? `${currency} ${fmt(balance)}` : '',  // BALANCE
-    paid >= gross && gross > 0 ? 'PAID' : 'NOT PAID',  // STATUS
+    fmtDate(createdAt),
+    clientName,
+    travelDate,
+    packageName || '',
+    `${currency} ${fmt(gross)}`,
+    `${currency} ${fmt(nett)}`,
+    `${currency} ${fmt(lltp)}`,
+    balance > 0 ? `${currency} ${fmt(balance)}` : '',
+    isPaid ? 'PAID' : 'NOT PAID',
   ]
 
   try {
     const token = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY)
 
-    // ── Check for existing row and update it, or append if new ─────────────
     const existingRes = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${encodeURIComponent(GOOGLE_SHEET_NAME + '!A:I')}`,
       { headers: { Authorization: `Bearer ${token}` } }
@@ -175,7 +167,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     )
 
     if (existingRowIndex !== -1) {
-      // Row exists — update it in place (rowIndex is 0-based, Sheets API is 1-based)
       const updateRange = encodeURIComponent(`${GOOGLE_SHEET_NAME}!A${existingRowIndex + 1}:I${existingRowIndex + 1}`)
       const updateRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=RAW`,
@@ -190,27 +181,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         throw new Error(`Sheets update error: ${err}`)
       }
     } else {
-      // New row — append it
       const range = encodeURIComponent(`${GOOGLE_SHEET_NAME}!A:I`)
       const sheetsRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ values: [row] }),
         },
-        body: JSON.stringify({ values: [row] }),
-      },
-    )
-
+      )
       if (!sheetsRes.ok) {
         const err = await sheetsRes.text()
         throw new Error(`Sheets API error: ${err}`)
       }
-    } // end else (new row append)
+    }
 
-    // Get sheet tab ID for formatting
+    // ── Get sheet tab ID for formatting ────────────────────────────────────
     const metaRes = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}?fields=sheets.properties`,
       { headers: { Authorization: `Bearer ${token}` } }
@@ -219,31 +205,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const sheetObj = meta.sheets.find((s: any) => s.properties.title === GOOGLE_SHEET_NAME)
     const sheetId = sheetObj?.properties.sheetId ?? 0
 
-    // Auto-resize columns A-I and clear background colors
+    const targetRowIndex = existingRowIndex !== -1 ? existingRowIndex : rows.length
+
+    // ── Formatting ─────────────────────────────────────────────────────────
     await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}:batchUpdate`,
       {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           requests: [
-            {
-              autoResizeDimensions: {
-                dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 9 },
-              },
-            },
+            // 1. Wrap text on all data rows so nothing gets cropped
             {
               repeatCell: {
                 range: { sheetId, startRowIndex: 1, startColumnIndex: 0, endColumnIndex: 9 },
                 cell: {
                   userEnteredFormat: {
+                    wrapStrategy: 'WRAP',
                     backgroundColor: { red: 1, green: 1, blue: 1, alpha: 1 },
                   },
                 },
-                fields: 'userEnteredFormat.backgroundColor',
+                fields: 'userEnteredFormat.wrapStrategy,userEnteredFormat.backgroundColor',
+              },
+            },
+            // 2. Status cell: bold colored text, no background fill
+            {
+              repeatCell: {
+                range: {
+                  sheetId,
+                  startRowIndex: targetRowIndex,
+                  endRowIndex: targetRowIndex + 1,
+                  startColumnIndex: 8, // column I — STATUS
+                  endColumnIndex: 9,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    backgroundColor: { red: 1, green: 1, blue: 1, alpha: 1 }, // white / no fill
+                    textFormat: {
+                      bold: true,
+                      // Dark green for PAID, dark red for NOT PAID
+                      foregroundColor: isPaid
+                        ? { red: 0.106, green: 0.490, blue: 0.216, alpha: 1 } // #1B7C37
+                        : { red: 0.714, green: 0.110, blue: 0.110, alpha: 1 }, // #B61C1C
+                    },
+                  },
+                },
+                fields: 'userEnteredFormat.backgroundColor,userEnteredFormat.textFormat',
+              },
+            },
+            // 3. Auto-resize all columns A–I
+            {
+              autoResizeDimensions: {
+                dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 9 },
               },
             },
           ],
