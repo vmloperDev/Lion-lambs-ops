@@ -3,6 +3,7 @@
 // Fire-and-forget — a failure logs to console but never blocks the user.
 
 import type { BookingRecord, BookingStatus } from './types'
+import { getBookingClientTotal, getBookingBreakdownNettTotal } from './utils'
 
 const TRIGGER_STATUSES = new Set<BookingStatus>(['Confirmed', 'Flown'])
 
@@ -12,6 +13,11 @@ export function shouldSyncToSheets(status: BookingStatus): boolean {
 
 export async function syncBookingToSheets(booking: BookingRecord): Promise<void> {
   if (!shouldSyncToSheets(booking.status)) return
+
+  // Compute totals from section 5A line items (same source as the UI displays)
+  const clientTotal = getBookingClientTotal(booking)
+  const nettTotal = getBookingBreakdownNettTotal(booking)
+  const estProfit = clientTotal - nettTotal
 
   try {
     const res = await fetch('/api/sheets-append', {
@@ -23,8 +29,9 @@ export async function syncBookingToSheets(booking: BookingRecord): Promise<void>
         travelStart: booking.travelStart,
         travelEnd: booking.travelEnd,
         packageName: booking.packageName,
-        sellingPrice: booking.sellingPrice,
-        nettCost: booking.nettCost,
+        sellingPrice: String(clientTotal),   // GROSS — from 5A Client Total
+        nettCost: String(nettTotal),         // NETT  — from 5A Supplier Nett
+        estProfit: String(estProfit),        // LLTP  — from 5A Est. Profit
         invoiceAmountPaid: booking.invoiceAmountPaid,
         status: booking.status,
         currency: booking.currency || 'PHP',

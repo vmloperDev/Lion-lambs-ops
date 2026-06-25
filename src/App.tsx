@@ -480,6 +480,8 @@ function App() {
     let success = 0
     for (const booking of eligible) {
       try {
+        const clientTotal = getBookingClientTotal(booking)
+        const nettTotal = getBookingBreakdownNettTotal(booking)
         const res = await fetch('/api/sheets-append', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -489,8 +491,9 @@ function App() {
             travelStart: booking.travelStart,
             travelEnd: booking.travelEnd,
             packageName: booking.packageName,
-            sellingPrice: booking.sellingPrice,
-            nettCost: booking.nettCost,
+            sellingPrice: String(clientTotal),
+            nettCost: String(nettTotal),
+            estProfit: String(clientTotal - nettTotal),
             invoiceAmountPaid: booking.invoiceAmountPaid,
             status: booking.status,
             currency: (booking as any).currency || 'PHP',

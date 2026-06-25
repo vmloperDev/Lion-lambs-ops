@@ -100,6 +100,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     packageName,
     sellingPrice,
     nettCost,
+    estProfit,
     invoiceAmountPaid,
     status,
     currency = 'PHP',
@@ -111,10 +112,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // ── Build the row matching your spreadsheet columns ──────────────────────
   // Columns: DATE | NAME | TRAVEL DATE | SERVICE | GROSS | NETT | LLTP | BALANCE | STATUS
+  // Values come pre-computed from 5A (Client Total, Supplier Nett, Est. Profit)
 
   const gross = parseFloat(sellingPrice || '0')
   const nett = parseFloat(nettCost || '0')
-  const lltp = gross - nett                                     // Gross margin / profit
+  const lltp = estProfit !== undefined ? parseFloat(estProfit) : gross - nett
   const paid = parseFloat(invoiceAmountPaid || '0')
   const balance = gross - paid
 
