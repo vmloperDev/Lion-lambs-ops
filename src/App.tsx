@@ -1,3 +1,4 @@
+import { syncBookingToSheets } from './sheetsSync'
 import { extractBookingFieldsFromText, GeminiExtractError, type ExtractedBookingFields } from './geminiExtract'
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -461,7 +462,9 @@ function App() {
       void setDoc(doc(db, getBookingOwnerPath(b, authUser.uid), b.id), {
         status: 'Flown',
         updatedAt: new Date().toISOString(),
-      }, { merge: true })
+      }, { merge: true }).then(() => {
+        void syncBookingToSheets(updatedBooking)
+      })
     })
   }, [bookingsFlownKey, authUser])
 
@@ -1328,6 +1331,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         updatedAt: new Date().toISOString(),
       }, { merge: true })
       
+      void syncBookingToSheets(booking)
       setDataError('')
       setDataMessage(isEditing ? 'Booking changes saved successfully.' : 'Inquiry saved successfully.')
       setSelectedBookingId(booking.id)
@@ -1362,7 +1366,10 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       void setDoc(doc(db, getBookingOwnerPath(targetBooking, authUser.uid), selectedBookingId), {
         status,
         updatedAt: new Date().toISOString(),
-      }, { merge: true }).catch(() => {
+      }, { merge: true }).then(() => {
+        const updatedBooking = { ...(targetBooking ?? {} as BookingRecord), status, id: selectedBookingId }
+        void syncBookingToSheets(updatedBooking as BookingRecord)
+      }).catch(() => {
         setDataError('Status updated locally, but cloud update failed.')
       })
     }
