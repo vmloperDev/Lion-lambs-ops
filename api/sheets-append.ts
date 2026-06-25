@@ -206,7 +206,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const sheetObj = meta.sheets.find((s: any) => s.properties.title === GOOGLE_SHEET_NAME)
     const sheetId = sheetObj?.properties.sheetId ?? 0
 
-    const targetRowIndex = existingRowIndex !== -1 ? existingRowIndex : rows.length
+    // Never target row 0 (header) — if somehow matched, skip to end
+    const targetRowIndex = existingRowIndex > 0 ? existingRowIndex : (existingRowIndex === -1 ? rows.length : rows.length)
 
     // ── Formatting ─────────────────────────────────────────────────────────
     await fetch(

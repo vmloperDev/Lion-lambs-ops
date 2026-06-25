@@ -507,7 +507,6 @@ function App() {
     }
     setIsSyncingAll(false)
     setDataMessage(`✅ Synced ${success} of ${eligible.length} booking(s) to Google Sheets.`)
-    window.open('https://docs.google.com/spreadsheets/d/1zG7bnW7p8SYF6-CpU4fKUdmA3wmlnvrXhMQE02wQRtc/edit?gid=0#gid=0', '_blank')
   }
 
   async function handleSaveDtrEntry(event: React.FormEvent<HTMLFormElement>) {
@@ -5116,7 +5115,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <button
               type="button"
               className="nav-text-action"
-              onClick={() => void syncAllToSheets()}
+              onClick={() => {
+                            void syncAllToSheets()
+              }}
               disabled={isSyncingAll}
               title="Sync all Confirmed/Flown bookings to Google Sheets"
             >
