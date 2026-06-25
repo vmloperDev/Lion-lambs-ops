@@ -122,19 +122,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
   const fmtDate = (iso: string | number) => {
-    if (!iso) return ''
-    // Handle Firestore timestamps (numbers), ISO strings, and date-only strings (YYYY-MM-DD)
+    if (!iso && iso !== 0) return ''
     let d: Date
-    if (typeof iso === 'number') {
-      d = new Date(iso)
-    } else if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
-      // date-only string — parse as local date to avoid timezone shift
+    const n = typeof iso === 'string' ? Number(iso) : iso
+    if (typeof iso === 'number' || (!isNaN(n) && String(iso).length >= 10)) {
+      // Unix timestamp in milliseconds (13 digits) or seconds (10 digits)
+      d = n > 1e10 ? new Date(n) : new Date(n * 1000)
+    } else if (typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso)) {
       const [y, m, day] = iso.split('-').map(Number)
       d = new Date(y, m - 1, day)
     } else {
       d = new Date(iso)
     }
-    return isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    if (isNaN(d.getTime())) return String(iso)
+    // Return as plain text string so Sheets never interprets it as a serial number
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   }
 
   const travelDate = travelStart && travelEnd
@@ -156,9 +158,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const token = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY)
 
-    const range = encodeURIComponent(`${GOOGLE_SHEET_NAME}!A:I`)
-    const sheetsRes = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+    // ── Check for existing row and update it, or append if new ─────────────
+    const existingRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${encodeURIComponent(GOOGLE_SHEET_NAME + '!A:I')}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+    const existing = await existingRes.json() as { values?: string[][] }
+    const rows = existing.values || []
+    const travelDateStr = travelStart && travelEnd
+      ? `${fmtDate(travelStart)} – ${fmtDate(travelEnd)}`
+      : fmtDate(travelStart || travelEnd)
+    const existingRowIndex = rows.findIndex((r: string[]) =>
+      r[1] === clientName && r[2] === travelDateStr
+    )
+
+    if (existingRowIndex !== -1) {
+      // Row exists — update it in place (rowIndex is 0-based, Sheets API is 1-based)
+      const updateRange = encodeURIComponent(`${GOOGLE_SHEET_NAME}!A${existingRowIndex + 1}:I${existingRowIndex + 1}`)
+      const updateRes = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=RAW`,
+        {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ values: [row] }),
+        }
+      )
+      if (!updateRes.ok) {
+        const err = await updateRes.text()
+        throw new Error(`Sheets update error: ${err}`)
+      }
+    } else {
+      // New row — append it
+      const range = encodeURIComponent(`${GOOGLE_SHEET_NAME}!A:I`)
+      const sheetsRes = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
       {
         method: 'POST',
         headers: {
@@ -169,10 +202,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
     )
 
-    if (!sheetsRes.ok) {
-      const err = await sheetsRes.text()
-      throw new Error(`Sheets API error: ${err}`)
-    }
+      if (!sheetsRes.ok) {
+        const err = await sheetsRes.text()
+        throw new Error(`Sheets API error: ${err}`)
+      }
+    } // end else (new row append)
 
     // Get sheet tab ID for formatting
     const metaRes = await fetch(
