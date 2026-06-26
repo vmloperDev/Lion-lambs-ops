@@ -1,4 +1,4 @@
-import { syncBookingToSheets } from './sheetsSync'
+import { syncBookingToSheets, startPeriodicReSync } from './sheetsSync'
 import { extractBookingFieldsFromText, GeminiExtractError, type ExtractedBookingFields } from './geminiExtract'
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -233,6 +233,7 @@ function App() {
   // Holds the exact booking object built at save-time so templates always
   // reflect the latest saved data regardless of Firestore snapshot timing.
   const lastSavedBookingRef = useRef<BookingRecord | null>(null)
+  const bookingsRef = useRef<BookingRecord[]>([])
 
   // ── Currency & exchange rate ──────────────────────────────────────────────
   const SUPPORTED_CURRENCIES = [
@@ -396,6 +397,7 @@ function App() {
         }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         console.log('[DEBUG snapshot]', firestoreBookings.map(b => ({ id: b.id, ownerId: b.ownerId, packageName: b.packageName })))
         setBookings(firestoreBookings)
+        bookingsRef.current = firestoreBookings
         setDataError('')
 
         // Auto-sync: for every doc added or modified in this snapshot,
@@ -416,6 +418,15 @@ function App() {
         }, 5000)
       },
     )
+  }, [authUser])
+
+  // ── Periodic re-sync ────────────────────────────────────────────────────────
+  // Every 10 minutes, re-push all Confirmed/Flown bookings to Google Sheets.
+  // Self-heals deleted, edited, or moved rows in the spreadsheet.
+  useEffect(() => {
+    if (!authUser?.emailVerified) return
+    const stop = startPeriodicReSync(() => bookingsRef.current)
+    return stop
   }, [authUser])
 
   useEffect(() => {

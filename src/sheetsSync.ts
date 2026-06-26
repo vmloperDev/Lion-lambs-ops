@@ -38,6 +38,31 @@ export function syncBookingToSheets(booking: BookingRecord): void {
   })
 }
 
+// ── Periodic re-sync ──────────────────────────────────────────────────────────
+// Runs every 10 minutes and re-pushes all Confirmed/Flown bookings to the sheet.
+// This self-heals the spreadsheet if someone deletes, edits, or moves a row
+// within the same month tab. Each booking is matched by its bookingId in
+// column J, so existing rows are overwritten in place — no duplicates created.
+//
+// Call startPeriodicReSync(bookings) from a useEffect in App.tsx, passing the
+// live bookings array. Returns a cleanup function to clear the interval.
+
+export function startPeriodicReSync(
+  getBookings: () => BookingRecord[],
+): () => void {
+  const INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
+
+  function runReSync() {
+    const bookings = getBookings()
+    const eligible = bookings.filter(b => shouldSyncToSheets(b.status))
+    console.log(`[sheetsSync] Periodic re-sync — pushing ${eligible.length} bookings`)
+    eligible.forEach(b => syncBookingToSheets(b))
+  }
+
+  const id = window.setInterval(runReSync, INTERVAL_MS)
+  return () => window.clearInterval(id)
+}
+
 async function doSync(booking: BookingRecord): Promise<void> {
   const clientTotal = getBookingClientTotal(booking)
   const nettTotal   = getBookingBreakdownNettTotal(booking)
@@ -52,7 +77,7 @@ async function doSync(booking: BookingRecord): Promise<void> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          bookingId:         booking.id,           // used as stable row key
+          bookingId:         booking.id,
           createdAt:         booking.createdAt,
           clientName:        booking.clientName,
           travelStart:       booking.travelStart,
@@ -69,8 +94,7 @@ async function doSync(booking: BookingRecord): Promise<void> {
       })
 
       if (res.status === 429) {
-        // Rate limited — back off and retry
-        const wait = attempt * 15000 // 15s, 30s
+        const wait = attempt * 15000
         console.warn(`[sheetsSync] Rate limited, retrying in ${wait / 1000}s...`)
         await new Promise(r => setTimeout(r, wait))
         continue
@@ -80,7 +104,7 @@ async function doSync(booking: BookingRecord): Promise<void> {
         const body = await res.text()
         console.warn('[sheetsSync] Failed:', body)
       }
-      return // success (or non-retryable failure)
+      return
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err)
       if (attempt < 3) await new Promise(r => setTimeout(r, 5000 * attempt))
