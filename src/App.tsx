@@ -421,8 +421,6 @@ function App() {
   }, [authUser])
 
   // ── Periodic re-sync ────────────────────────────────────────────────────────
-  // Every 10 minutes, re-push all Confirmed/Flown bookings to Google Sheets.
-  // Self-heals deleted, edited, or moved rows in the spreadsheet.
   useEffect(() => {
     if (!authUser?.emailVerified) return
     const stop = startPeriodicReSync(() => bookingsRef.current)
@@ -5198,60 +5196,66 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <p>Internal</p>
                 <h2>Documents</h2>
               </div>
-              <span>{bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length} active</span>
+              <span>{bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length} bookings</span>
             </div>
 
-            {/* Breakdown card */}
-            <div className="docs-hub-card">
-              <div className="docs-hub-card-header">
-                <FileText size={14} />
-                <span>Breakdown</span>
-                <strong>{bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length}</strong>
+            <div className="docs-hub-cards">
+              {/* Breakdown */}
+              <div className="docs-hub-card">
+                <div className="docs-hub-card-header">
+                  <FileText size={13} />
+                  <span>Breakdown</span>
+                  <strong>{bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length}</strong>
+                </div>
+                <div className="docs-hub-list">
+                  {bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length === 0
+                    ? <p className="docs-hub-empty">No confirmed or flown bookings yet.</p>
+                    : bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').map(b => (
+                      <button
+                        type="button"
+                        key={b.id}
+                        className="docs-hub-row"
+                        onClick={() => { setSelectedBookingId(b.id); setScreen('breakdown-preview') }}
+                      >
+                        <span className={`docs-hub-badge docs-hub-badge--${b.status === 'Flown' ? 'flown' : 'confirmed'}`}>{b.status}</span>
+                        <span className="docs-hub-info">
+                          <span className="docs-hub-client">{b.clientName}</span>
+                          <span className="docs-hub-pkg">{b.packageName}</span>
+                        </span>
+                        <ChevronRight size={13} />
+                      </button>
+                    ))
+                  }
+                </div>
               </div>
-              <div className="docs-hub-list">
-                {bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length === 0 && (
-                  <p className="docs-hub-empty">No confirmed or flown bookings yet.</p>
-                )}
-                {bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').map(b => (
-                  <button
-                    type="button"
-                    key={b.id}
-                    className="docs-hub-row"
-                    onClick={() => { setSelectedBookingId(b.id); setScreen('breakdown-preview') }}
-                  >
-                    <span className={`docs-hub-badge docs-hub-badge--${b.status === 'Flown' ? 'flown' : 'confirmed'}`}>{b.status}</span>
-                    <span className="docs-hub-client">{b.clientName}</span>
-                    <span className="docs-hub-pkg">{b.packageName}</span>
-                    <ChevronRight size={13} />
-                  </button>
-                ))}
-              </div>
-            </div>
 
-            {/* Purchase Order card */}
-            <div className="docs-hub-card">
-              <div className="docs-hub-card-header">
-                <FileText size={14} />
-                <span>Purchase Order</span>
-                <strong>{bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length}</strong>
-              </div>
-              <div className="docs-hub-list">
-                {bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length === 0 && (
-                  <p className="docs-hub-empty">No confirmed or flown bookings yet.</p>
-                )}
-                {bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').map(b => (
-                  <button
-                    type="button"
-                    key={b.id}
-                    className="docs-hub-row"
-                    onClick={() => { setSelectedBookingId(b.id); setScreen('purchase-order-preview') }}
-                  >
-                    <span className={`docs-hub-badge docs-hub-badge--${b.status === 'Flown' ? 'flown' : 'confirmed'}`}>{b.status}</span>
-                    <span className="docs-hub-client">{b.clientName}</span>
-                    <span className="docs-hub-pkg">{b.packageName}</span>
-                    <ChevronRight size={13} />
-                  </button>
-                ))}
+              {/* Purchase Order */}
+              <div className="docs-hub-card">
+                <div className="docs-hub-card-header">
+                  <FileText size={13} />
+                  <span>Purchase Order</span>
+                  <strong>{bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length}</strong>
+                </div>
+                <div className="docs-hub-list">
+                  {bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length === 0
+                    ? <p className="docs-hub-empty">No confirmed or flown bookings yet.</p>
+                    : bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').map(b => (
+                      <button
+                        type="button"
+                        key={b.id}
+                        className="docs-hub-row"
+                        onClick={() => { setSelectedBookingId(b.id); setScreen('purchase-order-preview') }}
+                      >
+                        <span className={`docs-hub-badge docs-hub-badge--${b.status === 'Flown' ? 'flown' : 'confirmed'}`}>{b.status}</span>
+                        <span className="docs-hub-info">
+                          <span className="docs-hub-client">{b.clientName}</span>
+                          <span className="docs-hub-pkg">{b.packageName}</span>
+                        </span>
+                        <ChevronRight size={13} />
+                      </button>
+                    ))
+                  }
+                </div>
               </div>
             </div>
           </section>
