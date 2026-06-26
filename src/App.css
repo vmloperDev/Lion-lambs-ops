@@ -271,7 +271,7 @@ input, select, textarea { font: inherit; }
   display: grid;
   place-items: center;
   overflow: hidden;
-  background: var(--navy);
+  background: #0b1f30;
 }
 .splash-screen::before {
   content: '';
@@ -883,9 +883,12 @@ input, select, textarea { font: inherit; }
 }
 
 /* Dark mode */
-[data-theme="dark"] .docs-hub-panel   { background: var(--teal-light); }
-[data-theme="dark"] .docs-hub-card    { background: var(--teal-light); border-color: var(--teal-mid); }
-[data-theme="dark"] .docs-hub-row:hover { background: var(--teal-mid); }
+[data-theme="dark"] .docs-hub-panel   { background: #0a3a4a; }
+[data-theme="dark"] .docs-hub-card    { background: #0c4258; border-color: #1a6a82; }
+[data-theme="dark"] .docs-hub-row:hover { background: #1a5a70; }
+[data-theme="dark"] .docs-hub-row     { border-bottom-color: #1a6a82; }
+[data-theme="dark"] .docs-hub-client  { color: #e2edf5; }
+[data-theme="dark"] .docs-hub-pkg     { color: #8abcce; }
 
 
 /* Projects panel */
