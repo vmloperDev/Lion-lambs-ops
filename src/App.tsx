@@ -397,6 +397,17 @@ function App() {
         console.log('[DEBUG snapshot]', firestoreBookings.map(b => ({ id: b.id, ownerId: b.ownerId, packageName: b.packageName })))
         setBookings(firestoreBookings)
         setDataError('')
+
+        // Auto-sync: for every doc added or modified in this snapshot,
+        // if its status is Confirmed or Flown push it to Google Sheets silently.
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === 'added' || change.type === 'modified') {
+            const changeData = change.doc.data() as BookingRecord
+            const changeOwnerId = changeData.ownerId || change.doc.ref.parent.parent?.id
+            const changeBooking = normalizeBooking({ ...changeData, id: change.doc.id, ownerId: changeOwnerId })
+            void syncBookingToSheets(changeBooking)
+          }
+        })
       },
       () => {
         // Delay the error so transient permission checks don't flash a false alarm
@@ -1335,8 +1346,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       setSelectedBookingId(booking.id)
       setEditingBookingId('')
       setScreen(isEditing ? 'booking-detail' : 'home')
-      // Auto-sync to Sheets in the background whenever a Confirmed/Flown booking is saved
-      void syncBookingToSheets(booking)
     } catch {
       setDataError(isEditing ? 'Booking updated locally, but cloud update failed.' : 'Booking saved locally, but cloud save failed.')
       setDataMessage('')
@@ -1368,8 +1377,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         updatedAt: new Date().toISOString(),
       }, { merge: true }).then(() => {
         const updatedBooking = { ...(targetBooking ?? {} as BookingRecord), status, id: selectedBookingId }
-        // Auto-sync to Sheets in the background when status becomes Confirmed or Flown
-        void syncBookingToSheets(updatedBooking)
       }).catch(() => {
         setDataError('Status updated locally, but cloud update failed.')
       })
@@ -1557,9 +1564,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       setDataError('')
       setDataMessage('Invoice payment details saved successfully.')
       setScreen('invoice-preview')
-      // Auto-sync balance/payment status to Sheets in the background
-      const updatedBooking = { ...(targetBooking ?? {} as BookingRecord), ...invoiceForm, id: selectedBookingId }
-      void syncBookingToSheets(updatedBooking)
     } catch {
       setDataError('Invoice saved locally, but cloud update failed.')
       setDataMessage('')
