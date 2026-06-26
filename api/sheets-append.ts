@@ -1,8 +1,8 @@
 // api/sheets-append.ts
 // Vercel Serverless Function — upserts a confirmed/flown booking row to Google Sheets.
 // Each month gets its own tab (e.g. "Jan 2026") based on the booking's createdAt date.
-// Rows are matched by bookingId stored in a hidden column J — reliable regardless
-// of whether the client name or travel dates have been edited.
+// Rows are matched by bookingId stored in hidden column J — reliable even if client
+// name or travel dates are edited later.
 //
 // ENV VARS required (set in Vercel dashboard → Settings → Environment Variables):
 //   GOOGLE_SERVICE_ACCOUNT_EMAIL   — e.g. lion-lamb@your-project.iam.gserviceaccount.com
@@ -67,19 +67,31 @@ function getMonthTabName(createdAt: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
 }
 
-// ── Colors + layout ───────────────────────────────────────────────────────────
+// ── Color helpers ─────────────────────────────────────────────────────────────
 
 function hex(r: number, g: number, b: number) {
   return { red: r / 255, green: g / 255, blue: b / 255, alpha: 1 }
 }
 
-const HEADER_BG = hex(15, 40, 80)
-const HEADER_FG = hex(255, 255, 255)
+// Header: deep navy
+const HEADER_BG = hex(15, 40, 80)     // #0F2850
+const HEADER_FG = hex(255, 255, 255)  // white
+// Alternating row tint
+const ROW_TINT  = hex(235, 241, 251)  // #EBF1FB light blue tint
+const ROW_WHITE = hex(255, 255, 255)
+// Status colors
+const GREEN_FG  = hex(27, 124, 55)    // #1B7C37
+const RED_FG    = hex(182, 28, 28)    // #B61C1C
+const GREEN_BG  = hex(220, 242, 228)  // #DCF2E4
+const RED_BG    = hex(250, 220, 220)  // #FADCDC
 
-// A=Date B=Client C=Travel D=Package E=Gross F=Nett G=LLTP H=Balance I=Status  J=ID(hidden)
+// ── Column config ─────────────────────────────────────────────────────────────
+// A=Date  B=Client  C=Travel  D=Package  E=Gross  F=Nett  G=LLTP  H=Balance  I=Status  J=ID(hidden)
 const COL_WIDTHS = [110, 180, 200, 260, 130, 130, 130, 120, 110, 1]
 
 const HEADER_ROW = ['Date Created', 'Client Name', 'Travel Date', 'Package', 'Gross', 'NETT', 'LLTP', 'Balance', 'Status', '_id']
+
+// ── Header formatting ─────────────────────────────────────────────────────────
 
 function buildHeaderRequests(sheetId: number) {
   return [
@@ -121,10 +133,70 @@ function buildHeaderRequests(sheetId: number) {
   ]
 }
 
+// ── Data row formatting ───────────────────────────────────────────────────────
+
+function buildDataRowRequests(sheetId: number, rowIndex: number, isPaid: boolean) {
+  // Alternate tint: even data rows (0-based after header) get the blue tint
+  const rowBg = rowIndex % 2 === 0 ? ROW_TINT : ROW_WHITE
+
+  return [
+    // 56px row height — generous so wrapped text has room
+    {
+      updateDimensionProperties: {
+        range: { sheetId, dimension: 'ROWS', startIndex: rowIndex, endIndex: rowIndex + 1 },
+        properties: { pixelSize: 56 },
+        fields: 'pixelSize',
+      },
+    },
+    // Base row style: wrap, vertical middle, alternating bg, 9pt Arial
+    {
+      repeatCell: {
+        range: { sheetId, startRowIndex: rowIndex, endRowIndex: rowIndex + 1, startColumnIndex: 0, endColumnIndex: 9 },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: rowBg,
+            verticalAlignment: 'MIDDLE',
+            wrapStrategy: 'WRAP',
+            textFormat: { fontSize: 9, fontFamily: 'Arial', bold: false, foregroundColor: hex(30, 30, 30) },
+          },
+        },
+        fields: 'userEnteredFormat(backgroundColor,verticalAlignment,wrapStrategy,textFormat)',
+      },
+    },
+    // Numeric columns (E–H) right-aligned
+    {
+      repeatCell: {
+        range: { sheetId, startRowIndex: rowIndex, endRowIndex: rowIndex + 1, startColumnIndex: 4, endColumnIndex: 8 },
+        cell: { userEnteredFormat: { horizontalAlignment: 'RIGHT' } },
+        fields: 'userEnteredFormat.horizontalAlignment',
+      },
+    },
+    // Status cell (col I) — center, bold, colored bg + text
+    {
+      repeatCell: {
+        range: { sheetId, startRowIndex: rowIndex, endRowIndex: rowIndex + 1, startColumnIndex: 8, endColumnIndex: 9 },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: isPaid ? GREEN_BG : RED_BG,
+            horizontalAlignment: 'CENTER',
+            verticalAlignment: 'MIDDLE',
+            textFormat: {
+              bold: true,
+              fontSize: 9,
+              fontFamily: 'Arial',
+              foregroundColor: isPaid ? GREEN_FG : RED_FG,
+            },
+          },
+        },
+        fields: 'userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)',
+      },
+    },
+  ]
+}
+
 // ── Ensure tab exists — race-safe ─────────────────────────────────────────────
-// If two requests try to create the same tab simultaneously, the second one
-// will fail. We catch that, re-fetch the sheet list, and return the tab that
-// the first request created — instead of letting Google append "_conflict_N".
+// If two requests race to create the same tab, the loser catches the error,
+// re-fetches the sheet list, and returns the winner's tab — no "_conflict_N" suffix.
 
 async function ensureTab(
   token: string,
@@ -148,7 +220,6 @@ async function ensureTab(
     const createData = await createRes.json() as { replies: { addSheet: { properties: { sheetId: number } } }[] }
     const sheetId = createData.replies[0].addSheet.properties.sheetId
 
-    // Write header row
     await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(tabName + '!A1:J1')}?valueInputOption=RAW`,
       {
@@ -157,8 +228,6 @@ async function ensureTab(
         body: JSON.stringify({ values: [HEADER_ROW] }),
       },
     )
-
-    // Apply header styling
     await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
       {
@@ -167,11 +236,10 @@ async function ensureTab(
         body: JSON.stringify({ requests: buildHeaderRequests(sheetId) }),
       },
     )
-
     return sheetId
   }
 
-  // Creation failed — likely a race. Re-fetch and find the tab.
+  // Creation failed — likely a concurrent race. Re-fetch and find the tab.
   const retryMeta = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`,
     { headers: { Authorization: `Bearer ${token}` } },
@@ -232,7 +300,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ? `${fmtDate(travelStart)} – ${fmtDate(travelEnd)}`
     : fmtDate(travelStart || travelEnd)
 
-  // Column J holds the bookingId as a hidden stable key for future updates
+  // Column J stores the bookingId as a hidden stable key for future updates
   const row = [
     fmtDate(createdAt),
     clientName,
@@ -258,9 +326,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const meta = await metaRes.json() as { sheets?: { properties: { title: string; sheetId: number } }[] }
     const existingSheets = (meta.sheets || []).map(s => ({ title: s.properties.title, sheetId: s.properties.sheetId }))
 
-    await ensureTab(token, GOOGLE_SHEET_ID, tabName, existingSheets)
+    const sheetId = await ensureTab(token, GOOGLE_SHEET_ID, tabName, existingSheets)
 
-    // Read column J (bookingId) to find an existing row for this booking
+    // Read column J to find an existing row by bookingId
     const idColRes = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${encodeURIComponent(tabName + '!J:J')}`,
       { headers: { Authorization: `Bearer ${token}` } },
@@ -268,26 +336,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const idColData = await idColRes.json() as { values?: string[][] }
     const idCol = (idColData.values || []).map(r => r[0] || '')
 
-    // Fall back to matching by clientName+travelDate for rows written before bookingId was added
-    const existingByName = async () => {
-      const existingRes = await fetch(
+    // Primary match: bookingId in column J
+    let existingRowIndex = bookingId ? idCol.findIndex((id, i) => i > 0 && id === bookingId) : -1
+
+    // Fallback: match by clientName + travelDate for rows written before bookingId was added
+    if (existingRowIndex === -1) {
+      const nameColRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${encodeURIComponent(tabName + '!A:C')}`,
         { headers: { Authorization: `Bearer ${token}` } },
       )
-      const existingData = await existingRes.json() as { values?: string[][] }
-      const rows = existingData.values || []
-      return rows.findIndex((r, i) => i > 0 && r[1] === clientName && r[2] === travelDate)
-    }
-
-    // Row index in the sheet (0-based); -1 means not found → append
-    let existingRowIndex = bookingId ? idCol.findIndex((id, i) => i > 0 && id === bookingId) : -1
-    if (existingRowIndex === -1 && bookingId) {
-      // bookingId not found — check if it exists under the old name+date match
-      existingRowIndex = await existingByName()
+      const nameColData = await nameColRes.json() as { values?: string[][] }
+      const nameRows = nameColData.values || []
+      existingRowIndex = nameRows.findIndex((r, i) => i > 0 && r[1] === clientName && r[2] === travelDate)
     }
 
     if (existingRowIndex !== -1) {
-      // Update in place
+      // Update existing row in place
       const updateRange = encodeURIComponent(`${tabName}!A${existingRowIndex + 1}:J${existingRowIndex + 1}`)
       const updateRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=RAW`,
@@ -310,6 +374,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       )
       if (!sheetsRes.ok) throw new Error(`Sheets append error: ${await sheetsRes.text()}`)
     }
+
+    // Row index to format. New rows land at idCol.length (idCol includes header at index 0).
+    const targetRowIndex = existingRowIndex > 0 ? existingRowIndex : idCol.length
+
+    // Apply original row styling: 56px height, alternating tint, right-aligned numbers, colored status
+    await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}:batchUpdate`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requests: buildDataRowRequests(sheetId, targetRowIndex, isPaid) }),
+      },
+    )
 
     return res.status(200).json({ ok: true, tab: tabName })
   } catch (err) {
