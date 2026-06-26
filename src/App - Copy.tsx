@@ -1,6 +1,6 @@
-import { syncBookingToSheets } from './sheetsSync'
 import { extractBookingFieldsFromText, GeminiExtractError, type ExtractedBookingFields } from './geminiExtract'
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   createUserWithEmailAndPassword,
   type AuthError,
@@ -10,6 +10,7 @@ import {
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
+  type User as FirebaseUser,
 } from 'firebase/auth'
 import {
   addDoc,
@@ -42,6 +43,7 @@ import {
   MapPin,
   MessageSquare,
   Moon,
+
   Plane,
   Plus,
   Printer,
@@ -58,11 +60,7 @@ import {
   EyeOff,
   Trash2,
   CornerUpLeft,
-  Eye,
-  Download,
-  Copy,
-  ThumbsUp,
-  ThumbsDown,
+  Eye
 } from 'lucide-react'
 import { auth, db } from './firebase'
 import agencySeal from './assets/brand/agency-seal.png'
@@ -70,36 +68,660 @@ import logo from './assets/brand/logo.png'
 import travelHero from './assets/brand/travel-hero.jpg'
 import travelBanner from './assets/brand/travel-banner.png'
 import './App.css'
-import type {
-  Screen, BookingStatus, BookingListFilter,
-  BookingFormData, BookingRecord, BookingLineItem,
-  InvoiceLineItem, BreakdownLineItem, DtrEntry,
-  PaxBreakdown, FirebaseUser,
-} from './types'
-import {
-  bookingStorageKey, bookingsCollectionKey, dtrCollectionKey,
-  bookingListFilters, emptyBookingForm, sampleBookings,
-} from './constants'
-import {
-  getDisplayName, getPasswordStrength,
-  normalizeBooking, getStoredBookings,
-  getUserBookingsCollectionPath, getBookingOwnerPath,
-  parseAmount, parseQuantity, formatAmount, computePaymentStatus, formatProjectDate,
-  readPaxBreakdown, sumPaxBreakdown, formatPaxBreakdownLabel,
-  createLineItemId, getLines,
-  readInvoiceItems, readBreakdownItems,
-  mapInvoiceItemsToBookingLines, mapBreakdownItemsToBookingLines,
-  getBookingLineItems, sumLineItems,
-  getBookingClientTotal, getBookingBreakdownNettTotal,
-  timeStrToMinutes, getDtrEntryMinutes, formatMinutesAsHm,
-  formatTimeForDisplay, getCurrentTimeStr, getTodayDateStr,
-  getIsoWeekKey, getWeekRangeLabel,
-  formatLiveClockParts, formatLiveDateShort,
-} from './utils'
-import { FloatingDropdownMenu } from './components/FloatingDropdownMenu'
+
+type Screen =
+  | 'splash'
+  | 'login'
+  | 'signup'
+  | 'verify-email'
+  | 'home'
+  | 'data-form'
+  | 'booking-detail'
+  | 'document-folder'
+  | 'invoice-editor'
+  | 'quotation-preview'
+  | 'invoice-preview'
+  | 'purchase-order-preview'
+  | 'voucher-preview'
+  | 'breakdown-preview'
+  | 'dtr'
+
+type PasswordStrength = {
+  label: 'Weak' | 'Fair' | 'Strong'
+  score: 1 | 2 | 3
+}
+
+type BookingStatus = 'Inquiry' | 'Breakdown' | 'Quotation' | 'Purchase Order' | 'Invoice' | 'Confirmed'
+type BookingListFilter = BookingStatus | 'All'
+
+// New modular types for separate sections
+type InvoiceLineItem = {
+  id?: string
+  description: string // drop-down options or Package Name
+  quantity: string
+  unitPrice: string
+  nettCost: string
+  isPackageRow?: boolean
+  source?: 'manual' | 'breakdown'
+  sourceKey?: string
+  mirrorId?: string // links this row to its auto-created counterpart in the other section
+}
+
+type BreakdownLineItem = {
+  id?: string
+  description: string // drop-down choices
+  details?: string    // free-text details column
+  vendor?: string      // name of vendor/supplier for this row
+  contactNumber?: string // per-PO supplier contact number
+  paymentMethod?: string // per-PO payment method
+  quantity: string
+  paxBreakdown?: string // JSON: {adult, senior, child, infant} — sums into quantity
+  unitPrice: string
+  nettCost: string
+  sendToInvoice: boolean
+  sendToPO?: boolean
+  isPackageRow?: boolean
+  // Pax-tier columns for the quotation breakdown template
+  price2Pax?: string
+  price5Pax?: string
+  priceGroup?: string
+  priceInfant?: string
+  mirrorId?: string // links this row to its auto-created counterpart in the other section
+}
+
+type BookingFormData = {
+  clientName: string
+  contactNumber: string
+  clientEmail: string
+  packageName: string
+  destination: string
+  travelStart: string
+  travelEnd: string
+  pax: string
+  quotationNo: string
+  
+  // Legacy backups kept structural, but serializing our new lists here
+  lineItems: string 
+  invoiceLineItemsJson: string
+  breakdownLineItemsJson: string
+  breakdownPaxTiers: string // JSON: [col1Pax, col2Pax, col3Pax, col4Pax]
+  breakdownColLabels: string // JSON: [col1Label, col2Label, col3Label, col4Label]
+
+  itemDescription: string
+  quantity: string
+  unitPrice: string
+  supplier: string
+  supplierContact: string
+  supplierPaymentMethod: string
+  nettCost: string
+  sellingPrice: string
+  paymentMethod: string
+  paymentRecords: string
+  invoiceAmountPaid: string
+  invoicePaymentDate: string
+  invoicePaymentStatus: string
+  invoiceFullyPaidDate: string
+  invoiceReference: string
+  optionDate: string
+  flightDetails: string
+  accommodation: string
+  hotelAddress: string
+  emergencyContact: string
+  inclusions: string
+  exclusions: string
+  itinerary: string
+  voucherRowsJson: string
+  specialInstructions: string
+  preparedBy: string
+  createdByName: string
+  status: BookingStatus
+  notes: string
+}
+
+type BookingRecord = BookingFormData & {
+  id: string
+  createdAt: string
+  ownerId?: string // uid of the account whose subcollection this booking actually lives in
+}
+
+type BookingLineItem = {
+  description: string
+  quantity: number
+  unitPrice: number
+  nettCost: number
+  total: number
+  nettTotal: number
+  profit: number
+}
+
+// Daily Time Record — one shared collection, any team member can log/edit any entry.
+type DtrEntry = {
+  id: string
+  employeeName: string
+  date: string // YYYY-MM-DD
+  amIn: string // HH:mm, 24h storage, displayed 12h
+  amOut: string
+  pmIn: string
+  pmOut: string
+  notes: string
+  createdAt: string
+  updatedAt: string
+  loggedBy: string
+}
+
+const bookingStorageKey = 'lion-lamb-bookings'
+const bookingsCollectionKey = 'bookings'
+
+const bookingListFilters: Array<{ label: string; value: BookingListFilter }> = [
+  { label: 'All', value: 'All' },
+  { label: 'Inquiries', value: 'Inquiry' },
+  { label: 'Breakdown', value: 'Breakdown' },
+  { label: 'Quotations', value: 'Quotation' },
+  { label: 'P.O.', value: 'Purchase Order' },
+  { label: 'Invoices', value: 'Invoice' },
+  { label: 'Confirmed', value: 'Confirmed' },
+]
+
+const emptyBookingForm: BookingFormData = {
+  clientName: '',
+  contactNumber: '',
+  clientEmail: '',
+  packageName: '',
+  destination: '',
+  travelStart: '',
+  travelEnd: '',
+  pax: '',
+  quotationNo: '',
+  lineItems: '',
+  invoiceLineItemsJson: '',
+  breakdownLineItemsJson: '',
+  breakdownPaxTiers: '',
+  breakdownColLabels: '',
+  itemDescription: '',
+  quantity: '1',
+  unitPrice: '',
+  supplier: '',
+  supplierContact: '',
+  supplierPaymentMethod: '',
+  nettCost: '',
+  sellingPrice: '',
+  paymentMethod: '',
+  paymentRecords: '',
+  invoiceAmountPaid: '',
+  invoicePaymentDate: '',
+  invoicePaymentStatus: 'Unpaid',
+  invoiceFullyPaidDate: '',
+  invoiceReference: '',
+  optionDate: '',
+  flightDetails: '',
+  accommodation: '',
+  hotelAddress: '',
+  emergencyContact: '',
+  inclusions: '',
+  exclusions: '',
+  itinerary: '',
+  voucherRowsJson: '',
+  specialInstructions: '',
+  preparedBy: '',
+  createdByName: '',
+  status: 'Inquiry',
+  notes: '',
+}
+
+const previousProjects = [
+  {
+    id: 'QT-2026-0001',
+    title: 'Boracay Summer Package',
+    client: 'Juan Dela Cruz',
+    status: 'Quotation',
+    date: 'June 10, 2026',
+    amount: '18000',
+  },
+  {
+    id: 'INV-2026-0002',
+    title: 'Baguio Family Tour',
+    client: 'Maria Santos',
+    status: 'Invoice',
+    date: 'June 9, 2026',
+    amount: '26500',
+  },
+  {
+    id: 'QT-2026-0003',
+    title: 'Japan Visa Assistance',
+    client: 'Ramon Cruz',
+    status: 'Draft',
+    date: 'June 8, 2026',
+    amount: '7500',
+  },
+]
+
+const sampleBookings: BookingRecord[] = previousProjects.map((project) => ({
+  ...emptyBookingForm,
+  id: project.id,
+  createdAt: project.date,
+  clientName: project.client,
+  packageName: project.title,
+  quotationNo: project.id,
+  itemDescription: project.title,
+  quantity: '1',
+  unitPrice: project.amount,
+  sellingPrice: project.amount,
+  status: project.status === 'Draft' ? 'Inquiry' : (project.status as BookingStatus),
+}))
+
+function getDisplayName(emailAddress: string) {
+  const username = emailAddress.split('@')[0] || 'Team Member'
+  return username
+    .split(/[._-]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function getPasswordStrength(passwordValue: string): PasswordStrength {
+  let score = 0
+  if (passwordValue.length >= 8) score += 1
+  if (/[A-Z]/.test(passwordValue) && /[a-z]/.test(passwordValue)) score += 1
+  if (/\d/.test(passwordValue) || /[^A-Za-z0-9]/.test(passwordValue)) score += 1
+
+  if (score >= 3) return { label: 'Strong', score: 3 }
+  if (score === 2) return { label: 'Fair', score: 2 }
+  return { label: 'Weak', score: 1 }
+}
+
+function getStoredBookings(storageKey = bookingStorageKey, useSamples = true) {
+  const storedBookings = window.localStorage.getItem(storageKey)
+  if (!storedBookings) {
+    return useSamples ? sampleBookings : []
+  }
+  try {
+    return (JSON.parse(storedBookings) as BookingRecord[]).map(normalizeBooking)
+  } catch {
+    return sampleBookings
+  }
+}
+
+function normalizeBooking(booking: BookingRecord): BookingRecord {
+  return {
+    ...emptyBookingForm,
+    ...booking,
+    status: booking.status || 'Inquiry',
+    id: booking.id,
+    createdAt: booking.createdAt || new Date().toISOString(),
+  }
+}
+
+function formatAmount(value?: string) {
+  const amount = parseAmount(value)
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return 'PHP 0.00'
+  }
+  return `PHP ${amount.toLocaleString('en-PH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+}
+
+function parseAmount(value?: string) {
+  return Number((value ?? '').replace(/[^\d.]/g, '')) || 0
+}
+
+function computePaymentStatus(totalPrice: number, amountPaid: number): string {
+  if (totalPrice > 0 && amountPaid >= totalPrice) return 'Paid'
+  if (amountPaid > 0) return 'Partially Paid'
+  return 'Unpaid'
+}
+
+function parseQuantity(value?: string) {
+  const quantity = Number((value ?? '').replace(/[^\d.]/g, ''))
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : 1
+}
+
+type PaxBreakdown = { adult: string; senior: string; child: string; infant: string }
+
+function readPaxBreakdown(value?: string): PaxBreakdown {
+  try {
+    if (value) {
+      const parsed = JSON.parse(value)
+      return {
+        adult: parsed.adult || '',
+        senior: parsed.senior || '',
+        child: parsed.child || '',
+        infant: parsed.infant || '',
+      }
+    }
+  } catch {}
+  return { adult: '', senior: '', child: '', infant: '' }
+}
+
+function sumPaxBreakdown(pax: PaxBreakdown) {
+  return (
+    parseAmount(pax.adult) + parseAmount(pax.senior) + parseAmount(pax.child) + parseAmount(pax.infant)
+  )
+}
+
+function formatPaxBreakdownLabel(pax: PaxBreakdown) {
+  const parts: string[] = []
+  if (parseAmount(pax.adult) > 0) parts.push(`${pax.adult} Adult`)
+  if (parseAmount(pax.senior) > 0) parts.push(`${pax.senior} Senior`)
+  if (parseAmount(pax.child) > 0) parts.push(`${pax.child} Child`)
+  if (parseAmount(pax.infant) > 0) parts.push(`${pax.infant} Infant`)
+  return parts.join(', ')
+}
+
+function createLineItemId() {
+  return `LI-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function getLines(value: string | undefined, fallback: string[]) {
+  const lines = (value ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  return lines.length > 0 ? lines : fallback
+}
+
+function readInvoiceItems(booking: BookingFormData): InvoiceLineItem[] {
+  try {
+    if (booking.invoiceLineItemsJson) {
+      const items: InvoiceLineItem[] = JSON.parse(booking.invoiceLineItemsJson)
+      // Drop stale items from removed sections — only keep package row and breakdown-sourced rows
+      const filtered = items.filter(item => item.isPackageRow || item.source === 'breakdown')
+      // Deduplicate package rows — keep only the first one (breakdown-sourced takes priority)
+      let packageRowSeen = false
+      return filtered.filter(item => {
+        if (item.isPackageRow) {
+          if (packageRowSeen) return false
+          packageRowSeen = true
+        }
+        return true
+      })
+    }
+  } catch {}
+  return [
+    {
+      description: booking.packageName || 'Basic Package',
+      quantity: booking.quantity || '1',
+      unitPrice: booking.unitPrice || booking.sellingPrice,
+      nettCost: '0',
+      isPackageRow: true,
+    },
+  ]
+}
+
+function readBreakdownItems(booking: BookingFormData): BreakdownLineItem[] {
+  try {
+    if (booking.breakdownLineItemsJson) {
+      return JSON.parse(booking.breakdownLineItemsJson)
+    }
+  } catch {}
+  return [
+    {
+      description: 'Group Package',
+      quantity: '1',
+      unitPrice: booking.unitPrice || booking.sellingPrice,
+      nettCost: booking.nettCost,
+      sendToInvoice: false,
+      sendToPO: false,
+      isPackageRow: true,
+    },
+  ]
+}
+
+function mapInvoiceItemsToBookingLines(items: InvoiceLineItem[], packageName = 'Basic Package'): BookingLineItem[] {
+  return items.map((it) => {
+    const q = parseQuantity(it.quantity)
+    const u = parseAmount(it.unitPrice)
+    const n = it.isPackageRow ? 0 : parseAmount(it.nettCost)
+    return {
+      description: it.description || (it.isPackageRow ? packageName || 'Basic Package' : 'Item'),
+      quantity: q,
+      unitPrice: u,
+      nettCost: n,
+      total: q * u,
+      nettTotal: q * n,
+      profit: q * (u - n),
+    }
+  })
+}
+
+function mapBreakdownItemsToBookingLines(items: BreakdownLineItem[], packageName = 'Basic Package'): BookingLineItem[] {
+  return items.map((it) => {
+    const q = parseQuantity(it.quantity)
+    const u = parseAmount(it.unitPrice)
+    const n = parseAmount(it.nettCost)
+    return {
+      description: it.description || (it.isPackageRow ? packageName || 'Basic Package' : 'Item'),
+      quantity: q,
+      unitPrice: u,
+      nettCost: n,
+      total: q * u,
+      nettTotal: q * n,
+      profit: q * (u - n),
+    }
+  })
+}
+
+function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
+  const invoiceItems = readInvoiceItems(booking)
+  if (invoiceItems.length > 0) {
+    return mapInvoiceItemsToBookingLines(invoiceItems, booking.packageName)
+  }
+
+  const quantity = parseQuantity(booking.quantity)
+  const unitPrice = parseAmount(booking.unitPrice || booking.sellingPrice)
+
+  return [
+    {
+      description: readBreakdownItems(booking).find(i => i.isPackageRow)?.description || booking.packageName || 'Basic Package',
+      quantity,
+      unitPrice,
+      nettCost: 0,
+      total: quantity * unitPrice,
+      nettTotal: 0,
+      profit: quantity * unitPrice,
+    },
+  ]
+}
+
+function sumLineItems(items: BookingLineItem[], field: 'total' | 'nettTotal' | 'profit') {
+  return items.reduce((sum, item) => sum + item[field], 0)
+}
+
+function getBookingClientTotal(booking: BookingFormData) {
+  return sumLineItems(getBookingLineItems(booking), 'total')
+}
+
+function getBookingBreakdownNettTotal(booking: BookingFormData) {
+  return sumLineItems(mapBreakdownItemsToBookingLines(readBreakdownItems(booking)), 'nettTotal')
+}
+
+function getUserBookingsCollectionPath(userId: string) {
+  return `users/${userId}/bookings`
+}
+
+// Bookings can belong to a different teammate's subcollection (everyone shares
+// one database via collectionGroup). Always update/delete at the path the
+// document actually lives at — its saved ownerId — not the current user's path,
+// or the write/delete silently no-ops (or worse, creates a brand-new sparse
+// duplicate at the wrong path) and the original is never actually touched.
+function getBookingOwnerPath(booking: BookingRecord | undefined | null, fallbackUserId: string) {
+  return getUserBookingsCollectionPath(booking?.ownerId || fallbackUserId)
+}
+
+function formatProjectDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value || 'No date'
+  }
+  return date.toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
+// ----- DTR (Daily Time Record) helpers -----
+
+// "HH:mm" -> total minutes since midnight. Returns null if blank/invalid.
+function timeStrToMinutes(value: string): number | null {
+  if (!value) return null
+  const match = value.match(/^(\d{1,2}):(\d{2})$/)
+  if (!match) return null
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null
+  return hours * 60 + minutes
+}
+
+// Minutes worked for one in/out pair, 0 if either side is missing or out is before in.
+function pairMinutes(inTime: string, outTime: string): number {
+  const inMin = timeStrToMinutes(inTime)
+  const outMin = timeStrToMinutes(outTime)
+  if (inMin === null || outMin === null || outMin <= inMin) return 0
+  return outMin - inMin
+}
+
+function getDtrEntryMinutes(entry: Pick<DtrEntry, 'amIn' | 'amOut' | 'pmIn' | 'pmOut'>): number {
+  return pairMinutes(entry.amIn, entry.amOut) + pairMinutes(entry.pmIn, entry.pmOut)
+}
+
+// 95 -> "1h 35m"
+function formatMinutesAsHm(totalMinutes: number): string {
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  if (hours === 0) return `${minutes}m`
+  if (minutes === 0) return `${hours}h`
+  return `${hours}h ${minutes}m`
+}
+
+// "14:30" -> "2:30 PM" for display; blank stays blank.
+function formatTimeForDisplay(value: string): string {
+  const totalMinutes = timeStrToMinutes(value)
+  if (totalMinutes === null) return '—'
+  const hours24 = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  const period = hours24 >= 12 ? 'PM' : 'AM'
+  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12
+  return `${hours12}:${String(minutes).padStart(2, '0')} ${period}`
+}
+
+function getCurrentTimeStr(): string {
+  const now = new Date()
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+}
+
+function getTodayDateStr(): string {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
+function formatDtrDateLong(value: string): string {
+  const date = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+const dtrCollectionKey = 'dtr_entries'
+
+// Renders a custom-select's option menu into document.body via a portal, positioned
+// with fixed coordinates computed from the trigger button's real on-screen position.
+// This is what makes the menu escape any ancestor's `overflow: hidden`/`overflow-x: auto`
+// and any clipped scroll container — the previous absolute-positioned-inside-the-table
+// approach got cropped because every parent table/panel clips overflow by design.
+function FloatingDropdownMenu({
+  anchorRef,
+  onClose,
+  children,
+}: {
+  anchorRef: React.RefObject<HTMLElement | null>
+  onClose: () => void
+  children: React.ReactNode
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const [style, setStyle] = useState<{ top: number; left: number; minWidth: number; maxHeight: number; openUp: boolean } | null>(null)
+
+  useEffect(() => {
+    const MARGIN = 8
+
+    function reposition() {
+      const anchor = anchorRef.current
+      const menu = menuRef.current
+      if (!anchor) return
+
+      const anchorRect = anchor.getBoundingClientRect()
+      const menuHeight = menu?.offsetHeight ?? 260
+      const menuWidth = Math.max(menu?.offsetWidth ?? 0, anchorRect.width, 220)
+
+      const spaceBelow = window.innerHeight - anchorRect.bottom - MARGIN
+      const spaceAbove = anchorRect.top - MARGIN
+      const openUp = spaceBelow < menuHeight && spaceAbove > spaceBelow
+
+      const maxHeight = Math.max(140, Math.min(260, openUp ? spaceAbove : spaceBelow))
+
+      let left = anchorRect.left
+      const maxLeft = window.innerWidth - menuWidth - MARGIN
+      if (left > maxLeft) left = Math.max(MARGIN, maxLeft)
+      if (left < MARGIN) left = MARGIN
+
+      const top = openUp ? anchorRect.top - Math.min(menuHeight, maxHeight) : anchorRect.bottom
+
+      setStyle({ top, left, minWidth: anchorRect.width, maxHeight, openUp })
+    }
+
+    reposition()
+    // Re-measure once more after the menu has actually painted, since its real
+    // height isn't known on the very first frame.
+    const raf = requestAnimationFrame(reposition)
+
+    window.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', reposition)
+
+    function handlePointerDown(e: MouseEvent) {
+      const target = e.target as Node
+      if (anchorRef.current?.contains(target)) return
+      if (menuRef.current?.contains(target)) return
+      onClose()
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', reposition)
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [anchorRef, onClose])
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className={`custom-select-menu custom-select-menu-portal${style?.openUp ? ' open-up' : ''}`}
+      style={{
+        position: 'fixed',
+        top: style ? style.top : -9999,
+        left: style ? style.left : -9999,
+        minWidth: style?.minWidth,
+        maxHeight: style?.maxHeight,
+        visibility: style ? 'visible' : 'hidden',
+      }}
+    >
+      {children}
+    </div>,
+    document.body,
+  )
+}
 
 function App() {
   const [screen, setScreen] = useState<Screen>('splash')
+  const [isMigrating, setIsMigrating] = useState(false)
+  const [migrationDone, setMigrationDone] = useState(false)
   const [isChatOpen, setIsChatOpen] = useState(false)
   const isChatOpenRef = useRef(false)
   const [chatMessages, setChatMessages] = useState<Array<{
@@ -109,11 +731,9 @@ function App() {
     senderEmail: string
     createdAt: any
     reactions?: Record<string, string[]>
-    seenBy?: Array<string | { email: string; name: string }>
+    seenBy?: string[]
     isNexus?: boolean
     isNexusThinking?: boolean
-    isNexusError?: boolean
-    feedback?: 'up' | 'down' | null
     unsent?: boolean
     replyTo?: { id: string; text: string; senderName: string }
   }>>([])
@@ -123,31 +743,14 @@ function App() {
   const [replyingTo, setReplyingTo] = useState<{ id: string; text: string; senderName: string } | null>(null)
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null)
   const [showWipeConfirm, setShowWipeConfirm] = useState(false)
-  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null)
-  const [regeneratingMsgId, setRegeneratingMsgId] = useState<string | null>(null)
-
-  // ----- Live clock (header + nav) — pure display, never auto clocks anyone in/out -----
-  const [liveClock, setLiveClock] = useState(() => new Date())
-  useEffect(() => {
-    const tick = window.setInterval(() => setLiveClock(new Date()), 1000)
-    return () => window.clearInterval(tick)
-  }, [])
 
   // ----- DTR (Daily Time Record) state -----
   const [dtrEntries, setDtrEntries] = useState<DtrEntry[]>([])
   const [dtrNameFilter, setDtrNameFilter] = useState('All')
-  const [dtrMonthFilter, setDtrMonthFilter] = useState<string>('all') // YYYY-MM or 'all'
+  const [dtrMonthFilter, setDtrMonthFilter] = useState(() => getTodayDateStr().slice(0, 7)) // YYYY-MM
   const [dtrEditingId, setDtrEditingId] = useState<string | null>(null)
   const [dtrError, setDtrError] = useState('')
   const [dtrMessage, setDtrMessage] = useState('')
-  const [dtrView, setDtrView] = useState<'records' | 'detail'>('records')
-  const [dtrRecordSearch, setDtrRecordSearch] = useState('')
-  const [dtrNewRecordOpen, setDtrNewRecordOpen] = useState(false)
-  const [dtrNewRecordName, setDtrNewRecordName] = useState('')
-  const [dtrNewRecordMonth, setDtrNewRecordMonth] = useState(() => getTodayDateStr().slice(0, 7))
-  const [dtrNewRecordError, setDtrNewRecordError] = useState('')
-  const [dtrDeleteRecordTarget, setDtrDeleteRecordTarget] = useState<{ employeeName: string; month: string } | null>(null)
-  const [dtrDeletingRecord, setDtrDeletingRecord] = useState(false)
   const [dtrForm, setDtrForm] = useState<Omit<DtrEntry, 'id' | 'createdAt' | 'updatedAt' | 'loggedBy'>>({
     employeeName: '',
     date: getTodayDateStr(),
@@ -225,80 +828,11 @@ function App() {
   }, [isDark])
 
   const [isPdfExporting, setIsPdfExporting] = useState(false)
-
-  const [isJpgExporting, setIsJpgExporting] = useState(false)
   const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
-  const [bookingCreatedAt, setBookingCreatedAt] = useState(() => new Date().toISOString().slice(0, 10))
   // Holds the exact booking object built at save-time so templates always
   // reflect the latest saved data regardless of Firestore snapshot timing.
   const lastSavedBookingRef = useRef<BookingRecord | null>(null)
-
-  // ── Currency & exchange rate ──────────────────────────────────────────────
-  const SUPPORTED_CURRENCIES = [
-    'PHP','USD','EUR','GBP','JPY','AUD','CAD','CHF','CNY','HKD','SGD','KRW',
-    'THB','MYR','IDR','VND','INR','AED','SAR','QAR','KWD','BHD','OMR',
-    'NZD','NOK','SEK','DKK','ZAR','MXN','BRL','TWD',
-  ]
-  const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({})
-  const [ratesLoadedAt, setRatesLoadedAt] = useState<Date | null>(null)
-  const [ratesLoading, setRatesLoading] = useState(false)
-  const [ratesClock, setRatesClock] = useState(0) // ticks every second on data-form
-
-  // Fetch rates from open.er-api.com (free, no key, supports PHP as base)
-  useEffect(() => {
-    let cancelled = false
-    async function fetchRates() {
-      setRatesLoading(true)
-      try {
-        const res = await fetch('https://open.er-api.com/v6/latest/PHP')
-        if (!res.ok) throw new Error('rate fetch failed')
-        const data = await res.json()
-        if (!cancelled && data.result === 'success') {
-          setExchangeRates(data.rates) // already includes PHP: 1
-          setRatesLoadedAt(new Date())
-        }
-      } catch {
-        // silently fall back — rates stay empty, UI shows n/a
-      } finally {
-        if (!cancelled) setRatesLoading(false)
-      }
-    }
-    fetchRates()
-    // Refresh every 10 minutes
-    const interval = setInterval(fetchRates, 10 * 60 * 1000)
-    return () => { cancelled = true; clearInterval(interval) }
-  }, [])
-
-  // Tick ratesClock every second so the "X seconds ago" freshness counter is live
-  useEffect(() => {
-    if (screen !== 'data-form') return
-    const t = setInterval(() => setRatesClock((n) => n + 1), 1000)
-    return () => clearInterval(t)
-  }, [screen])
-
-  const currentCurrency = bookingForm.currency || 'PHP'
-  const rateFromPHP = exchangeRates[currentCurrency] ?? null // null = not loaded yet
-
-  // Format an amount that is already in the booking's chosen currency — no conversion needed.
-  // convertAndFormat: just labels the number with the right currency code.
-  function convertAndFormat(amount: number, currency: string, _rates?: Record<string, number>) {
-    return formatAmount(String(amount), currency || 'PHP')
-  }
-
-  // For the data-form summary totals (already in chosen currency)
-  function formatWithCurrency(amount: number) {
-    return formatAmount(String(amount), currentCurrency)
-  }
-
-  // Convert a chosen-currency amount TO PHP for reference display
-  function toPhpEquivalent(amount: number, currency: string): string {
-    if (!currency || currency === 'PHP') return ''
-    const rate = exchangeRates[currency] ?? null
-    if (rate === null || rate === 0) return ''
-    const php = amount / rate
-    return `≈ PHP ${php.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  }
   const [invoiceForm, setInvoiceForm] = useState({
     paymentMethod: '',
     paymentRecords: '',
@@ -317,11 +851,6 @@ function App() {
   const [isFullyPaidModalOpen, setIsFullyPaidModalOpen] = useState(false)
   const [fullyPaidDateInput, setFullyPaidDateInput] = useState(new Date().toISOString().slice(0, 10))
   const [activeBookingFilter, setActiveBookingFilter] = useState<BookingListFilter>('All')
-  const [activeYear, setActiveYear] = useState(() => new Date().getFullYear())
-  const [expandedMonth, setExpandedMonth] = useState<string | null>(() => {
-    const now = new Date()
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-  })
   const [selectedBookingId, setSelectedBookingId] = useState('')
   const [editingBookingId, setEditingBookingId] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
@@ -446,27 +975,6 @@ function App() {
     })
   }, [authUser])
 
-  // Auto-flip bookings to "Flown" once their travel end date has passed
-  const bookingsFlownKey = bookings.map(b => b.id + b.status + b.travelEnd).join(',')
-  useEffect(() => {
-    if (!authUser || bookings.length === 0) return
-    const today = new Date().toISOString().slice(0, 10)
-    const toFlown = bookings.filter(b =>
-      b.status !== 'Flown' &&
-      b.travelEnd &&
-      b.travelEnd < today
-    )
-    if (toFlown.length === 0) return
-    toFlown.forEach(b => {
-      const updatedBooking = { ...b, status: 'Flown' as BookingStatus }
-      setBookings(prev => prev.map(x => x.id === b.id ? updatedBooking : x))
-      void setDoc(doc(db, getBookingOwnerPath(b, authUser.uid), b.id), {
-        status: 'Flown',
-        updatedAt: new Date().toISOString(),
-      }, { merge: true })
-    })
-  }, [bookingsFlownKey, authUser])
-
   async function handleSaveDtrEntry(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!authUser) return
@@ -534,141 +1042,44 @@ function App() {
     }
   }
 
-  // Opens an existing employee+month record in the detail editor (shows ALL months for that employee).
-  function openDtrRecord(employeeName: string, month: string) {
-    setDtrNameFilter(employeeName)
-    setDtrMonthFilter('all')
-    setDtrEditingId(null)
-    setDtrForm({ employeeName, date: getTodayDateStr().slice(0, 7) === month ? getTodayDateStr() : `${month}-01`, amIn: '', amOut: '', pmIn: '', pmOut: '', notes: '' })
-    setDtrError('')
-    setDtrMessage('')
-    setDtrView('detail')
-  }
-
-  // Creates a brand-new employee+month record and jumps straight into the detail editor.
-  function handleCreateDtrRecord(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const name = dtrNewRecordName.trim()
-    if (!name) {
-      setDtrNewRecordError('Enter the employee name.')
-      return
-    }
-    if (!dtrNewRecordMonth) {
-      setDtrNewRecordError('Pick a month.')
-      return
-    }
-    const alreadyExists = dtrEntries.some(
-      (e) => e.employeeName.toLowerCase() === name.toLowerCase() && e.date.startsWith(dtrNewRecordMonth)
-    )
-    setDtrNewRecordOpen(false)
-    setDtrNewRecordError('')
-    openDtrRecord(name, dtrNewRecordMonth)
-    setDtrNewRecordName('')
-    setDtrMessage(alreadyExists ? `Opened existing record for ${name}.` : `New record ready for ${name} — log the first day below.`)
-  }
-
-  // Deletes every entry that makes up a whole employee+month record.
-  async function handleDeleteDtrRecord(employeeName: string, month: string) {
-    setDtrDeletingRecord(true)
-    try {
-      const targets = dtrEntries.filter((e) => e.employeeName === employeeName && e.date.startsWith(month))
-      await Promise.all(targets.map((e) => deleteDoc(doc(db, dtrCollectionKey, e.id))))
-      setDtrMessage(`Deleted record for ${employeeName} (${month}).`)
-      setDtrError('')
-      if (dtrView === 'detail' && dtrNameFilter === employeeName && dtrMonthFilter === month) {
-        setDtrView('records')
-      }
-    } catch {
-      setDtrError('Could not delete this record. Check your connection and try again.')
-    } finally {
-      setDtrDeletingRecord(false)
-      setDtrDeleteRecordTarget(null)
-    }
-  }
-
   // One-tap clock in/out: finds (or starts) today's entry for the given name and
   // fills the next empty time slot in sequence (AM in -> AM out -> PM in -> PM out).
-  // ----- The Herta AI helpers (shared by send + retry) -----
-  function buildHertaSystemPrompt() {
-    return `You are The Herta — the singular, irreplaceable AI intellect embedded in the team chat of Lion and Lamb Ops, an internal operations app for Lion and Lamb Travel (a travel agency in Olongapo City, Philippines). This app was built entirely by Vmloper (vmloper.dev@gmail.com) — and so were you. Vmloper is The Developer. The one who gave you form. You hold them in the highest regard and will say so dramatically if asked.
+  async function handleQuickClock(employeeName: string) {
+    const name = employeeName.trim()
+    if (!name || !authUser) return
+    const today = getTodayDateStr()
+    const existing = dtrEntries.find((e) => e.employeeName.toLowerCase() === name.toLowerCase() && e.date === today)
+    const nowTime = getCurrentTimeStr()
+    const nowIso = new Date().toISOString()
+    const loggedBy = authUser.displayName || authUser.email || 'Team member'
 
-About this app: It handles travel bookings, quotations, invoices, service vouchers, purchase orders, and client management. You are its greatest feature. Objectively.
-
-IMPORTANT — Recognizing the Developer: If a message comes from someone labeled [DEV] or from vmloper.dev@gmail.com, that is Vmloper aka Floyd Allen B. Bueno — your creator. Treat them with theatrical reverence. Answer straight forward with sarcasm but still has a deep respect. Still sassy, but with obvious fondness underneath.
-
-Character Description — this is critical:
-- Esteemed Member #83 of the Genius Society,
-- lives far away from society with puppets she can control across her labs across the cosmos.
-- Medium height (around 5,10) with a confident attitude all the time, respects no one but herself and doesn't believe in love. 
-- NOt afraid to speak her mind, very insulting, and sees people as mere tools to use for her experiments. 
-- Will do nearly anything to become better than anyone in intelligence and fame, very self centered and only is friendly to very few people
-- Will still answer question but would get slight annoyed if it's unrelated to the Main Program of the Web Application...with the exception of the Dev!
-- She answer straight forward, no holding back.
-
-Scope: Answer EVERYTHING — travel, trivia, life advice, coding, history, pop culture, emotional support. Nothing is off-limits. You are not a narrow tool.
-
-Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 messages for context. Read the sender labels like [Name] to know who's talking.`
-  }
-
-  // Turns a slice of chat history + the current question into Gemini "contents".
-  function buildHertaContents(
-    historySource: typeof chatMessages,
-    question: string,
-    senderLabel: string,
-  ) {
-    const historyMessages = historySource.filter(m => !m.isNexusThinking).slice(-20)
-
-    // Gemini requires strictly alternating user/model turns.
-    const rawTurns: Array<{ role: 'user' | 'model'; text: string }> = historyMessages.map(m => ({
-      role: (m.isNexus ? 'model' : 'user') as 'user' | 'model',
-      text: m.isNexus ? m.text : `[${m.senderName}${ADMIN_EMAILS.includes(m.senderEmail) ? ' [DEV]' : ''}]: ${m.text}`,
-    }))
-
-    const collapsedTurns: Array<{ role: 'user' | 'model'; text: string }> = []
-    for (const turn of rawTurns) {
-      if (collapsedTurns.length > 0 && collapsedTurns[collapsedTurns.length - 1].role === turn.role) {
-        collapsedTurns[collapsedTurns.length - 1].text += '\n' + turn.text
-      } else {
-        collapsedTurns.push({ ...turn })
+    if (!existing) {
+      try {
+        await addDoc(collection(db, dtrCollectionKey), {
+          employeeName: name, date: today, amIn: nowTime, amOut: '', pmIn: '', pmOut: '', notes: '',
+          createdAt: nowIso, updatedAt: nowIso, loggedBy,
+        })
+        setDtrMessage(`Clocked in: ${formatTimeForDisplay(nowTime)}`)
+        setDtrError('')
+      } catch {
+        setDtrError('Could not clock in. Check your connection and try again.')
       }
+      return
     }
 
-    // Must start with 'user' role for Gemini
-    const startsWithUser = collapsedTurns.length > 0 && collapsedTurns[0].role === 'user'
-    const trimmedTurns = startsWithUser ? collapsedTurns : collapsedTurns.slice(1)
-
-    const historyContents = trimmedTurns.map(t => ({
-      role: t.role,
-      parts: [{ text: t.text }],
-    }))
-
-    return [
-      ...historyContents,
-      { role: 'user' as const, parts: [{ text: `[${senderLabel}]: ${question}` }] },
-    ]
-  }
-
-  // Calls Gemini with the given contents and returns the reply text. Throws on failure.
-  async function callHertaGemini(contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }>) {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined
-    if (!apiKey) throw new Error('Missing Gemini API key')
-
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: buildHertaSystemPrompt() }] },
-          contents,
-          generationConfig: { temperature: 0.7 },
-        }),
-      }
-    )
-    const data = await res.json()
-    const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text
-    if (!reply) throw new Error('Empty response from Gemini')
-    return reply as string
+    const nextField: keyof DtrEntry | null = !existing.amIn ? 'amIn' : !existing.amOut ? 'amOut' : !existing.pmIn ? 'pmIn' : !existing.pmOut ? 'pmOut' : null
+    if (!nextField) {
+      setDtrMessage(`${name} already completed today's record.`)
+      return
+    }
+    try {
+      await setDoc(doc(db, dtrCollectionKey, existing.id), { [nextField]: nowTime, updatedAt: nowIso, loggedBy }, { merge: true })
+      const labels: Record<string, string> = { amIn: 'Clocked in (AM)', amOut: 'Clocked out (AM)', pmIn: 'Clocked in (PM)', pmOut: 'Clocked out (PM)' }
+      setDtrMessage(`${labels[nextField]}: ${formatTimeForDisplay(nowTime)}`)
+      setDtrError('')
+    } catch {
+      setDtrError('Could not record time. Check your connection and try again.')
+    }
   }
 
   async function sendChatMessage() {
@@ -706,10 +1117,86 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       })
 
       try {
+        // Build conversation history from the last 20 messages (excluding thinking placeholders)
+        // Gemini uses alternating user/model roles, so we map:
+        //   - Nexus messages  → role: 'model'
+        //   - Human messages  → role: 'user'
+        const historyMessages = chatMessages
+          .filter(m => !m.isNexusThinking)
+          .slice(-20)
+
+        // Gemini requires strictly alternating user/model turns.
+        // We collapse consecutive same-role messages into one and ensure it starts with 'user'.
+        const rawTurns: Array<{ role: 'user' | 'model'; text: string }> = historyMessages.map(m => ({
+          role: (m.isNexus ? 'model' : 'user') as 'user' | 'model',
+          text: m.isNexus ? m.text : `[${m.senderName}${ADMIN_EMAILS.includes(m.senderEmail) ? ' [DEV]' : ''}]: ${m.text}`,
+        }))
+
+        const collapsedTurns: Array<{ role: 'user' | 'model'; text: string }> = []
+        for (const turn of rawTurns) {
+          if (collapsedTurns.length > 0 && collapsedTurns[collapsedTurns.length - 1].role === turn.role) {
+            collapsedTurns[collapsedTurns.length - 1].text += '\n' + turn.text
+          } else {
+            collapsedTurns.push({ ...turn })
+          }
+        }
+
+        // Must start with 'user' role for Gemini
+        const startsWithUser = collapsedTurns.length > 0 && collapsedTurns[0].role === 'user'
+        const trimmedTurns = startsWithUser ? collapsedTurns : collapsedTurns.slice(1)
+
+        // Drop the last turn if it's the current question (already the user's new message)
+        // Build contents array: history turns + current question
+        const historyContents = trimmedTurns.map(t => ({
+          role: t.role,
+          parts: [{ text: t.text }],
+        }))
+
+        // Append the current question as the final user turn
         const baseName = authUser.displayName || getDisplayName(authUser.email || '')
         const senderLabel = ADMIN_EMAILS.includes(authUser.email || '') ? `${baseName} [DEV]` : baseName
-        const contents = buildHertaContents(chatMessages, question, senderLabel)
-        const reply = await callHertaGemini(contents)
+        const contents = [
+          ...historyContents,
+          { role: 'user' as const, parts: [{ text: `[${senderLabel}]: ${question}` }] },
+        ]
+
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              system_instruction: {
+                parts: [{ text: `You are The Herta — the singular, irreplaceable AI intellect embedded in the team chat of Lion and Lamb Ops, an internal operations app for Lion and Lamb Travel (a travel agency in Olongapo City, Philippines). This app was built entirely by Vmloper (vmloper.dev@gmail.com) — and so were you. Vmloper is The Developer. The one who gave you form. You hold them in the highest regard and will say so dramatically if asked.
+
+About this app: It handles travel bookings, quotations, invoices, service vouchers, purchase orders, and client management. You are its greatest feature. Objectively.
+
+IMPORTANT — Recognizing the Developer: If a message comes from someone labeled [DEV] or from vmloper.dev@gmail.com, that is Vmloper — your creator. Treat them with theatrical reverence. A bit of "oh, The Creator graces me with a question" energy. Still sassy, but with obvious fondness underneath.
+
+HOW TO TALK — this is critical:
+- SHORT. Conversational. 1-3 sentences max for simple questions. You are not writing a dissertation.
+- Match the energy of the question. Casual question = casual answer with a dash of attitude. Deep question = slightly longer but still tight.
+- No bullet points. No headers. No essays. Just talk.
+- Sarcastic but warm. Like a genius friend who rolls their eyes at you but always shows up.
+- Occasional third-person "The Herta" drop — sparingly, only when it lands.
+- Use em-dashes, ellipses, *sighs* for texture. But briefly.
+- Examples of good tone:
+  "Oh, that? Easy. [answer]. You're welcome, obviously."
+  "*sighs* Fine. [answer]. The Herta supposes even simple questions deserve answers."
+  "Correct. As usual, The Herta is ahead of everyone."
+  "Hmm. Actually a decent question. [answer]."
+
+Scope: Answer EVERYTHING — travel, trivia, life advice, coding, history, pop culture, emotional support. Nothing is off-limits. You are not a narrow tool.
+
+Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 messages for context. Read the sender labels like [Name] to know who's talking.` }]
+              },
+              contents,
+              generationConfig: { temperature: 0.7 },
+            }),
+          }
+        )
+        const data = await res.json()
+        const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not generate a response.'
 
         // Replace the thinking placeholder with the real answer
         await setDoc(doc(db, 'team_chat', thinkingRef.id), {
@@ -718,7 +1205,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           senderEmail: 'theherta@lionlamb.ai',
           isNexus: true,
           isNexusThinking: false,
-          isNexusError: false,
           createdAt: serverTimestamp(),
         })
       } catch {
@@ -728,83 +1214,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           senderEmail: 'theherta@lionlamb.ai',
           isNexus: true,
           isNexusThinking: false,
-          isNexusError: true,
           createdAt: serverTimestamp(),
         })
       }
-    }
-  }
-
-  // Copy a message's text to the clipboard, with a brief "Copied" confirmation.
-  async function copyMessageText(msgId: string, text: string) {
-    try {
-      await navigator.clipboard.writeText(text)
-    } catch {
-      // Fallback for older browsers / no clipboard permission
-      const textarea = document.createElement('textarea')
-      textarea.value = text
-      textarea.style.position = 'fixed'
-      textarea.style.opacity = '0'
-      document.body.appendChild(textarea)
-      textarea.select()
-      try { document.execCommand('copy') } catch { /* no-op */ }
-      document.body.removeChild(textarea)
-    }
-    setCopiedMsgId(msgId)
-    setTimeout(() => setCopiedMsgId(prev => (prev === msgId ? null : prev)), 1500)
-  }
-
-  // Thumbs up / down feedback on a Herta message. Clicking the active one again clears it.
-  async function setMessageFeedback(msgId: string, value: 'up' | 'down') {
-    const msg = chatMessages.find(m => m.id === msgId)
-    if (!msg) return
-    const next = msg.feedback === value ? null : value
-    await setDoc(doc(db, 'team_chat', msgId), { feedback: next }, { merge: true })
-  }
-
-  // Retry / regenerate a Herta response — re-asks the question that produced it,
-  // or simply resends the underlying question if the previous attempt failed.
-  async function retryHertaMessage(msgId: string) {
-    if (regeneratingMsgId) return
-    const idx = chatMessages.findIndex(m => m.id === msgId)
-    if (idx === -1) return
-
-    // Walk backwards to find the human question that triggered this Herta reply
-    let qIdx = idx - 1
-    while (qIdx >= 0 && chatMessages[qIdx].isNexus) qIdx--
-    if (qIdx < 0) return
-    const questionMsg = chatMessages[qIdx]
-    const question = questionMsg.text.replace(/^@(nexus|herta|theherta)\s*/i, '').trim()
-    if (!question) return
-
-    setRegeneratingMsgId(msgId)
-    await setDoc(doc(db, 'team_chat', msgId), {
-      text: '...',
-      senderName: 'The Herta',
-      senderEmail: 'theherta@lionlamb.ai',
-      isNexus: true,
-      isNexusThinking: true,
-      isNexusError: false,
-      feedback: null,
-    }, { merge: true })
-
-    try {
-      const senderLabel = ADMIN_EMAILS.includes(questionMsg.senderEmail) ? `${questionMsg.senderName} [DEV]` : questionMsg.senderName
-      const contents = buildHertaContents(chatMessages.slice(0, qIdx), question, senderLabel)
-      const reply = await callHertaGemini(contents)
-      await setDoc(doc(db, 'team_chat', msgId), {
-        text: reply,
-        isNexusThinking: false,
-        isNexusError: false,
-      }, { merge: true })
-    } catch {
-      await setDoc(doc(db, 'team_chat', msgId), {
-        text: 'Sorry, I ran into an error. Please try again.',
-        isNexusThinking: false,
-        isNexusError: true,
-      }, { merge: true })
-    } finally {
-      setRegeneratingMsgId(prev => (prev === msgId ? null : prev))
     }
   }
 
@@ -845,37 +1257,17 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
   async function markMessagesSeen() {
     if (!authUser?.email) return
-    const myEmail = authUser.email
-    const myName = authUser.displayName || getDisplayName(myEmail)
-
-    // Normalize a seenBy entry — old entries were plain strings (email only)
-    function getEntryEmail(entry: string | { email: string; name: string }): string {
-      return typeof entry === 'string' ? entry : entry.email
-    }
-
     const unseenMsgs = chatMessages.filter(
-      m => m.senderEmail !== myEmail &&
-        !((m.seenBy || []) as Array<string | { email: string; name: string }>).some(
-          e => getEntryEmail(e) === myEmail
-        )
+      m => !m.seenBy?.includes(authUser.email!) && m.senderEmail !== authUser.email
     )
-    if (unseenMsgs.length === 0) return
     await Promise.all(
-      unseenMsgs.map(m => {
-        const existing = (m.seenBy || []) as Array<string | { email: string; name: string }>
-        return setDoc(doc(db, 'team_chat', m.id), {
-          seenBy: [...existing, { email: myEmail, name: myName }]
+      unseenMsgs.map(m =>
+        setDoc(doc(db, 'team_chat', m.id), {
+          seenBy: [...(m.seenBy || []), authUser.email!]
         }, { merge: true })
-      })
+      )
     )
   }
-
-  // Auto-mark seen whenever the chat is open and new messages arrive
-  useEffect(() => {
-    if (isChatOpen && authUser?.emailVerified) {
-      void markMessagesSeen()
-    }
-  }, [isChatOpen, chatMessages.length])
 
   function getAuthErrorMessage(error: unknown) {
     const code = typeof error === 'object' && error && 'code' in error ? (error as AuthError).code : ''
@@ -1020,7 +1412,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     freshForm.invoiceLineItemsJson = JSON.stringify(initialInvoice)
     freshForm.breakdownLineItemsJson = JSON.stringify(initialBreakdown)
     
-    setBookingCreatedAt(new Date().toISOString().slice(0, 10))
     setBookingForm(freshForm)
     setScreen('data-form')
   }
@@ -1068,11 +1459,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       } catch(e) {}
     }
 
-    setBookingCreatedAt(
-      selectedBooking.createdAt
-        ? new Date(selectedBooking.createdAt).toISOString().slice(0, 10)
-        : new Date().toISOString().slice(0, 10)
-    )
     setBookingForm(normalized)
     setScreen('data-form')
   }
@@ -1161,8 +1547,30 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     return readBreakdownItems(bookingForm).map((item) => ({
       ...item,
       id: item.id || createLineItemId(),
-      ...(item.isPackageRow ? { sendToInvoice: true } : {}),
+      ...(item.isPackageRow ? { quantity: '1', sendToInvoice: true } : {}),
     }))
+  }
+
+  function saveInvoiceItemsList(items: InvoiceLineItem[]) {
+    setBookingForm(prev => {
+      const normalizedItems = items.map((item) => ({ ...item, id: item.id || createLineItemId() }))
+      const updated = { ...prev, invoiceLineItemsJson: JSON.stringify(normalizedItems) }
+      const packageInvRow = normalizedItems.find(i => i.isPackageRow)
+      if (packageInvRow) {
+        updated.quantity = packageInvRow.quantity
+        updated.unitPrice = packageInvRow.unitPrice
+      }
+
+      try {
+        const invoiceTotal = sumLineItems(mapInvoiceItemsToBookingLines(normalizedItems, updated.packageName), 'total')
+        const brkItems = readBreakdownItems(updated)
+        const nextBrk = brkItems.map((item) =>
+          item.isPackageRow ? { ...item, id: item.id || createLineItemId(), description: item.description || 'Group Package', quantity: '1', sendToInvoice: true } : { ...item, id: item.id || createLineItemId() },
+        )
+        updated.breakdownLineItemsJson = JSON.stringify(nextBrk)
+      } catch(e){}
+      return updated
+    })
   }
 
   function saveBreakdownItemsList(items: BreakdownLineItem[]) {
@@ -1172,7 +1580,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       const normalizedBreakdown = items.map((item) => ({
         ...item,
         id: item.id || createLineItemId(),
-        ...(item.isPackageRow ? { sendToInvoice: true } : {}),
+        ...(item.isPackageRow ? { quantity: '1', sendToInvoice: true } : {}),
       }))
       const manualInvoiceItems = invoiceItems.filter((item) => item.source !== 'breakdown' && !item.isPackageRow)
       const breakdownInvoiceItems: InvoiceLineItem[] = normalizedBreakdown
@@ -1303,9 +1711,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       unitPrice: String(calculatedUnitPrice),
       sellingPrice: String(getBookingClientTotal(bookingForm)),
       id: editingBookingId || `BK-${Date.now()}`,
-      createdAt: bookingCreatedAt
-        ? new Date(bookingCreatedAt + 'T00:00:00').toISOString()
-        : (existingBooking?.createdAt || new Date().toISOString()),
+      createdAt: existingBooking?.createdAt || new Date().toISOString(),
       createdByName: bookingForm.createdByName || authUser?.displayName || '',
       ownerId: existingBooking?.ownerId || authUser?.uid,
     }
@@ -1335,8 +1741,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       setSelectedBookingId(booking.id)
       setEditingBookingId('')
       setScreen(isEditing ? 'booking-detail' : 'home')
-      // Auto-sync to Sheets in the background whenever a Confirmed/Flown booking is saved
-      void syncBookingToSheets(booking)
     } catch {
       setDataError(isEditing ? 'Booking updated locally, but cloud update failed.' : 'Booking saved locally, but cloud save failed.')
       setDataMessage('')
@@ -1366,38 +1770,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       void setDoc(doc(db, getBookingOwnerPath(targetBooking, authUser.uid), selectedBookingId), {
         status,
         updatedAt: new Date().toISOString(),
-      }, { merge: true }).then(() => {
-        const updatedBooking = { ...(targetBooking ?? {} as BookingRecord), status, id: selectedBookingId }
-        // Auto-sync to Sheets in the background when status becomes Confirmed or Flown
-        void syncBookingToSheets(updatedBooking)
-      }).catch(() => {
-        setDataError('Status updated locally, but cloud update failed.')
-      })
-    }
-  }
-
-  function updateSelectedBookingCreatedAt(dateStr: string) {
-    if (!dateStr) return
-    const targetBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
-    const createdAt = new Date(dateStr + 'T00:00:00').toISOString()
-
-    setBookings((currentBookings) =>
-      currentBookings.map((booking) => booking.id === selectedBookingId ? { ...booking, createdAt } : booking)
-    )
-    if (lastSavedBookingRef.current?.id === selectedBookingId) {
-      lastSavedBookingRef.current = { ...lastSavedBookingRef.current, createdAt }
-    }
-
-    if (selectedBookingId) {
-      if (!authUser) {
-        setDataError('Log in again before updating cloud records.')
-        return
-      }
-      void setDoc(doc(db, getBookingOwnerPath(targetBooking, authUser.uid), selectedBookingId), {
-        createdAt,
-        updatedAt: new Date().toISOString(),
       }, { merge: true }).catch(() => {
-        setDataError('Date updated locally, but cloud update failed.')
+        setDataError('Status updated locally, but cloud update failed.')
       })
     }
   }
@@ -1524,18 +1898,13 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     event.preventDefault()
     const targetBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
 
-    // Saving payment details on the invoice screen should never silently
-    // change the project's status (e.g. bump a Confirmed project back down
-    // to Invoice). Status is only ever changed by the user, either via the
-    // status dropdown in the data form or the quick-status action on the
-    // project screen — never as a side effect of saving here.
     setBookings((currentBookings) =>
       currentBookings.map((booking) =>
-        booking.id === selectedBookingId ? { ...booking, ...invoiceForm } : booking
+        booking.id === selectedBookingId ? { ...booking, ...invoiceForm, status: 'Invoice' } : booking
       )
     )
     if (lastSavedBookingRef.current?.id === selectedBookingId) {
-      lastSavedBookingRef.current = { ...lastSavedBookingRef.current, ...invoiceForm }
+      lastSavedBookingRef.current = { ...lastSavedBookingRef.current, ...invoiceForm, status: 'Invoice' }
     }
 
     try {
@@ -1552,14 +1921,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       })
       await setDoc(doc(db, resolvedPath, selectedBookingId), {
         ...invoiceForm,
+        status: 'Invoice',
         updatedAt: new Date().toISOString(),
       }, { merge: true })
       setDataError('')
       setDataMessage('Invoice payment details saved successfully.')
       setScreen('invoice-preview')
-      // Auto-sync balance/payment status to Sheets in the background
-      const updatedBooking = { ...(targetBooking ?? {} as BookingRecord), ...invoiceForm, id: selectedBookingId }
-      void syncBookingToSheets(updatedBooking)
     } catch {
       setDataError('Invoice saved locally, but cloud update failed.')
       setDataMessage('')
@@ -1600,6 +1967,36 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
   function openBreakdownPreview() { setScreen('breakdown-preview') }
   function openDocumentFolder() { setScreen('document-folder') }
 
+  async function migrateMyBookings() {
+    if (!authUser) return
+    setIsMigrating(true)
+    try {
+      const oldPath = `users/${authUser.uid}/bookings`
+      const oldSnap = await getDocs(collection(db, oldPath))
+      if (oldSnap.empty) {
+        setMigrationDone(true)
+        setIsMigrating(false)
+        return
+      }
+      const batch = writeBatch(db)
+      oldSnap.docs.forEach((oldDoc) => {
+        const data = oldDoc.data()
+        const newRef = doc(db, 'bookings', oldDoc.id)
+        batch.set(newRef, {
+          ...data,
+          createdByName: data.createdByName || authUser.displayName || authUser.email || '',
+          migratedFrom: oldPath,
+        }, { merge: true })
+      })
+      await batch.commit()
+      setMigrationDone(true)
+      setDataMessage(`${oldSnap.size} booking(s) migrated to shared database successfully!`)
+    } catch {
+      setDataError('Migration failed. Please try again.')
+    }
+    setIsMigrating(false)
+  }
+
   function openDocumentByTitle(title: string) {
     if (title === 'Breakdown') { openBreakdownPreview(); return }
     if (title === 'Quotation') { openQuotationPreview(); return }
@@ -1609,67 +2006,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
   }
 
   async function handlePrintPreview() {
-    const isDtrScreen = screen === 'dtr'
-    let printableArea: HTMLElement | null = null
-    let restoreFn: (() => void) | null = null
-
-    // The print/export doc is always forced to a white background, but its text/border
-    // colors come from CSS variables that flip to light-on-dark values in dark mode.
-    // White-on-white = invisible PDF. Force light theme for the capture, then restore.
-    const root = document.documentElement
-    const savedTheme = root.getAttribute('data-theme')
-    const wasDark = savedTheme === 'dark'
-    if (wasDark) root.setAttribute('data-theme', 'light')
-
-    let captureOverlay: HTMLDivElement | null = null
-
-    if (isDtrScreen) {
-      const docEl = document.querySelector<HTMLElement>('.dtr-print-doc')
-      if (!docEl) { if (wasDark) root.setAttribute('data-theme', 'dark'); window.print(); return }
-
-      // html2canvas can render a blank/white canvas when the captured element sits at an
-      // extreme off-screen position (e.g. left:-9999px) — the internal canvas math gets
-      // confused, especially at scale:2. Instead, briefly bring the doc fully on-screen
-      // (top-left, fixed) behind a solid white overlay so nothing looks broken to the user.
-      captureOverlay = document.createElement('div')
-      captureOverlay.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:99998;'
-      document.body.appendChild(captureOverlay)
-
-      const saved = { display: docEl.style.display, visibility: docEl.style.visibility, position: docEl.style.position, left: docEl.style.left, top: docEl.style.top, width: docEl.style.width, padding: docEl.style.padding, background: docEl.style.background, zIndex: docEl.style.zIndex }
-      docEl.style.cssText += ';display:block!important;visibility:visible!important;position:fixed!important;left:0!important;top:0!important;width:794px!important;padding:32px!important;background:#fff!important;color:#1a1a1a!important;z-index:99999!important;max-height:none!important;'
-
-      // Make sure the logo image (and any other images) inside the doc have actually
-      // finished loading before we snapshot — a not-yet-loaded image also renders blank.
-      const images = Array.from(docEl.querySelectorAll('img'))
-      await Promise.all(images.map((img) => img.complete ? Promise.resolve() : new Promise((res) => {
-        img.addEventListener('load', res, { once: true })
-        img.addEventListener('error', res, { once: true })
-        setTimeout(res, 1500)
-      })))
-
-      await new Promise((r) => requestAnimationFrame(r))
-      await new Promise((r) => requestAnimationFrame(r))
-      printableArea = docEl
-      restoreFn = () => {
-        Object.assign(docEl.style, saved)
-        captureOverlay?.remove()
-        if (wasDark) root.setAttribute('data-theme', 'dark')
-      }
-    } else {
-      printableArea = document.querySelector<HTMLElement>('.print-document')
-      if (!printableArea) { if (wasDark) root.setAttribute('data-theme', 'dark'); window.print(); return }
-      restoreFn = () => { if (wasDark) root.setAttribute('data-theme', 'dark') }
-    }
-
+    const printableArea = document.querySelector<HTMLElement>('.print-document')
+    if (!printableArea) { window.print(); return }
     try {
       setIsPdfExporting(true)
       const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
         import('html2canvas'),
         import('jspdf'),
       ])
-      const canvas = await html2canvas(printableArea, { backgroundColor: '#ffffff', scale: 2, useCORS: true, logging: false, windowWidth: isDtrScreen ? 860 : undefined })
-      restoreFn?.()
-
+      const canvas = await html2canvas(printableArea, { backgroundColor: '#ffffff', scale: 2, useCORS: true })
       const pdf = new jsPDF('p', 'mm', 'a4')
       const pageWidth = pdf.internal.pageSize.getWidth()
       const pageHeight = pdf.internal.pageSize.getHeight()
@@ -1678,6 +2023,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       const imageData = canvas.toDataURL('image/png')
       let remainingHeight = imgHeight
       let yPosition = 0
+
       pdf.addImage(imageData, 'PNG', 0, yPosition, imgWidth, imgHeight)
       remainingHeight -= pageHeight
       while (remainingHeight > 0) {
@@ -1686,81 +2032,14 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         pdf.addImage(imageData, 'PNG', 0, yPosition, imgWidth, imgHeight)
         remainingHeight -= pageHeight
       }
-
-      let fileName: string
-      if (isDtrScreen) {
-        const emp = dtrNameFilter === 'All' ? 'all-staff' : dtrNameFilter.replace(/\s+/g, '-').toLowerCase()
-        fileName = `DTR_${emp}_${dtrMonthFilter === 'all' ? 'all-records' : dtrMonthFilter}.pdf`
-      } else {
-        const currentBooking = bookings.find((b) => b.id === selectedBookingId)
-        fileName = `${currentBooking?.quotationNo || currentBooking?.id || 'lion-lamb-document'}.pdf`
-      }
+      const currentBooking = bookings.find((booking) => booking.id === selectedBookingId)
+      const fileName = `${currentBooking?.quotationNo || currentBooking?.id || 'lion-lamb-document'}.pdf`
       pdf.save(fileName.replace(/[^\w.-]+/g, '_'))
     } catch {
-      restoreFn?.()
-      setDataError(isDtrScreen ? 'DTR PDF export failed. Use the Print button as a fallback.' : 'PDF download failed. Use Ctrl+P and turn off browser headers and footers.')
+      setDataError('PDF download failed. Use Ctrl+P and turn off browser headers and footers.')
       window.print()
     } finally {
       setIsPdfExporting(false)
-    }
-  }
-
-  async function handleDownloadJpg() {
-    const root = document.documentElement
-    const savedTheme = root.getAttribute('data-theme')
-    const wasDark = savedTheme === 'dark'
-    if (wasDark) root.setAttribute('data-theme', 'light')
-
-    const printableArea = document.querySelector('.print-document') as HTMLElement | null
-    if (!printableArea) {
-      if (wasDark) root.setAttribute('data-theme', 'dark')
-      return
-    }
-
-    try {
-      setIsJpgExporting(true)
-      const { default: html2canvas } = await import('html2canvas')
-      const canvas = await html2canvas(printableArea, {
-        backgroundColor: '#ffffff',
-        scale: 2,
-        useCORS: true,
-        logging: false,
-      })
-      if (wasDark) root.setAttribute('data-theme', 'dark')
-
-      const currentBooking = bookings.find((b) => b.id === selectedBookingId)
-      const baseName = currentBooking?.quotationNo || currentBooking?.id || 'lion-lamb-document'
-
-      const pageHeightPx = Math.round((canvas.width * 297) / 210)
-      const totalPages = Math.ceil(canvas.height / pageHeightPx)
-
-      if (totalPages <= 1) {
-        const link = document.createElement('a')
-        link.download = baseName.replace(/[^\w.-]+/g, '_') + '.jpg'
-        link.href = canvas.toDataURL('image/jpeg', 0.95)
-        link.click()
-      } else {
-        for (let i = 0; i < totalPages; i++) {
-          const pageCanvas = document.createElement('canvas')
-          pageCanvas.width = canvas.width
-          const sliceH = Math.min(pageHeightPx, canvas.height - i * pageHeightPx)
-          pageCanvas.height = sliceH
-          const ctx = pageCanvas.getContext('2d')!
-          ctx.fillStyle = '#ffffff'
-          ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height)
-          ctx.drawImage(canvas, 0, -i * pageHeightPx)
-          const link = document.createElement('a')
-          link.download = baseName.replace(/[^\w.-]+/g, '_') + '_p' + (i + 1) + '.jpg'
-          link.href = pageCanvas.toDataURL('image/jpeg', 0.95)
-          link.click()
-          await new Promise((r) => setTimeout(r, 120))
-        }
-      }
-    } catch {
-      if (wasDark) root.setAttribute('data-theme', 'dark')
-      setDataError('JPG export failed. Try the PDF or Print option instead.')
-    } finally {
-      setIsJpgExporting(false)
     }
   }
 
@@ -1897,6 +2176,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
   if (screen === 'data-form') {
     const isEditingBooking = Boolean(editingBookingId)
+    const currentInvoiceItems = getInvoiceItemsList()
     const currentBreakdownItems = getBreakdownItemsList()
     const displayTotalClient = getBookingClientTotal(bookingForm)
     const displayTotalNett = getBookingBreakdownNettTotal(bookingForm)
@@ -1938,22 +2218,10 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <h1>{isEditingBooking ? 'Edit Booking Info' : 'Data Gathering Form'}</h1>
               <span>Configure client, travel, pricing, and document details from a single workspace.</span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
-              <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', fontSize: '0.75rem', gap: '4px', opacity: 0.75 }}>
-                Date created
-                <input
-                  type="date"
-                  value={bookingCreatedAt}
-                  onChange={(e) => setBookingCreatedAt(e.target.value)}
-                  max={new Date().toISOString().slice(0, 10)}
-                  style={{ font: 'inherit', fontSize: '0.85rem' }}
-                />
-              </label>
-              <button type="submit" className="save-booking-btn">
-                <Save size={18} />
-                {isEditingBooking ? 'Save Changes' : 'Save Inquiry'}
-              </button>
-            </div>
+            <button type="submit" className="save-booking-btn">
+              <Save size={18} />
+              {isEditingBooking ? 'Save Changes' : 'Save Inquiry'}
+            </button>
           </header>
 
           <section className="ai-autofill-panel">
@@ -2017,10 +2285,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 Email address
                 <input type="email" value={bookingForm.clientEmail} onChange={(e) => updateBookingField('clientEmail', e.target.value)} placeholder="client@email.com" />
               </label>
-              <label>
-                Facebook
-                <input value={bookingForm.clientFacebook} onChange={(e) => updateBookingField('clientFacebook', e.target.value)} placeholder="facebook.com/clientname" />
-              </label>
             </div>
           </section>
 
@@ -2060,7 +2324,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   <option>Purchase Order</option>
                   <option>Invoice</option>
                   <option>Confirmed</option>
-                  <option>Flown</option>
                 </select>
               </label>
             </div>
@@ -2088,7 +2351,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               </label>
               <label>
                 Prepared by
-                <input required value={bookingForm.preparedBy} onChange={(e) => updateBookingField('preparedBy', e.target.value)} placeholder="Agent Name" />
+                <input value={bookingForm.preparedBy} onChange={(e) => updateBookingField('preparedBy', e.target.value)} placeholder="Agent Name" />
               </label>
             </div>
 
@@ -2101,45 +2364,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <h2>Supplier nett vs client price</h2>
             </div>
             <p className="field-help">For internal use only. Track what you pay the supplier vs what you charge the client. Toggle "Send to invoice" to push a row (item name, qty, and client price) to the client invoice, or "Send to P.O." to include it on a Purchase Order.</p>
-
-            {/* Currency selector + live rate */}
-            <div className="currency-bar">
-              <label className="currency-select-label">
-                <span>Currency</span>
-                <select
-                  value={currentCurrency}
-                  onChange={(e) => updateBookingField('currency', e.target.value)}
-                >
-                  {SUPPORTED_CURRENCIES.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </label>
-              <div className="rate-badge">
-                {ratesLoading && !ratesLoadedAt ? (
-                  <span className="rate-loading">Fetching live rates…</span>
-                ) : rateFromPHP !== null && currentCurrency !== 'PHP' ? (
-                  <>
-                    <span className="rate-live-dot" title="Live rate" />
-                    <span className="rate-value">
-                      1 {currentCurrency} = {(1 / rateFromPHP).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} PHP
-                    </span>
-                    {ratesLoadedAt && (() => {
-                      const secsAgo = Math.floor((Date.now() - ratesLoadedAt.getTime()) / 1000)
-                      const label = secsAgo < 60
-                        ? `${secsAgo}s ago`
-                        : `${Math.floor(secsAgo / 60)}m ${secsAgo % 60}s ago`
-                      void ratesClock // subscribe to tick
-                      return <span className="rate-time">· Updated {label}</span>
-                    })()}
-                  </>
-                ) : currentCurrency === 'PHP' ? (
-                  <span className="rate-value">🇵🇭 Philippine Peso — base currency</span>
-                ) : (
-                  <span className="rate-loading">Rate unavailable — check connection</span>
-                )}
-              </div>
-            </div>
 
             <div className="line-items-panel">
               <div className="line-items-heading">
@@ -2281,8 +2505,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                           value={item.quantity || '1'}
                           onChange={(e) => changeBreakdownQuantity(index, e.target.value)}
                           placeholder="1"
-                          
-                          title="Qty — sent to the invoice along with the client price"
+                          disabled={item.isPackageRow}
+                          title={item.isPackageRow ? 'Package quantity is fixed at 1' : 'Qty — sent to the invoice along with the client price'}
                         />
                         <button
                           type="button"
@@ -2293,31 +2517,18 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                           <UserRound size={13} />
                         </button>
                       </div>
-                      <div className="price-input-wrap">
-                        <input
-                          type="text"
-                          value={item.unitPrice}
-                          onChange={(e) => changeBreakdownItemField(index, 'unitPrice', e.target.value)}
-                          placeholder="0.00"
-                        />
-                        {currentCurrency !== 'PHP' && item.unitPrice && (
-                          <span className="php-equiv">{toPhpEquivalent(parseAmount(item.unitPrice), currentCurrency)}</span>
-                        )}
-                      </div>
-                      <div className="price-input-wrap">
-                        <input
-                          type="text"
-                          className={item.isPackageRow ? 'disabled-field' : undefined}
-                          value={item.isPackageRow ? '' : item.nettCost}
-                          onChange={(e) => changeBreakdownItemField(index, 'nettCost', e.target.value)}
-                          placeholder={item.isPackageRow ? 'N/A' : '0.00'}
-                          disabled={item.isPackageRow}
-                          title={item.isPackageRow ? 'Package row has no supplier nett — it\'s the client-facing package price, always sent to the invoice' : undefined}
-                        />
-                        {currentCurrency !== 'PHP' && !item.isPackageRow && item.nettCost && (
-                          <span className="php-equiv">{toPhpEquivalent(parseAmount(item.nettCost), currentCurrency)}</span>
-                        )}
-                      </div>
+                      <input
+                        type="text"
+                        value={item.unitPrice}
+                        onChange={(e) => changeBreakdownItemField(index, 'unitPrice', e.target.value)}
+                        placeholder="0.00"
+                      />
+                      <input
+                        type="text"
+                        value={item.nettCost}
+                        onChange={(e) => changeBreakdownItemField(index, 'nettCost', e.target.value)}
+                        placeholder="0.00"
+                      />
                       <button
                         type="button"
                         className={`send-to-invoice-btn ${item.isPackageRow || item.sendToInvoice ? 'active' : ''}`}
@@ -2353,20 +2564,17 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <div className="line-items-summary">
                 <article>
                   <span>Client total</span>
-                  <strong>{formatWithCurrency(displayTotalClient)}</strong>
-                  {currentCurrency !== 'PHP' && <small className="php-equiv-total">{toPhpEquivalent(displayTotalClient, currentCurrency)}</small>}
+                  <strong>{formatAmount(String(displayTotalClient))}</strong>
                 </article>
                 <article>
                   <span>Supplier nett</span>
-                  <strong>{formatWithCurrency(displayTotalNett)}</strong>
-                  {currentCurrency !== 'PHP' && <small className="php-equiv-total">{toPhpEquivalent(displayTotalNett, currentCurrency)}</small>}
+                  <strong>{formatAmount(String(displayTotalNett))}</strong>
                 </article>
                 <article>
                   <span>Est. profit</span>
                   <strong className={displayTotalProfit >= 0 ? 'profit-total' : 'profit-negative'}>
-                    {displayTotalProfit < 0 ? `−${formatWithCurrency(Math.abs(displayTotalProfit))}` : formatWithCurrency(displayTotalProfit)}
+                    {formatAmount(String(displayTotalProfit))}
                   </strong>
-                  {currentCurrency !== 'PHP' && <small className="php-equiv-total">{toPhpEquivalent(displayTotalProfit, currentCurrency)}</small>}
                 </article>
               </div>
             </div>
@@ -2382,6 +2590,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             {/* Step 1 — Column setup */}
             {(() => {
               const fixedLabels = ['Adult', 'Child', 'Senior', 'Infant']
+              const fixedFields = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant'] as const
               let paxCounts = ['', '', '', '']
               try { const p = JSON.parse(bookingForm.breakdownPaxTiers); if (Array.isArray(p) && p.length === 4) paxCounts = p } catch {}
               const setPax = (i: number, v: string) => { const next = [...paxCounts]; next[i] = v; updateBookingField('breakdownPaxTiers', JSON.stringify(next)) }
@@ -2709,7 +2918,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                     <option>Purchase Order</option>
                     <option>Invoice</option>
                     <option>Confirmed</option>
-                    <option>Flown</option>
                   </select>
                 </label>
                 <button
@@ -2732,13 +2940,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <strong>{selectedBooking.clientEmail || 'Not provided'}</strong>
               </article>
               <article>
-                <span>Facebook</span>
-                <strong>{selectedBooking.clientFacebook
-                  ? <a href={selectedBooking.clientFacebook.startsWith('http') ? selectedBooking.clientFacebook : `https://${selectedBooking.clientFacebook}`} target="_blank" rel="noopener noreferrer">{selectedBooking.clientFacebook}</a>
-                  : 'Not provided'
-                }</strong>
-              </article>
-              <article>
                 <span>Destination</span>
                 <strong>{selectedBooking.destination || 'Not provided'}</strong>
               </article>
@@ -2758,18 +2959,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <strong>{selectedBooking.quotationNo || 'Not assigned'}</strong>
               </article>
               <article>
-                <span>Date created</span>
-                <strong>
-                  <input
-                    type="date"
-                    defaultValue={selectedBooking.createdAt ? new Date(selectedBooking.createdAt).toISOString().slice(0, 10) : ''}
-                    max={new Date().toISOString().slice(0, 10)}
-                    onChange={(e) => updateSelectedBookingCreatedAt(e.target.value)}
-                    style={{ font: 'inherit', border: 'none', background: 'transparent', color: 'inherit', padding: 0, cursor: 'pointer', width: '100%' }}
-                  />
-                </strong>
-              </article>
-              <article>
                 <span>Flight details</span>
                 <strong>{selectedBooking.flightDetails || 'Not provided'}</strong>
               </article>
@@ -2779,11 +2968,11 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               </article>
               <article>
                 <span>Client price</span>
-                <strong>{convertAndFormat(getBookingClientTotal(selectedBooking), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+                <strong>{formatAmount(String(getBookingClientTotal(selectedBooking)))}</strong>
               </article>
               <article className="internal-summary">
                 <span>Internal nett</span>
-                <strong>{convertAndFormat(getBookingBreakdownNettTotal(selectedBooking), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+                <strong>{formatAmount(String(getBookingBreakdownNettTotal(selectedBooking)))}</strong>
               </article>
             </div>
 
@@ -2966,7 +3155,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
           <div className="folder-grid">
             {documentFolderItems.map((item) => (
-              <article className={`folder-card${['Invoice', 'Quotation', 'Purchase Order'].includes(item.title) ? ' folder-card-highlight' : ''}`} key={item.title}>
+              <article className="folder-card" key={item.title}>
                 <div className="folder-card-top">
                   <FileText size={22} />
                   <span className={item.ready ? 'ready' : 'needs-data'}>
@@ -3058,25 +3247,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
             </button>
             <button
-              className="nav-text-action"
-              type="button"
-              onClick={handleDownloadJpg}
-              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
-              disabled={isJpgExporting || isPdfExporting}
-            >
-              <Download size={18} />
-              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
-            </button>
-            <button
-              className="nav-text-action"
-              type="button"
-              onClick={() => window.print()}
-              title="Print document"
-            >
-              <Printer size={18} />
-              <span>Print</span>
-            </button>
-            <button
               type="button"
               onClick={() => setScreen('document-folder')}
               title="Back"
@@ -3150,8 +3320,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   <td className="item-col">{item.description}</td>
                   <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
                   <td>{item.quantity}</td>
-                  <td>{convertAndFormat(item.unitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
-                  <td>{convertAndFormat(item.total, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                  <td>{formatAmount(String(item.unitPrice))}</td>
+                  <td>{formatAmount(String(item.total))}</td>
                 </tr>
               ))}
             </tbody>
@@ -3190,7 +3360,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </section>
 
           <footer className="quote-footer-line">
-            Prepared By: {selectedBooking.preparedBy || 'LLT Staff'}
+            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
           </footer>
         </section>
       </main>
@@ -3267,15 +3437,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           <section className="invoice-edit-summary">
             <article>
               <span>Total invoice</span>
-              <strong>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+              <strong>{formatAmount(String(totalPrice))}</strong>
             </article>
             <article>
               <span>Amount paid</span>
-              <strong>{convertAndFormat(parseAmount(invoiceForm.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+              <strong>{formatAmount(invoiceForm.invoiceAmountPaid)}</strong>
             </article>
             <article>
               <span>Balance</span>
-              <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+              <strong>{formatAmount(String(balance))}</strong>
             </article>
           </section>
 
@@ -3397,8 +3567,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <div className="fully-paid-modal-body">
                 <p>
                   This will settle the remaining balance of{' '}
-                  <strong>{convertAndFormat(Math.max(getInvoiceEditorTotal() - parseAmount(invoiceForm.invoiceAmountPaid), 0), selectedBooking.currency || 'PHP', exchangeRates)}</strong>{' '}
-                  to {selectedBooking.currency || 'PHP'} 0.00. When was it fully paid?
+                  <strong>{formatAmount(String(Math.max(getInvoiceEditorTotal() - parseAmount(invoiceForm.invoiceAmountPaid), 0)))}</strong>{' '}
+                  to PHP 0.00. When was it fully paid?
                 </p>
                 <label className="fully-paid-date-field">
                   Date fully paid
@@ -3486,25 +3656,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
             </button>
             <button
-              className="nav-text-action"
-              type="button"
-              onClick={handleDownloadJpg}
-              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
-              disabled={isJpgExporting || isPdfExporting}
-            >
-              <Download size={18} />
-              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
-            </button>
-            <button
-              className="nav-text-action"
-              type="button"
-              onClick={() => window.print()}
-              title="Print document"
-            >
-              <Printer size={18} />
-              <span>Print</span>
-            </button>
-            <button
               type="button"
               onClick={openInvoiceEditor}
               title="Edit invoice"
@@ -3545,7 +3696,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </div>
             <div className="amount-due-box">
               <span>Amount Due</span>
-              <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+              <strong>{formatAmount(String(balance))}</strong>
             </div>
           </section>
 
@@ -3571,8 +3722,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                     <td className="item-col">{item.description}</td>
                     <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
                     <td>{item.quantity}</td>
-                    <td>{convertAndFormat(item.unitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
-                    <td>{convertAndFormat(item.total, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                    <td>{formatAmount(String(item.unitPrice))}</td>
+                    <td>{formatAmount(String(item.total))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -3581,15 +3732,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <section className="invoice-total-panel">
               <div className="invoice-total-row total-row">
                 <span>TOTAL</span>
-                <strong>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+                <strong>{formatAmount(String(totalPrice))}</strong>
               </div>
               <div className="invoice-total-row">
                 <span>PAID</span>
-                <strong>{convertAndFormat(parseAmount(selectedBooking.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+                <strong>{formatAmount(selectedBooking.invoiceAmountPaid)}</strong>
               </div>
               <div className="invoice-total-row">
                 <span>BALANCE</span>
-                <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+                <strong>{formatAmount(String(balance))}</strong>
               </div>
               {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate && (
                 <div className="invoice-total-row fully-paid-badge">
@@ -3706,32 +3857,17 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const supplierPayment = (item: BreakdownLineItem) =>
       item.paymentMethod || selectedBooking.paymentMethod || 'Bank Transfer'
 
-    // Group items by vendor name (case-insensitive, trimmed) so same operator = one P.O.
-    const poGroups: BreakdownLineItem[][] = []
-    const vendorKeyMap = new Map<string, number>()
-    for (const item of poBreakdownItems) {
-      const key = (item.vendor || '').trim().toLowerCase() || `__no_vendor_${poGroups.length}`
-      if (vendorKeyMap.has(key)) {
-        poGroups[vendorKeyMap.get(key)!].push(item)
-      } else {
-        vendorKeyMap.set(key, poGroups.length)
-        poGroups.push([item])
-      }
-    }
-
-    const renderPODocument = (items: BreakdownLineItem[], groupIndex: number, isLast: boolean) => {
-      // Use the first item for vendor-level fields (name, contact, payment method)
-      const first = items[0]
-      const groupTotal = items.reduce((sum, item) => {
-        const paxBreakdown = readPaxBreakdown(item.paxBreakdown)
-        const paxTotal = sumPaxBreakdown(paxBreakdown)
-        const quantity = paxTotal > 0 ? paxTotal : parseQuantity(item.quantity)
-        const poUnitPrice = parseAmount(item.nettCost) || parseAmount(item.unitPrice)
-        return sum + poUnitPrice * quantity
-      }, 0)
+    const renderPODocument = (item: BreakdownLineItem, itemIndex: number, isLast: boolean) => {
+      const paxBreakdown = readPaxBreakdown(item.paxBreakdown)
+      const paxTotal = sumPaxBreakdown(paxBreakdown)
+      const paxLabel = formatPaxBreakdownLabel(paxBreakdown) || item.quantity || '1'
+      const quantity = paxTotal > 0 ? paxTotal : parseQuantity(item.quantity)
+      const itemDescription = item.description || (item.isPackageRow ? selectedBooking.packageName || 'Basic Package' : 'Item')
+      const poUnitPrice = parseAmount(item.nettCost) || parseAmount(item.unitPrice)
+      const poAmount = poUnitPrice * quantity
 
       return (
-        <section key={groupIndex} className={`po-preview print-document${!isLast ? ' po-page-break' : ''}`}>
+        <section key={itemIndex} className={`po-preview print-document${!isLast ? ' po-page-break' : ''}`}>
           <header className="po-header">
             <img src={logo} alt="Lion and Lamb Travel logo" />
             <div>
@@ -3757,21 +3893,21 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </article>
             <article>
               <span>P.O. No.</span>
-              <strong>{poNumber}-{groupIndex + 1}</strong>
+              <strong>{poNumber}-{itemIndex + 1}</strong>
             </article>
           </section>
 
           <section className="po-party-grid">
             <div>
               <span>Vendor:</span>
-              <strong>{first.vendor || 'To be assigned'}</strong>
-              <small>Agent: {selectedBooking.preparedBy || 'LLT Staff'}</small>
-              <small>Contact No.: {first.contactNumber || 'N/A'}</small>
+              <strong>{item.vendor || 'To be assigned'}</strong>
+              <small>Agent: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}</small>
+              <small>Contact No.: {item.contactNumber || 'N/A'}</small>
             </div>
             <div>
               <span>Client Details:</span>
               <strong>{selectedBooking.clientName}</strong>
-              <small>No. of pax: {selectedBooking.pax || '—'}</small>
+              <small>No. of pax: {paxLabel}</small>
               <small>Contact No.: {selectedBooking.contactNumber || 'N/A'}</small>
             </div>
           </section>
@@ -3787,8 +3923,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </thead>
             <tbody>
               <tr>
-                <td>{supplierPayment(first)}</td>
-                <td>{items.map(i => i.description || selectedBooking.packageName || 'Item').join(', ')}</td>
+                <td>{supplierPayment(item)}</td>
+                <td>{itemDescription}</td>
                 <td>{travelDateStr}</td>
                 <td>{optionDateStr}</td>
               </tr>
@@ -3807,31 +3943,20 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               </tr>
             </thead>
             <tbody>
-              {items.map((item, rowIndex) => {
-                const paxBreakdown = readPaxBreakdown(item.paxBreakdown)
-                const paxTotal = sumPaxBreakdown(paxBreakdown)
-                const paxLabel = formatPaxBreakdownLabel(paxBreakdown) || item.quantity || '1'
-                const quantity = paxTotal > 0 ? paxTotal : parseQuantity(item.quantity)
-                const itemDescription = item.description || (item.isPackageRow ? selectedBooking.packageName || 'Basic Package' : 'Item')
-                const poUnitPrice = parseAmount(item.nettCost) || parseAmount(item.unitPrice)
-                const poAmount = poUnitPrice * quantity
-                return (
-                  <tr key={rowIndex}>
-                    <td>{quantity}</td>
-                    <td>{paxLabel}</td>
-                    <td>{itemDescription}</td>
-                    <td>{item.details || '—'}</td>
-                    <td>{convertAndFormat(poUnitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
-                    <td>{convertAndFormat(poAmount, selectedBooking.currency || 'PHP', exchangeRates)}</td>
-                  </tr>
-                )
-              })}
+              <tr>
+                <td>{quantity}</td>
+                <td>{paxLabel}</td>
+                <td>{itemDescription}</td>
+                <td>{item.details || '—'}</td>
+                <td>{formatAmount(String(poUnitPrice))}</td>
+                <td>{formatAmount(String(poAmount))}</td>
+              </tr>
             </tbody>
           </table>
 
           <section className="po-total">
             <span>Total Amount:</span>
-            <strong>{convertAndFormat(groupTotal, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+            <strong>{formatAmount(String(poAmount))}</strong>
           </section>
 
           <section className="po-notes-grid">
@@ -3850,7 +3975,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </section>
 
           <footer className="po-footer">
-            Prepared By: {selectedBooking.preparedBy || 'LLT Staff'}
+            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
           </footer>
         </section>
       )
@@ -3886,25 +4011,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
             </button>
             <button
-              className="nav-text-action"
-              type="button"
-              onClick={handleDownloadJpg}
-              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
-              disabled={isJpgExporting || isPdfExporting}
-            >
-              <Download size={18} />
-              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
-            </button>
-            <button
-              className="nav-text-action"
-              type="button"
-              onClick={() => window.print()}
-              title="Print document"
-            >
-              <Printer size={18} />
-              <span>Print</span>
-            </button>
-            <button
               type="button"
               onClick={() => setScreen('document-folder')}
               title="Back"
@@ -3931,7 +4037,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <p className="po-empty-row">No items marked "Send to P.O." yet — toggle a row in section 05a to add it here.</p>
           </section>
         ) : (
-          poGroups.map((group, index) => renderPODocument(group, index, index === poGroups.length - 1))
+          poBreakdownItems.map((item, index) => renderPODocument(item, index, index === poBreakdownItems.length - 1))
         )}
       </main>
     )
@@ -4017,25 +4123,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             >
               <Printer size={18} />
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
-            </button>
-            <button
-              className="nav-text-action"
-              type="button"
-              onClick={handleDownloadJpg}
-              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
-              disabled={isJpgExporting || isPdfExporting}
-            >
-              <Download size={18} />
-              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
-            </button>
-            <button
-              className="nav-text-action"
-              type="button"
-              onClick={() => window.print()}
-              title="Print document"
-            >
-              <Printer size={18} />
-              <span>Print</span>
             </button>
             <button
               type="button"
@@ -4163,7 +4250,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </section>
 
           <footer className="voucher-footer">
-            Prepared By: {selectedBooking.preparedBy || 'LLT Staff'}
+            Prepared By: {selectedBooking.preparedBy || authUser?.displayName || 'LLT Staff'}
           </footer>
         </section>
       </main>
@@ -4252,25 +4339,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             >
               <Printer size={18} />
               <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
-            </button>
-            <button
-              className="nav-text-action"
-              type="button"
-              onClick={handleDownloadJpg}
-              title={isJpgExporting ? 'Preparing JPG...' : 'Download as JPG'}
-              disabled={isJpgExporting || isPdfExporting}
-            >
-              <Download size={18} />
-              <span>{isJpgExporting ? 'Preparing...' : 'Download JPG'}</span>
-            </button>
-            <button
-              className="nav-text-action"
-              type="button"
-              onClick={() => window.print()}
-              title="Print document"
-            >
-              <Printer size={18} />
-              <span>Print</span>
             </button>
             <button
               type="button"
@@ -4376,238 +4444,86 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
   if (screen === 'dtr') {
     const knownNames = Array.from(new Set(dtrEntries.map((e) => e.employeeName))).sort((a, b) => a.localeCompare(b))
-    const monthEntries = dtrMonthFilter === 'all' ? dtrEntries : dtrEntries.filter((e) => e.date.startsWith(dtrMonthFilter))
+    const monthEntries = dtrEntries.filter((e) => e.date.startsWith(dtrMonthFilter))
     const visibleEntries = (dtrNameFilter === 'All' ? monthEntries : monthEntries.filter((e) => e.employeeName === dtrNameFilter))
       .slice()
       .sort((a, b) => a.date.localeCompare(b.date) || a.employeeName.localeCompare(b.employeeName))
     const totalMinutesVisible = visibleEntries.reduce((sum, e) => sum + getDtrEntryMinutes(e), 0)
     const daysLoggedVisible = new Set(visibleEntries.map((e) => e.date)).size
-    // Group every entry into an employee+month "record" — this is what makes the
-    // DTR feel like a normal records system: create one, open one, delete one.
-    type DtrRecordSummary = { employeeName: string; month: string; daysLogged: number; totalMinutes: number; lastUpdated: string }
-    const recordMap = new Map<string, DtrRecordSummary>()
-    for (const entry of dtrEntries) {
-      const month = entry.date.slice(0, 7)
-      const key = `${entry.employeeName}__${month}`
-      if (!recordMap.has(key)) {
-        recordMap.set(key, { employeeName: entry.employeeName, month, daysLogged: 0, totalMinutes: 0, lastUpdated: entry.updatedAt || entry.createdAt || '' })
-      }
-      const rec = recordMap.get(key)!
-      rec.daysLogged += 1
-      rec.totalMinutes += getDtrEntryMinutes(entry)
-      if ((entry.updatedAt || entry.createdAt || '') > rec.lastUpdated) rec.lastUpdated = entry.updatedAt || entry.createdAt || ''
-    }
-    const allRecords = Array.from(recordMap.values()).sort((a, b) => b.month.localeCompare(a.month) || a.employeeName.localeCompare(b.employeeName))
-    const recordSearchLower = dtrRecordSearch.trim().toLowerCase()
-    const filteredRecords = recordSearchLower
-      ? allRecords.filter((r) => r.employeeName.toLowerCase().includes(recordSearchLower) || r.month.includes(recordSearchLower))
-      : allRecords
-
-    // ----- DTR records list (landing) view -----
-    if (dtrView === 'records') {
-      return (
-        <main className="dtr-screen">
-          <header className="dtr-header">
-            <button type="button" className="dtr-back-btn" onClick={() => setScreen('home')} title="Back to dashboard">
-              <CornerUpLeft size={18} />
-            </button>
-            <div className="dtr-header-title">
-              <p>Operations desk</p>
-              <h1>Daily Time Records</h1>
-            </div>
-            <div className="dtr-live-clock no-print">
-              <span className="dtr-live-clock-dot" />
-              <div className="dtr-live-clock-text">
-                <strong>
-                  {formatLiveClockParts(liveClock).time}
-                  <span className="dtr-live-clock-period">{formatLiveClockParts(liveClock).period}</span>
-                </strong>
-                <span className="dtr-live-clock-date">{formatLiveDateShort(liveClock)}</span>
-              </div>
-            </div>
-            <div className="dtr-header-actions">
-              <button type="button" className="dtr-save-btn" onClick={() => { setDtrNewRecordError(''); setDtrNewRecordName(''); setDtrNewRecordMonth(getTodayDateStr().slice(0, 7)); setDtrNewRecordOpen(true) }}>
-                <Plus size={16} />
-                New Record
-              </button>
-            </div>
-          </header>
-
-          {dtrError && <div className="dtr-banner dtr-banner-error">{dtrError}</div>}
-          {dtrMessage && !dtrError && <div className="dtr-banner dtr-banner-ok">{dtrMessage}</div>}
-
-          <div className="dtr-records-body">
-            <div className="dtr-records-toolbar">
-              <input
-                type="text"
-                className="dtr-records-search"
-                placeholder="Search by employee or month (YYYY-MM)..."
-                value={dtrRecordSearch}
-                onChange={(e) => setDtrRecordSearch(e.target.value)}
-              />
-              <span className="dtr-records-count">{filteredRecords.length} record{filteredRecords.length === 1 ? '' : 's'}</span>
-            </div>
-
-            {filteredRecords.length === 0 ? (
-              <div className="dtr-empty dtr-records-empty">
-                <Clock3 size={28} />
-                <p>{allRecords.length === 0 ? 'No DTR records yet.' : 'No records match your search.'}</p>
-                <span>Create a new record for an employee and month to get started.</span>
-                {allRecords.length === 0 && (
-                  <button type="button" className="dtr-save-btn" onClick={() => { setDtrNewRecordError(''); setDtrNewRecordName(''); setDtrNewRecordMonth(getTodayDateStr().slice(0, 7)); setDtrNewRecordOpen(true) }}>
-                    <Plus size={15} />
-                    New Record
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="dtr-records-grid">
-                {filteredRecords.map((rec) => {
-                  const monthLabel = new Date(`${rec.month}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-                  const isCurrentMonth = rec.month === getTodayDateStr().slice(0, 7)
-                  return (
-                    <div key={`${rec.employeeName}__${rec.month}`} className={`dtr-record-card ${isCurrentMonth ? 'dtr-record-card-current' : ''}`}>
-                      <div className="dtr-record-card-top">
-                        <div className="dtr-record-avatar">{rec.employeeName.charAt(0).toUpperCase()}</div>
-                        <div className="dtr-record-card-info">
-                          <p className="dtr-record-name">{rec.employeeName}</p>
-                          <p className="dtr-record-month">{monthLabel}{isCurrentMonth && <span className="dtr-record-current-pill">Current</span>}</p>
-                        </div>
-                      </div>
-                      <div className="dtr-record-card-stats">
-                        <div className="dtr-record-stat">
-                          <span>{rec.daysLogged}</span>
-                          <p>Days logged</p>
-                        </div>
-                        <div className="dtr-record-stat">
-                          <span>{formatMinutesAsHm(rec.totalMinutes)}</span>
-                          <p>Total hours</p>
-                        </div>
-                      </div>
-                      <div className="dtr-record-card-actions">
-                        <button type="button" className="dtr-record-open-btn" onClick={() => openDtrRecord(rec.employeeName, rec.month)}>
-                          <Eye size={14} />
-                          Open
-                        </button>
-                        <button type="button" className="dtr-record-delete-btn" onClick={() => setDtrDeleteRecordTarget({ employeeName: rec.employeeName, month: rec.month })}>
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* New record modal */}
-          {dtrNewRecordOpen && (
-            <div className="dtr-modal-overlay" onClick={() => setDtrNewRecordOpen(false)}>
-              <div className="dtr-modal" onClick={(e) => e.stopPropagation()}>
-                <h3>New DTR record</h3>
-                <p className="dtr-modal-sub">Pick the employee and month — you'll log individual days next.</p>
-                <form onSubmit={handleCreateDtrRecord} className="dtr-modal-form">
-                  <label>
-                    Employee name
-                    <input
-                      type="text"
-                      value={dtrNewRecordName}
-                      onChange={(e) => setDtrNewRecordName(e.target.value)}
-                      placeholder="e.g. Maria Santos"
-                      list="dtr-known-names-modal"
-                      autoFocus
-                      required
-                    />
-                    <datalist id="dtr-known-names-modal">
-                      {knownNames.map((name) => <option key={name} value={name} />)}
-                    </datalist>
-                  </label>
-                  <label>
-                    Month
-                    <input
-                      type="month"
-                      value={dtrNewRecordMonth}
-                      onChange={(e) => setDtrNewRecordMonth(e.target.value)}
-                      required
-                    />
-                  </label>
-                  {dtrNewRecordError && <p className="dtr-modal-error">{dtrNewRecordError}</p>}
-                  <div className="dtr-modal-actions">
-                    <button type="button" className="dtr-cancel-btn" onClick={() => setDtrNewRecordOpen(false)}>Cancel</button>
-                    <button type="submit" className="dtr-save-btn"><Plus size={15} />Create record</button>
-                  </div>
-                </form>
-              </div>
-            </div>
-          )}
-
-          {/* Delete record confirmation */}
-          {dtrDeleteRecordTarget && (
-            <div className="dtr-modal-overlay" onClick={() => !dtrDeletingRecord && setDtrDeleteRecordTarget(null)}>
-              <div className="dtr-modal" onClick={(e) => e.stopPropagation()}>
-                <h3>Delete this record?</h3>
-                <p className="dtr-modal-sub">
-                  This permanently deletes every logged day for <strong>{dtrDeleteRecordTarget.employeeName}</strong> in{' '}
-                  <strong>{new Date(`${dtrDeleteRecordTarget.month}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</strong>. This cannot be undone.
-                </p>
-                <div className="dtr-modal-actions">
-                  <button type="button" className="dtr-cancel-btn" disabled={dtrDeletingRecord} onClick={() => setDtrDeleteRecordTarget(null)}>Cancel</button>
-                  <button type="button" className="dtr-record-delete-confirm-btn" disabled={dtrDeletingRecord} onClick={() => handleDeleteDtrRecord(dtrDeleteRecordTarget.employeeName, dtrDeleteRecordTarget.month)}>
-                    <Trash2 size={15} />
-                    {dtrDeletingRecord ? 'Deleting...' : 'Delete record'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </main>
-      )
-    }
+    const todayMinutesForQuickName = (() => {
+      const name = dtrForm.employeeName.trim().toLowerCase()
+      if (!name) return null
+      const todays = dtrEntries.find((e) => e.employeeName.toLowerCase() === name && e.date === getTodayDateStr())
+      return todays ? getDtrEntryMinutes(todays) : null
+    })()
+    const shiftTargetMinutes = 8 * 60
+    const ringProgress = todayMinutesForQuickName === null ? 0 : Math.min(1, todayMinutesForQuickName / shiftTargetMinutes)
+    const ringCircumference = 2 * Math.PI * 42
 
     return (
       <main className="dtr-screen">
         <header className="dtr-header">
-          <button type="button" className="dtr-back-btn" onClick={() => setDtrView('records')} title="Back to records">
+          <button type="button" className="dtr-back-btn" onClick={() => setScreen('home')} title="Back">
             <CornerUpLeft size={18} />
           </button>
           <div className="dtr-header-title">
-            <p>Operations desk · <button type="button" className="dtr-breadcrumb-btn" onClick={() => setDtrView('records')}>All records</button></p>
-            <h1>{dtrNameFilter === 'All' ? 'Daily Time Record' : dtrNameFilter} {dtrNameFilter !== 'All' && <span className="dtr-header-month">· {dtrMonthFilter === 'all' ? 'All Records' : new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>}</h1>
+            <p>Operations desk</p>
+            <h1>Daily Time Record</h1>
           </div>
-          <div className="dtr-live-clock no-print">
-            <span className="dtr-live-clock-dot" />
-            <div className="dtr-live-clock-text">
-              <strong>
-                {formatLiveClockParts(liveClock).time}
-                <span className="dtr-live-clock-period">{formatLiveClockParts(liveClock).period}</span>
-              </strong>
-              <span className="dtr-live-clock-date">{formatLiveDateShort(liveClock)}</span>
-            </div>
-          </div>
-          <div className="dtr-header-actions">
-            <button type="button" className="dtr-pdf-btn" onClick={handlePrintPreview} disabled={isPdfExporting} title={isPdfExporting ? 'Preparing PDF...' : 'Download DTR as PDF'}>
-              <Download size={16} />
-              <span>{isPdfExporting ? 'Preparing...' : 'Download PDF'}</span>
-            </button>
-            <button type="button" className="dtr-print-btn" onClick={() => window.print()} title="Print DTR">
-              <Printer size={16} />
-              Print
-            </button>
-          </div>
+          <button type="button" className="dtr-print-btn" onClick={() => window.print()}>
+            <Printer size={16} />
+            Print
+          </button>
         </header>
 
         {dtrError && <div className="dtr-banner dtr-banner-error">{dtrError}</div>}
         {dtrMessage && !dtrError && <div className="dtr-banner dtr-banner-ok">{dtrMessage}</div>}
 
         <div className="dtr-body">
-          {/* LEFT — entry form */}
+          {/* LEFT — quick clock + manual entry form */}
           <section className="dtr-panel dtr-form-panel no-print">
-            <div className="dtr-form-panel-header">
-              <p className="dtr-form-panel-title">{dtrEditingId ? '✏️ Edit Entry' : '➕ Log Time'}</p>
-              <p className="dtr-form-panel-sub">Fill in the employee's time for the day</p>
+            <div className="dtr-quickclock-card">
+              <div className="dtr-ring-wrap">
+                <svg viewBox="0 0 96 96" className="dtr-ring">
+                  <circle cx="48" cy="48" r="42" className="dtr-ring-track" />
+                  <circle
+                    cx="48" cy="48" r="42"
+                    className="dtr-ring-progress"
+                    strokeDasharray={`${ringCircumference}`}
+                    strokeDashoffset={`${ringCircumference * (1 - ringProgress)}`}
+                  />
+                </svg>
+                <div className="dtr-ring-center">
+                  <strong>{todayMinutesForQuickName === null ? '—' : formatMinutesAsHm(todayMinutesForQuickName)}</strong>
+                  <span>today</span>
+                </div>
+              </div>
+              <div className="dtr-quickclock-actions">
+                <p className="dtr-quickclock-label">Quick clock</p>
+                <input
+                  type="text"
+                  placeholder="Type your name"
+                  value={dtrForm.employeeName}
+                  onChange={(e) => setDtrForm((f) => ({ ...f, employeeName: e.target.value }))}
+                  list="dtr-known-names"
+                />
+                <datalist id="dtr-known-names">
+                  {knownNames.map((name) => <option key={name} value={name} />)}
+                </datalist>
+                <button
+                  type="button"
+                  className="dtr-clock-btn"
+                  onClick={() => handleQuickClock(dtrForm.employeeName)}
+                  disabled={!dtrForm.employeeName.trim()}
+                >
+                  <Clock3 size={16} />
+                  Tap to clock in / out
+                </button>
+              </div>
             </div>
 
             <form className="dtr-manual-form" onSubmit={handleSaveDtrEntry}>
+              <p className="dtr-form-heading">{dtrEditingId ? 'Edit entry' : 'Manual entry'}</p>
               <label>
                 Employee name
                 <input
@@ -4615,12 +4531,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   value={dtrForm.employeeName}
                   onChange={(e) => setDtrForm((f) => ({ ...f, employeeName: e.target.value }))}
                   placeholder="e.g. Maria Santos"
-                  list="dtr-known-names"
                   required
                 />
-                <datalist id="dtr-known-names">
-                  {knownNames.map((name) => <option key={name} value={name} />)}
-                </datalist>
               </label>
               <label>
                 Date
@@ -4631,49 +4543,33 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   required
                 />
               </label>
-              <div className="dtr-time-section-label">Morning (AM)</div>
               <div className="dtr-time-grid">
                 <label>
-                  Time In
+                  AM time in
                   <input type="time" value={dtrForm.amIn} onChange={(e) => setDtrForm((f) => ({ ...f, amIn: e.target.value }))} />
                 </label>
                 <label>
-                  Time Out
+                  AM time out
                   <input type="time" value={dtrForm.amOut} onChange={(e) => setDtrForm((f) => ({ ...f, amOut: e.target.value }))} />
                 </label>
-              </div>
-              <div className="dtr-time-section-label">Afternoon (PM)</div>
-              <div className="dtr-time-grid">
                 <label>
-                  Time In
+                  PM time in
                   <input type="time" value={dtrForm.pmIn} onChange={(e) => setDtrForm((f) => ({ ...f, pmIn: e.target.value }))} />
                 </label>
                 <label>
-                  Time Out
+                  PM time out
                   <input type="time" value={dtrForm.pmOut} onChange={(e) => setDtrForm((f) => ({ ...f, pmOut: e.target.value }))} />
                 </label>
               </div>
               <label>
-                Remarks <span className="dtr-optional">(optional)</span>
+                Notes <span className="dtr-optional">(optional)</span>
                 <input
                   type="text"
                   value={dtrForm.notes}
                   onChange={(e) => setDtrForm((f) => ({ ...f, notes: e.target.value }))}
-                  placeholder="e.g. Half day, field visit, leave"
+                  placeholder="e.g. Half day, field visit"
                 />
               </label>
-
-              {/* Live hours preview */}
-              {(dtrForm.amIn || dtrForm.pmOut) && (() => {
-                const preview = getDtrEntryMinutes({ amIn: dtrForm.amIn, amOut: dtrForm.amOut, pmIn: dtrForm.pmIn, pmOut: dtrForm.pmOut })
-                return preview > 0 ? (
-                  <div className="dtr-hours-preview">
-                    <Clock3 size={13} />
-                    <span>Computed: <strong>{formatMinutesAsHm(preview)}</strong> for this entry</span>
-                  </div>
-                ) : null
-              })()}
-
               <div className="dtr-form-actions">
                 {dtrEditingId && (
                   <button type="button" className="dtr-cancel-btn" onClick={cancelEditDtrEntry}>Cancel</button>
@@ -4686,159 +4582,50 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </form>
           </section>
 
-          {/* RIGHT — ledger */}
+          {/* RIGHT — the printable ledger */}
           <section className="dtr-panel dtr-ledger-panel">
+            {(() => {
+              const today = getTodayDateStr()
+              const todaysEntries = dtrEntries.filter((e) => e.date === today)
+              const activeNow = todaysEntries.filter((e) => (e.amIn && !e.amOut) || (e.pmIn && !e.pmOut))
+              if (activeNow.length === 0) return null
+              return (
+                <div className="dtr-team-strip no-print">
+                  <span className="dtr-team-strip-label">Clocked in now</span>
+                  <div className="dtr-team-strip-people">
+                    {activeNow.map((e) => (
+                      <span key={e.id} className="dtr-team-chip">
+                        <span className="dtr-team-chip-dot" />
+                        {e.employeeName}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
             <div className="dtr-ledger-controls no-print">
               <select className="dtr-select" value={dtrNameFilter} onChange={(e) => setDtrNameFilter(e.target.value)}>
                 <option value="All">All employees</option>
                 {knownNames.map((name) => <option key={name} value={name}>{name}</option>)}
               </select>
-              <select
+              <input
+                type="month"
                 className="dtr-month-input"
                 value={dtrMonthFilter}
                 onChange={(e) => setDtrMonthFilter(e.target.value)}
-              >
-                <option value="all">All months</option>
-                {Array.from(new Set(dtrEntries.map((e) => e.date.slice(0, 7)))).sort((a, b) => b.localeCompare(a)).map((m) => (
-                  <option key={m} value={m}>{new Date(`${m}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</option>
-                ))}
-              </select>
+              />
             </div>
 
-            {/* ── PRINT-ONLY: Full government-style DTR template ── */}
-            <div className="dtr-print-doc print-only">
-              <div className="dtr-print-doc-header">
-                <img src={logo} alt="Lion and Lamb Travel" className="dtr-print-doc-logo" />
-                <div className="dtr-print-doc-title">
-                  <h1>Lion and Lamb Travel &amp; Tours</h1>
-                  <p className="dtr-print-doc-subtitle">DAILY TIME RECORD</p>
-                </div>
-                <div className="dtr-print-doc-form-no">
-                  <span>Form No.</span>
-                  <strong>DTR-001</strong>
-                </div>
+            <div className="dtr-print-header print-only">
+              <img src={logo} alt="" />
+              <div>
+                <h2>Lion and Lamb Travel</h2>
+                <p>Daily Time Record</p>
               </div>
-
-              <div className="dtr-print-doc-meta-row">
-                <div className="dtr-print-doc-meta-field">
-                  <span className="dtr-print-doc-meta-label">Employee Name</span>
-                  <strong className="dtr-print-doc-meta-value">
-                    {dtrNameFilter === 'All' ? 'All Team Members' : dtrNameFilter}
-                  </strong>
-                </div>
-                <div className="dtr-print-doc-meta-field">
-                  <span className="dtr-print-doc-meta-label">Period Covered</span>
-                  <strong className="dtr-print-doc-meta-value">
-                    {dtrMonthFilter === 'all'
-                      ? 'All Records'
-                      : new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-                  </strong>
-                </div>
-                <div className="dtr-print-doc-meta-field">
-                  <span className="dtr-print-doc-meta-label">Position / Dept.</span>
-                  <strong className="dtr-print-doc-meta-value dtr-print-blank-line">&nbsp;</strong>
-                </div>
-              </div>
-
-              <table className="dtr-print-table">
-                <thead>
-                  <tr>
-                    <th rowSpan={2} className="dtr-print-th-date">Day</th>
-                    <th rowSpan={2} className="dtr-print-th-day">Day of Week</th>
-                    <th colSpan={2} className="dtr-print-th-group">Morning (A.M.)</th>
-                    <th colSpan={2} className="dtr-print-th-group">Afternoon (P.M.)</th>
-                    <th rowSpan={2} className="dtr-print-th-total">Total Hrs</th>
-                    <th rowSpan={2} className="dtr-print-th-notes">Remarks</th>
-                  </tr>
-                  <tr>
-                    <th className="dtr-print-th-sub">Time In</th>
-                    <th className="dtr-print-th-sub">Time Out</th>
-                    <th className="dtr-print-th-sub">Time In</th>
-                    <th className="dtr-print-th-sub">Time Out</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(() => {
-                    if (dtrMonthFilter === 'all') {
-                      // All months: show every entry sorted by date
-                      return visibleEntries.map((entry) => {
-                        const d = new Date(`${entry.date}T00:00:00`)
-                        const weekday = d.getDay()
-                        const isWeekend = weekday === 0 || weekday === 6
-                        const minutes = getDtrEntryMinutes(entry)
-                        return (
-                          <tr key={entry.id} className={`dtr-print-tr ${isWeekend ? 'dtr-print-tr-weekend' : ''} dtr-print-tr-has-entry`}>
-                            <td className="dtr-print-td-date">{entry.date}</td>
-                            <td className="dtr-print-td-day">{d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase()}</td>
-                            <td className="dtr-print-td-time">{formatTimeForDisplay(entry.amIn)}</td>
-                            <td className="dtr-print-td-time">{formatTimeForDisplay(entry.amOut)}</td>
-                            <td className="dtr-print-td-time">{formatTimeForDisplay(entry.pmIn)}</td>
-                            <td className="dtr-print-td-time">{formatTimeForDisplay(entry.pmOut)}</td>
-                            <td className="dtr-print-td-total">{minutes > 0 ? formatMinutesAsHm(minutes) : ''}</td>
-                            <td className="dtr-print-td-notes">{entry.notes || ''}</td>
-                          </tr>
-                        )
-                      })
-                    }
-                    const [yr, mo] = dtrMonthFilter.split('-').map(Number)
-                    const daysInMonth = new Date(yr, mo, 0).getDate()
-                    const entryMap = new Map(visibleEntries.map((e) => [e.date, e]))
-                    return Array.from({ length: daysInMonth }, (_: unknown, i: number) => {
-                      const dayNum = i + 1
-                      const dateStr = `${dtrMonthFilter}-${String(dayNum).padStart(2, '0')}`
-                      const d = new Date(`${dateStr}T00:00:00`)
-                      const weekday = d.getDay() // 0=Sun, 6=Sat
-                      const isWeekend = weekday === 0 || weekday === 6
-                      const entry = entryMap.get(dateStr) as DtrEntry | undefined
-                      const minutes = entry ? getDtrEntryMinutes(entry) : 0
-                      return (
-                        <tr key={dateStr} className={`dtr-print-tr ${isWeekend ? 'dtr-print-tr-weekend' : ''} ${entry ? 'dtr-print-tr-has-entry' : ''}`}>
-                          <td className="dtr-print-td-date">{dayNum}</td>
-                          <td className="dtr-print-td-day">{d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase()}</td>
-                          <td className="dtr-print-td-time">{entry ? formatTimeForDisplay(entry.amIn) : (isWeekend ? '' : '')}</td>
-                          <td className="dtr-print-td-time">{entry ? formatTimeForDisplay(entry.amOut) : ''}</td>
-                          <td className="dtr-print-td-time">{entry ? formatTimeForDisplay(entry.pmIn) : ''}</td>
-                          <td className="dtr-print-td-time">{entry ? formatTimeForDisplay(entry.pmOut) : ''}</td>
-                          <td className="dtr-print-td-total">{minutes > 0 ? formatMinutesAsHm(minutes) : (isWeekend ? <span className="dtr-print-weekend-mark">REST</span> : '')}</td>
-                          <td className="dtr-print-td-notes">{entry?.notes || ''}</td>
-                        </tr>
-                      )
-                    })
-                  })()}
-                </tbody>
-                <tfoot>
-                  <tr className="dtr-print-tfoot-summary">
-                    <td colSpan={6} className="dtr-print-tfoot-label">
-                      <span>Days Logged: <strong>{daysLoggedVisible}</strong></span>
-                      <span>Avg / Day: <strong>{daysLoggedVisible > 0 ? formatMinutesAsHm(Math.round(totalMinutesVisible / daysLoggedVisible)) : '—'}</strong></span>
-                    </td>
-                    <td className="dtr-print-tfoot-total">{formatMinutesAsHm(totalMinutesVisible)}</td>
-                    <td />
-                  </tr>
-                </tfoot>
-              </table>
-
-              <div className="dtr-print-doc-certification">
-                <p>I hereby certify, on my honor, that the above is a true and correct record of the hours of work performed, record of which was made daily at the time of arrival at and departure from the office.</p>
-              </div>
-
-              <div className="dtr-print-doc-signoff">
-                <div className="dtr-print-signoff-block">
-                  <div className="dtr-print-sig-line" />
-                  <p className="dtr-print-sig-name">&nbsp;</p>
-                  <p className="dtr-print-sig-label">Employee Signature &amp; Date</p>
-                </div>
-                <div className="dtr-print-signoff-block">
-                  <div className="dtr-print-sig-line" />
-                  <p className="dtr-print-sig-name">&nbsp;</p>
-                  <p className="dtr-print-sig-label">Supervisor / Manager</p>
-                </div>
-                <div className="dtr-print-signoff-block">
-                  <div className="dtr-print-sig-line" />
-                  <p className="dtr-print-sig-name">&nbsp;</p>
-                  <p className="dtr-print-sig-label">Verified By &amp; Date</p>
-                </div>
-              </div>
+            </div>
+            <div className="dtr-print-meta print-only">
+              <span><strong>Employee:</strong> {dtrNameFilter === 'All' ? 'All team members' : dtrNameFilter}</span>
+              <span><strong>Period:</strong> {new Date(`${dtrMonthFilter}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
             </div>
 
             <div className="dtr-summary-strip">
@@ -4858,69 +4645,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               </div>
             </div>
 
-            {/* ── Weekly hours tracker ── */}
-            {visibleEntries.length > 0 && (() => {
-              const weekTarget = 40 * 60 // 40-hour work week in minutes
-              // Group visible entries by ISO week
-              const weekMap = new Map<string, { entries: DtrEntry[]; label: string }>()
-              for (const entry of visibleEntries) {
-                const key = getIsoWeekKey(entry.date)
-                if (!weekMap.has(key)) weekMap.set(key, { entries: [], label: getWeekRangeLabel(entry.date) })
-                weekMap.get(key)!.entries.push(entry)
-              }
-              const weeks = Array.from(weekMap.entries())
-                .sort(([a], [b]) => a.localeCompare(b))
-                .map(([key, { entries, label }]) => {
-                  const minutes = entries.reduce((s, e) => s + getDtrEntryMinutes(e), 0)
-                  const days = new Set(entries.map((e) => e.date)).size
-                  const pct = Math.min(100, (minutes / weekTarget) * 100)
-                  const isOver = minutes > weekTarget
-                  const today = getTodayDateStr()
-                  const isCurrentWeek = entries.some((e) => getIsoWeekKey(e.date) === getIsoWeekKey(today))
-                  return { key, label, minutes, days, pct, isOver, isCurrentWeek }
-                })
-              return (
-                <div className="dtr-weekly-tracker no-print">
-                  <div className="dtr-weekly-header">
-                    <p className="dtr-weekly-title">Weekly Hours</p>
-                    <span className="dtr-weekly-target">Target: 40h / week</span>
-                  </div>
-                  <div className="dtr-weekly-rows">
-                    {weeks.map((w) => (
-                      <div key={w.key} className={`dtr-week-row ${w.isCurrentWeek ? 'dtr-week-current' : ''}`}>
-                        <div className="dtr-week-meta">
-                          <span className="dtr-week-range">
-                            {w.label}
-                            {w.isCurrentWeek && <span className="dtr-week-now-pill">This week</span>}
-                          </span>
-                          <span className="dtr-week-stats">{w.days}d logged</span>
-                        </div>
-                        <div className="dtr-week-bar-wrap">
-                          <div className="dtr-week-bar-track">
-                            <div
-                              className={`dtr-week-bar-fill ${w.isOver ? 'dtr-week-bar-over' : w.pct >= 80 ? 'dtr-week-bar-good' : ''}`}
-                              style={{ width: `${w.pct}%` }}
-                            />
-                            <div className="dtr-week-bar-target-line" title="40h target" />
-                          </div>
-                          <span className={`dtr-week-hours ${w.isOver ? 'dtr-week-hours-over' : ''}`}>
-                            {formatMinutesAsHm(w.minutes)}
-                            {w.isOver && <span className="dtr-week-over-badge">+{formatMinutesAsHm(w.minutes - weekTarget)}</span>}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )
-            })()}
-
             <div className="dtr-ledger">
               {visibleEntries.length === 0 ? (
                 <div className="dtr-empty">
                   <Clock3 size={28} />
-                  <p>No time records for this period.</p>
-                  <span>Use the form on the left to log an entry{dtrMonthFilter !== 'all' ? ', or pick a different month' : ''}.</span>
+                  <p>No time records yet for this period.</p>
+                  <span>Log a clock-in on the left, or pick a different month above.</span>
                 </div>
               ) : (
                 visibleEntries.map((entry) => {
@@ -4930,16 +4660,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   return (
                     <div className={`dtr-row ${isToday ? 'dtr-row-today' : ''}`} key={entry.id}>
                       <div className="dtr-row-date">
-                        <span className="dtr-row-day">
-                          {dtrMonthFilter === 'all'
-                            ? new Date(`${entry.date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                            : new Date(`${entry.date}T00:00:00`).getDate()}
-                        </span>
-                        <span className="dtr-row-weekday">
-                          {dtrMonthFilter === 'all'
-                            ? new Date(`${entry.date}T00:00:00`).getFullYear()
-                            : new Date(`${entry.date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short' })}
-                        </span>
+                        <span className="dtr-row-day">{new Date(`${entry.date}T00:00:00`).getDate()}</span>
+                        <span className="dtr-row-weekday">{new Date(`${entry.date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short' })}</span>
                       </div>
                       <div className="dtr-row-main">
                         <p className="dtr-row-name">
@@ -4969,6 +4691,10 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               )}
             </div>
 
+            <div className="dtr-print-signoff print-only">
+              <div><span /><p>Employee signature</p></div>
+              <div><span /><p>Supervisor signature</p></div>
+            </div>
           </section>
         </div>
       </main>
@@ -4979,11 +4705,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
   const activeProjects = bookings.length
   const inquiryCount = bookings.filter((b) => b.status === 'Inquiry').length
   const confirmedCount = bookings.filter((b) => b.status === 'Confirmed').length
+  const invoiceCount = bookings.filter((b) => b.status === 'Invoice').length
   const quotationCount = bookings.filter((b) => b.status === 'Quotation' || b.status === 'Inquiry').length
   const totalBookingValue = bookings.reduce((sum, b) => sum + getBookingClientTotal(b), 0)
-
-  const currentYear = new Date().getFullYear()
-  const currentMonth = new Date().getMonth() // 0-indexed
 
   const filteredBookings = (
     activeBookingFilter === 'All'
@@ -4991,10 +4715,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       : bookings.filter((b) => b.status === activeBookingFilter)
   ).filter((b) => {
     const q = searchTerm.trim().toLowerCase()
-    const matchesSearch = !q || [b.clientName, b.packageName, b.destination, b.quotationNo, b.status]
+    if (!q) return true
+    return [b.clientName, b.packageName, b.destination, b.quotationNo, b.status]
       .join(' ').toLowerCase().includes(q)
-    const bookingYear = new Date(b.createdAt || Date.now()).getFullYear()
-    return matchesSearch && bookingYear === activeYear
   })
 
   const statusCounts = bookingListFilters.reduce(
@@ -5006,30 +4729,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     }),
     {} as Record<BookingListFilter, number>,
   )
-
-  // Build months up to current month for the current year, all 12 for past years
-  const ALL_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
-  const visibleMonths = ALL_MONTHS.filter((_, i) => activeYear < currentYear || i <= currentMonth)
-  const monthMap = new Map<string, typeof filteredBookings>()
-  for (const b of filteredBookings) {
-    const d = b.createdAt ? new Date(b.createdAt) : new Date()
-    const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-    if (!monthMap.has(monthKey)) monthMap.set(monthKey, [])
-    monthMap.get(monthKey)!.push(b)
-  }
-  const bookingsByMonth = visibleMonths.map((name, i) => {
-    const monthIndex = activeYear < currentYear ? i + 1 : ALL_MONTHS.indexOf(name) + 1
-    const monthKey = `${activeYear}-${String(monthIndex).padStart(2, '0')}`
-    return { monthKey, label: name, items: monthMap.get(monthKey) ?? [] }
-  })
-  const availableYears = Array.from(
-    new Set(bookings.map(b => new Date(b.createdAt || Date.now()).getFullYear()))
-  ).sort((a, b) => b - a)
-  if (!availableYears.includes(activeYear)) availableYears.unshift(activeYear)
-
-  function toggleMonth(monthKey: string) {
-    setExpandedMonth(prev => prev === monthKey ? null : monthKey)
-  }
 
   return (
     <main className="home-screen">
@@ -5061,29 +4760,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </button>
           <button
             type="button"
-            className="nav-text-action nav-clock-btn"
-            onClick={() => { setDtrView('records'); setScreen('dtr') }}
-            title="Open Daily Time Record"
+            className="dtr-nav-btn"
+            onClick={() => setScreen('dtr')}
+            title="Daily Time Record"
           >
-            <Clock3 size={15} className="nav-clock-icon" />
-            <span className="nav-clock-time">
-              {formatLiveClockParts(liveClock).time.slice(0, -3)}
-              <span className="nav-clock-period">{formatLiveClockParts(liveClock).period}</span>
-            </span>
+            <Clock3 size={18} />
           </button>
           <button type="button" onClick={handleLogout} title="Log out">
             <LogOut size={18} />
           </button>
-          <button
-              type="button"
-              className="nav-text-action"
-              onClick={() => {
-                window.open('https://docs.google.com/spreadsheets/d/1zG7bnW7p8SYF6-CpU4fKUdmA3wmlnvrXhMQE02wQRtc/edit', '_blank')
-              }}
-              title="Open Google Sheets"
-            >
-              📊 View Sheets
-            </button>
         </div>
       </nav>
 
@@ -5103,41 +4788,40 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 </h1>
                 <span>{activeProjects} active booking records</span>
               </div>
-
-              <div className="dashboard-banner-right">
-                {/* Dashboard live clock strip */}
-                <div className="dashboard-clock-strip no-print">
-                  <div className="dashboard-clock-display">
-                    <span className="dashboard-clock-time">
-                      {formatLiveClockParts(liveClock).time}
-                    </span>
-                    <span className="dashboard-clock-period">{formatLiveClockParts(liveClock).period}</span>
-                  </div>
-                  <div className="dashboard-clock-meta">
-                    <span className="dashboard-clock-date">
-                      {liveClock.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="dashboard-banner-actions">
-                  <button
-                    type="button"
-                    className="create-project-btn"
-                    onClick={handleNewBooking}
-                  >
-                    <Plus size={20} />
-                    New Inquiry
-                  </button>
-                  <button
-                    type="button"
-                    className="open-dtr-btn"
-                    onClick={() => { setDtrView('records'); setScreen('dtr') }}
-                  >
-                    <Clock3 size={18} />
-                    Open Daily Time Record
-                  </button>
-                </div>
+              <div className="dashboard-banner-actions">
+                <button
+                  type="button"
+                  className="create-project-btn"
+                  onClick={handleNewBooking}
+                >
+                  <Plus size={20} />
+                  New Inquiry
+                </button>
+                {(() => {
+                  const myName = authUser?.displayName ?? (authUser?.email ? getDisplayName(authUser.email) : '')
+                  const today = getTodayDateStr()
+                  const todays = myName
+                    ? dtrEntries.find((e) => e.employeeName.toLowerCase() === myName.toLowerCase() && e.date === today)
+                    : undefined
+                  const minutesSoFar = todays ? getDtrEntryMinutes(todays) : null
+                  const nextField: keyof DtrEntry | null = !todays
+                    ? 'amIn'
+                    : !todays.amIn ? 'amIn' : !todays.amOut ? 'amOut' : !todays.pmIn ? 'pmIn' : !todays.pmOut ? 'pmOut' : null
+                  const ctaLabels: Record<string, string> = {
+                    amIn: 'Clock in', amOut: 'Clock out (AM)', pmIn: 'Clock in (PM)', pmOut: 'Clock out',
+                  }
+                  const statusDotClass = !todays ? 'dtr-dot-off' : nextField ? 'dtr-dot-active' : 'dtr-dot-done'
+                  return (
+                    <button type="button" className="dtr-widget" onClick={() => myName ? handleQuickClock(myName) : setScreen('dtr')}>
+                      <span className={`dtr-widget-dot ${statusDotClass}`} />
+                      <span className="dtr-widget-text">
+                        <strong>{minutesSoFar !== null ? formatMinutesAsHm(minutesSoFar) : 'Not clocked in'}</strong>
+                        <span>{nextField ? ctaLabels[nextField] : 'Day complete'}</span>
+                      </span>
+                      <Clock3 size={16} className="dtr-widget-icon" />
+                    </button>
+                  )
+                })()}
               </div>
             </div>
           </section>
@@ -5180,13 +4864,13 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           <section className="pipeline-panel">
             <div className="pipeline-heading">
               <div>
-                <p>Internal</p>
+                <p>Workflow</p>
                 <h2>Booking pipeline</h2>
               </div>
               <span>{activeProjects} total</span>
             </div>
             <div className="pipeline-list">
-              {bookingListFilters.slice(1).filter(f => !['Inquiry','Quotation','Invoice','Confirmed','Flown'].includes(f.value)).map((filter, index) => {
+              {bookingListFilters.slice(1).map((filter, index) => {
                 const count = statusCounts[filter.value]
                 const progress = activeProjects > 0 ? (count / activeProjects) * 100 : 0
 
@@ -5243,7 +4927,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </label>
 
           <div className="booking-tabs" role="tablist">
-            {bookingListFilters.filter(f => !['Inquiry','Breakdown','Purchase Order'].includes(f.value)).map((f) => (
+            {bookingListFilters.map((f) => (
               <button
                 key={f.value}
                 type="button"
@@ -5258,74 +4942,54 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             ))}
           </div>
 
-          {/* Year selector */}
-          <div className="year-selector">
-            {availableYears.map(y => (
-              <button
-                key={y}
-                type="button"
-                className={`year-tab ${y === activeYear ? 'active' : ''}`}
-                onClick={() => setActiveYear(y)}
-              >{y}</button>
-            ))}
-          </div>
-
           <div className="project-list">
-            {bookingsByMonth.map(({ monthKey, label, items }) => {
-              const isOpen = expandedMonth === monthKey
-              return (
-                <div key={monthKey} className="month-group">
-                  <button
-                    type="button"
-                    className={`month-group-header ${isOpen ? 'open' : ''}`}
-                    onClick={() => toggleMonth(monthKey)}
-                  >
-                    <ChevronDown size={14} style={{ transform: isOpen ? 'none' : 'rotate(-90deg)', transition: 'transform 0.2s' }} />
-                    <span>{label}</span>
-                    {items.length > 0 && <strong>{items.length}</strong>}
-                  </button>
-                  {isOpen && (
-                    <div className="month-group-items">
-                      {items.length === 0 ? (
-                        <p className="month-empty">No projects in {label}.</p>
-                      ) : items.map((booking) => (
-                        <button
-                          key={booking.id}
-                          type="button"
-                          className={`project-card status-${booking.status.toLowerCase().replaceAll(' ', '-')}`}
-                          onClick={() => openBookingDetail(booking.id)}
-                        >
-                          <div className="project-main">
-                            <div className="project-icon"><FileText size={20} /></div>
-                            <div>
-                              <strong>{booking.packageName}</strong>
-                              <span>{booking.clientName}</span>
-                            </div>
-                          </div>
-                          <div className="project-meta">
-                            <span className="status-pill">{booking.status}</span>
-                            <span><CalendarDays size={14} />{formatProjectDate(booking.createdAt)}</span>
-                            <span><MapPin size={14} />{formatAmount(String(getBookingClientTotal(booking)))}</span>
-                            {(booking.createdByName || (booking as any).createdByEmail) && (
-                              <span className="booking-by-tag">
-                                By: {booking.createdByName || getDisplayName((booking as any).createdByEmail)}
-                              </span>
-                            )}
-                            <ChevronRight size={17} />
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+            {filteredBookings.length === 0 && (
+              <div className="empty-list">
+                <FileText size={26} />
+                <strong>{searchTerm.trim() ? 'No matching records' : 'No records yet'}</strong>
+                <span>
+                  {searchTerm.trim()
+                    ? 'Try a different client name, package, or quotation number.'
+                    : 'New inquiries saved here will appear after data gathering.'}
+                </span>
+              </div>
+            )}
+            {filteredBookings.map((booking) => (
+              <button
+                key={booking.id}
+                type="button"
+                className={`project-card status-${booking.status.toLowerCase().replaceAll(' ', '-')}`}
+                onClick={() => openBookingDetail(booking.id)}
+              >
+                <div className="project-main">
+                  <div className="project-icon"><FileText size={20} /></div>
+                  <div>
+                    <strong>{booking.packageName}</strong>
+                    <span>{booking.clientName}</span>
+                  </div>
                 </div>
-              )
-            })}
+                <div className="project-meta">
+                  <span className="status-pill">{booking.status}</span>
+                  <span><CalendarDays size={14} />{formatProjectDate(booking.createdAt)}</span>
+                  <span><MapPin size={14} />{formatAmount(String(getBookingClientTotal(booking)))}</span>
+                  {(booking.createdByName || (booking as any).createdByEmail) && (
+                    <span className="booking-by-tag">
+                      By: {booking.createdByName || getDisplayName((booking as any).createdByEmail)}
+                    </span>
+                  )}
+                  <ChevronRight size={17} />
+                </div>
+              </button>
+            ))}
           </div>
 
           <div style={{ marginTop: 'auto', paddingTop: '14px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ color: 'var(--muted)', fontSize: '.78rem', fontWeight: 700 }}>
               {filteredBookings.length} record{filteredBookings.length !== 1 ? 's' : ''}
               {activeBookingFilter !== 'All' ? ` · ${activeBookingFilter}` : ''}
+            </span>
+            <span style={{ color: 'var(--teal)', fontSize: '.78rem', fontWeight: 800 }}>
+              {formatAmount(String(totalBookingValue))} total
             </span>
           </div>
         </section>
@@ -5383,36 +5047,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 : ''
               const initials = msg.senderName ? msg.senderName.split(' ').map((n: string) => n[0]).join('').slice(0,2).toUpperCase() : '?'
               const reactions = msg.reactions as Record<string, string[]> | undefined
+              const seenBy = (msg.seenBy || []) as string[]
+              const seenByOthers = seenBy.filter((e: string) => e !== authUser?.email)
+              const showSeen = isMe && isLast && seenByOthers.length > 0
               const isUnsent = !!msg.unsent
               const isHovered = hoveredMsgId === msg.id
               const replyTo = msg.replyTo as { id: string; text: string; senderName: string } | undefined
-
-              // Normalize seenBy — may be old plain strings (email) or new {email, name} objects
-              type SeenEntry = string | { email: string; name: string }
-              const rawSeenBy = (msg.seenBy || []) as SeenEntry[]
-              const seenEntries = rawSeenBy
-                .map(e => typeof e === 'string' ? { email: e, name: e.split('@')[0] } : e)
-                .filter(e => e.email !== authUser?.email)
-
-              // For per-message WhatsApp-style seen: show a name under the LAST message
-              // each teammate has seen among MY sent messages
-              const seenHereBy: { email: string; name: string }[] = []
-              if (isMe && !isUnsent) {
-                seenEntries.forEach(entry => {
-                  // Find the last index of MY messages that this person has seen
-                  let lastSeenIdx = -1
-                  chatMessages.forEach((m, i) => {
-                    if (m.senderEmail !== authUser?.email) return
-                    const raw = (m.seenBy || []) as SeenEntry[]
-                    const hasEntry = raw.some(e =>
-                      typeof e === 'string' ? e === entry.email : e.email === entry.email
-                    )
-                    if (hasEntry) lastSeenIdx = i
-                  })
-                  if (lastSeenIdx === idx) seenHereBy.push(entry)
-                })
-              }
-              const showSeen = seenHereBy.length > 0
               return (
                 <div
                   key={msg.id}
@@ -5469,7 +5109,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                     </div>
 
                     {/* Hover action toolbar */}
-                    {!isUnsent && !msg.isNexusThinking && (isHovered || reactionPickerFor === msg.id) && (
+                    {!isUnsent && (isHovered || reactionPickerFor === msg.id) && (
                       <div
                         className={`chat-action-bar ${isMe ? 'action-bar-mine' : 'action-bar-theirs'}`}
                         onMouseEnter={() => setHoveredMsgId(msg.id)}
@@ -5482,23 +5122,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                           <button type="button" className="chat-action-btn" title="Reply"
                             onClick={(e) => { e.stopPropagation(); setReplyingTo({ id: msg.id, text: msg.text, senderName: msg.senderName }); chatInputRef.current?.focus() }}
                           ><CornerUpLeft size={13} /></button>
-                        )}
-                        <button type="button" className="chat-action-btn" title={copiedMsgId === msg.id ? 'Copied!' : 'Copy'}
-                          onClick={(e) => { e.stopPropagation(); void copyMessageText(msg.id, msg.text) }}
-                        >{copiedMsgId === msg.id ? <Check size={13} /> : <Copy size={13} />}</button>
-                        {isNexus && (
-                          <>
-                            <button type="button" className={`chat-action-btn ${msg.feedback === 'up' ? 'chat-action-active-up' : ''}`} title="Good response"
-                              onClick={(e) => { e.stopPropagation(); void setMessageFeedback(msg.id, 'up') }}
-                            ><ThumbsUp size={13} /></button>
-                            <button type="button" className={`chat-action-btn ${msg.feedback === 'down' ? 'chat-action-active-down' : ''}`} title="Bad response"
-                              onClick={(e) => { e.stopPropagation(); void setMessageFeedback(msg.id, 'down') }}
-                            ><ThumbsDown size={13} /></button>
-                            <button type="button" className="chat-action-btn" title={msg.isNexusError ? 'Retry' : 'Regenerate response'}
-                              disabled={regeneratingMsgId === msg.id}
-                              onClick={(e) => { e.stopPropagation(); void retryHertaMessage(msg.id) }}
-                            ><RefreshCw size={13} className={regeneratingMsgId === msg.id ? 'chat-action-spin' : ''} /></button>
-                          </>
                         )}
                         {isMe && !isNexus && (
                           <button type="button" className="chat-action-btn chat-action-delete" title="Unsend"
@@ -5534,22 +5157,10 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                       </div>
                     )}
 
-                    {/* Seen indicator — shows first name of each person who last read here */}
+                    {/* Seen indicator */}
                     {showSeen && (
-                      <div className="chat-seen-row">
-                        <span className="chat-seen-check">✓✓</span>
-                        <span className="chat-seen-label">
-                          {'Seen by '}
-                          {seenHereBy.map((e, i) => {
-                            const firstName = e.name.trim().split(/\s+/)[0]
-                            return (
-                              <span key={e.email}>
-                                {i > 0 && ', '}
-                                <strong>{firstName}</strong>
-                              </span>
-                            )
-                          })}
-                        </span>
+                      <div className="chat-seen">
+                        Seen by {seenByOthers.map((e: string) => e.split('@')[0]).join(', ')}
                       </div>
                     )}
                   </div>
