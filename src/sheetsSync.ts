@@ -15,28 +15,26 @@ export function shouldSyncToSheets(status: BookingStatus): boolean {
 // ── Sequential queue ─────────────────────────────────────────────────────────
 // Prevents concurrent API calls that cause missing rows and duplicate tabs.
 // Each booking sync is queued and runs one after the other.
+//
+// NOTE: deduplication was removed. The old guard dropped bookings that fired
+// twice on first load (Firestore sends all docs as 'added' on initial snapshot,
+// and a rapid second update could be silently skipped). The queue already
+// serialises requests; dedup was causing the "not everything is sent" bug.
 
 let syncQueue: Promise<void> = Promise.resolve()
-const pendingIds = new Set<string>() // dedupe: skip if same booking already queued
 
 export function syncBookingToSheets(booking: BookingRecord): void {
   if (!shouldSyncToSheets(booking.status)) return
 
-  // If this exact booking is already waiting in the queue, skip — the queued
-  // call will use fresh data anyway since we pass the booking object by value.
-  // But if it's not queued, add it.
-  if (pendingIds.has(booking.id)) return
-  pendingIds.add(booking.id)
-
   syncQueue = syncQueue.then(async () => {
-    pendingIds.delete(booking.id)
     try {
       await doSync(booking)
     } catch (err) {
       console.warn('[sheetsSync] Unhandled error:', err)
     }
-    // Small gap between requests — keeps us well under Google's 60 writes/min
-    await new Promise(r => setTimeout(r, 500))
+    // Small gap between requests — keeps us under Google's 60 writes/min.
+    // 200 ms is enough headroom; the API calls themselves take ~500–800 ms each.
+    await new Promise(r => setTimeout(r, 200))
   })
 }
 
@@ -54,24 +52,24 @@ async function doSync(booking: BookingRecord): Promise<void> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          bookingId:        booking.id,           // used as stable row key
-          createdAt:        booking.createdAt,
-          clientName:       booking.clientName,
-          travelStart:      booking.travelStart,
-          travelEnd:        booking.travelEnd,
-          packageName:      booking.packageName,
-          sellingPrice:     String(clientTotal),
-          nettCost:         String(nettTotal),
-          estProfit:        String(estProfit),
+          bookingId:         booking.id,           // used as stable row key
+          createdAt:         booking.createdAt,
+          clientName:        booking.clientName,
+          travelStart:       booking.travelStart,
+          travelEnd:         booking.travelEnd,
+          packageName:       booking.packageName,
+          sellingPrice:      String(clientTotal),
+          nettCost:          String(nettTotal),
+          estProfit:         String(estProfit),
           invoiceAmountPaid: booking.invoiceAmountPaid,
-          invoiceBalance:   String(invoiceBalance),
-          status:           booking.status,
-          currency:         booking.currency || 'PHP',
+          invoiceBalance:    String(invoiceBalance),
+          status:            booking.status,
+          currency:          booking.currency || 'PHP',
         }),
       })
 
       if (res.status === 429) {
-        // Rate limited — wait and retry
+        // Rate limited — back off and retry
         const wait = attempt * 15000 // 15s, 30s
         console.warn(`[sheetsSync] Rate limited, retrying in ${wait / 1000}s...`)
         await new Promise(r => setTimeout(r, wait))

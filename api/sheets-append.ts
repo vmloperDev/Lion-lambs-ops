@@ -13,8 +13,14 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 // ── JWT auth ─────────────────────────────────────────────────────────────────
+// Token is cached for the lifetime of the serverless function instance.
+// A fresh token is fetched if less than 60s remains before expiry.
+
+let _cachedToken = ''
+let _tokenExpiry = 0
 
 async function getAccessToken(email: string, privateKey: string): Promise<string> {
+  if (_cachedToken && Date.now() < _tokenExpiry - 60_000) return _cachedToken
   const now = Math.floor(Date.now() / 1000)
   const header  = { alg: 'RS256', typ: 'JWT' }
   const payload = {
@@ -47,6 +53,8 @@ async function getAccessToken(email: string, privateKey: string): Promise<string
   })
   if (!tokenRes.ok) throw new Error(`Token exchange failed: ${await tokenRes.text()}`)
   const { access_token } = await tokenRes.json() as { access_token: string }
+  _cachedToken = access_token
+  _tokenExpiry = Date.now() + 3600 * 1000
   return access_token
 }
 
@@ -328,25 +336,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const sheetId = await ensureTab(token, GOOGLE_SHEET_ID, tabName, existingSheets)
 
-    // Read column J to find an existing row by bookingId
-    const idColRes = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${encodeURIComponent(tabName + '!J:J')}`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    )
-    const idColData = await idColRes.json() as { values?: string[][] }
-    const idCol = (idColData.values || []).map(r => r[0] || '')
+    // Read column J (bookingId key) and columns A:C (fallback name match) in parallel
+    // to avoid two serial round-trips on every sync.
+    const [idColRes, nameColRes] = await Promise.all([
+      fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${encodeURIComponent(tabName + '!J:J')}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      ),
+      fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${encodeURIComponent(tabName + '!A:C')}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      ),
+    ])
+    const idColData   = await idColRes.json()   as { values?: string[][] }
+    const nameColData = await nameColRes.json()  as { values?: string[][] }
+
+    const idCol    = (idColData.values   || []).map(r => r[0] || '')
+    const nameRows =  nameColData.values || []
 
     // Primary match: bookingId in column J
     let existingRowIndex = bookingId ? idCol.findIndex((id, i) => i > 0 && id === bookingId) : -1
 
     // Fallback: match by clientName + travelDate for rows written before bookingId was added
     if (existingRowIndex === -1) {
-      const nameColRes = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${encodeURIComponent(tabName + '!A:C')}`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      )
-      const nameColData = await nameColRes.json() as { values?: string[][] }
-      const nameRows = nameColData.values || []
       existingRowIndex = nameRows.findIndex((r, i) => i > 0 && r[1] === clientName && r[2] === travelDate)
     }
 
