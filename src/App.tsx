@@ -5192,36 +5192,67 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </article>
           </section>
 
-          <section className="pipeline-panel">
-            <div className="pipeline-heading">
+          <section className="docs-hub-panel">
+            <div className="docs-hub-heading">
               <div>
                 <p>Internal</p>
-                <h2>Booking pipeline</h2>
+                <h2>Documents</h2>
               </div>
-              <span>{activeProjects} total</span>
+              <span>{bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length} active</span>
             </div>
-            <div className="pipeline-list">
-              {bookingListFilters.slice(1).filter(f => !['Inquiry','Quotation','Invoice','Confirmed','Flown'].includes(f.value)).map((filter, index) => {
-                const count = statusCounts[filter.value]
-                const progress = activeProjects > 0 ? (count / activeProjects) * 100 : 0
 
-                return (
+            {/* Breakdown card */}
+            <div className="docs-hub-card">
+              <div className="docs-hub-card-header">
+                <FileText size={14} />
+                <span>Breakdown</span>
+                <strong>{bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length}</strong>
+              </div>
+              <div className="docs-hub-list">
+                {bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length === 0 && (
+                  <p className="docs-hub-empty">No confirmed or flown bookings yet.</p>
+                )}
+                {bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').map(b => (
                   <button
                     type="button"
-                    key={filter.value}
-                    className={`pipeline-row pipeline-${index + 1}`}
-                    onClick={() => setActiveBookingFilter(filter.value)}
+                    key={b.id}
+                    className="docs-hub-row"
+                    onClick={() => { setSelectedBookingId(b.id); setScreen('breakdown-preview') }}
                   >
-                    <span className="pipeline-dot"></span>
-                    <span className="pipeline-name">{filter.label}</span>
-                    <span className="pipeline-track">
-                      <span style={{ width: `${progress}%` }}></span>
-                    </span>
-                    <strong>{count}</strong>
-                    <ChevronRight size={16} />
+                    <span className={`docs-hub-badge docs-hub-badge--${b.status === 'Flown' ? 'flown' : 'confirmed'}`}>{b.status}</span>
+                    <span className="docs-hub-client">{b.clientName}</span>
+                    <span className="docs-hub-pkg">{b.packageName}</span>
+                    <ChevronRight size={13} />
                   </button>
-                )
-              })}
+                ))}
+              </div>
+            </div>
+
+            {/* Purchase Order card */}
+            <div className="docs-hub-card">
+              <div className="docs-hub-card-header">
+                <FileText size={14} />
+                <span>Purchase Order</span>
+                <strong>{bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length}</strong>
+              </div>
+              <div className="docs-hub-list">
+                {bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length === 0 && (
+                  <p className="docs-hub-empty">No confirmed or flown bookings yet.</p>
+                )}
+                {bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').map(b => (
+                  <button
+                    type="button"
+                    key={b.id}
+                    className="docs-hub-row"
+                    onClick={() => { setSelectedBookingId(b.id); setScreen('purchase-order-preview') }}
+                  >
+                    <span className={`docs-hub-badge docs-hub-badge--${b.status === 'Flown' ? 'flown' : 'confirmed'}`}>{b.status}</span>
+                    <span className="docs-hub-client">{b.clientName}</span>
+                    <span className="docs-hub-pkg">{b.packageName}</span>
+                    <ChevronRight size={13} />
+                  </button>
+                ))}
+              </div>
             </div>
           </section>
         </section>
