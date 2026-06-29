@@ -202,9 +202,24 @@ function buildDataRowRequests(sheetId: number, rowIndex: number, isPaid: boolean
   ]
 }
 
+// ── Parse row number from Sheets range string ─────────────────────────────────
+// Google returns updatedRange like "Jan 2026!A3:J3". We extract the row number (3)
+// and convert to 0-based index (2) for the batchUpdate formatting requests.
+
+function rowIndexFromRange(range: string): number | null {
+  // Range format: "Tab Name!A<row>:J<row>"
+  const match = range.match(/!(?:[A-Z]+)(\d+)/)
+  if (!match) return null
+  const oneBasedRow = parseInt(match[1], 10)
+  if (isNaN(oneBasedRow) || oneBasedRow < 2) return null // row 1 is the header
+  return oneBasedRow - 1 // convert to 0-based
+}
+
 // ── Ensure tab exists — race-safe ─────────────────────────────────────────────
 // If two requests race to create the same tab, the loser catches the error,
 // re-fetches the sheet list, and returns the winner's tab — no "_conflict_N" suffix.
+// After creating a tab we write + format the header row before returning, so the
+// very first data row never races with an unformatted header.
 
 async function ensureTab(
   token: string,
@@ -228,7 +243,8 @@ async function ensureTab(
     const createData = await createRes.json() as { replies: { addSheet: { properties: { sheetId: number } } }[] }
     const sheetId = createData.replies[0].addSheet.properties.sheetId
 
-    await fetch(
+    // Step 1: write header row values
+    const headerWriteRes = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(tabName + '!A1:J1')}?valueInputOption=RAW`,
       {
         method: 'PUT',
@@ -236,7 +252,11 @@ async function ensureTab(
         body: JSON.stringify({ values: [HEADER_ROW] }),
       },
     )
-    await fetch(
+    if (!headerWriteRes.ok) throw new Error(`Header write failed: ${await headerWriteRes.text()}`)
+
+    // Step 2: format header row — must complete before any data row is written,
+    // otherwise concurrent appends may land on row 1 before formatting is applied.
+    const headerFmtRes = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
       {
         method: 'POST',
@@ -244,6 +264,8 @@ async function ensureTab(
         body: JSON.stringify({ requests: buildHeaderRequests(sheetId) }),
       },
     )
+    if (!headerFmtRes.ok) throw new Error(`Header format failed: ${await headerFmtRes.text()}`)
+
     return sheetId
   }
 
@@ -334,37 +356,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const meta = await metaRes.json() as { sheets?: { properties: { title: string; sheetId: number } }[] }
     const existingSheets = (meta.sheets || []).map(s => ({ title: s.properties.title, sheetId: s.properties.sheetId }))
 
+    // ensureTab fully completes header write + format before returning,
+    // so the first data append always lands below a properly formatted row 1.
     const sheetId = await ensureTab(token, GOOGLE_SHEET_ID, tabName, existingSheets)
 
-    // Read column J (bookingId key) and columns A:C (fallback name match) in parallel
-    // to avoid two serial round-trips on every sync.
-    const [idColRes, nameColRes] = await Promise.all([
-      fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${encodeURIComponent(tabName + '!J:J')}`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      ),
-      fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${encodeURIComponent(tabName + '!A:C')}`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      ),
-    ])
-    const idColData   = await idColRes.json()   as { values?: string[][] }
-    const nameColData = await nameColRes.json()  as { values?: string[][] }
+    // Read column J (bookingId key) to find existing rows for update.
+    const idColRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${encodeURIComponent(tabName + '!J:J')}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    )
+    const idColData = await idColRes.json() as { values?: string[][] }
+    const idCol = (idColData.values || []).map(r => r[0] || '')
 
-    const idCol    = (idColData.values   || []).map(r => r[0] || '')
-    const nameRows =  nameColData.values || []
+    // Primary match: bookingId in column J (skip row 0 = header)
+    const existingRowIndex = bookingId ? idCol.findIndex((id, i) => i > 0 && id === bookingId) : -1
 
-    // Primary match: bookingId in column J
-    let existingRowIndex = bookingId ? idCol.findIndex((id, i) => i > 0 && id === bookingId) : -1
-
-    // Fallback: match by clientName + travelDate for rows written before bookingId was added
-    if (existingRowIndex === -1) {
-      existingRowIndex = nameRows.findIndex((r, i) => i > 0 && r[1] === clientName && r[2] === travelDate)
-    }
+    let targetRowIndex: number
 
     if (existingRowIndex !== -1) {
-      // Update existing row in place
-      const updateRange = encodeURIComponent(`${tabName}!A${existingRowIndex + 1}:J${existingRowIndex + 1}`)
+      // ── Update existing row in place ──────────────────────────────────────
+      // existingRowIndex is already 0-based (matching idCol array position).
+      targetRowIndex = existingRowIndex
+
+      const updateRange = encodeURIComponent(`${tabName}!A${targetRowIndex + 1}:J${targetRowIndex + 1}`)
       const updateRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${updateRange}?valueInputOption=RAW`,
         {
@@ -375,8 +389,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       )
       if (!updateRes.ok) throw new Error(`Sheets update error: ${await updateRes.text()}`)
     } else {
-      // Append new row
-      const sheetsRes = await fetch(
+      // ── Append new row ────────────────────────────────────────────────────
+      // We derive the actual row index from the API response rather than
+      // guessing from idCol.length — this is safe even when multiple bookings
+      // are appended concurrently because each response reflects where that
+      // specific append actually landed.
+      const appendRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}/values/${encodeURIComponent(tabName + '!A:J')}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
         {
           method: 'POST',
@@ -384,14 +402,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           body: JSON.stringify({ values: [row] }),
         },
       )
-      if (!sheetsRes.ok) throw new Error(`Sheets append error: ${await sheetsRes.text()}`)
+      if (!appendRes.ok) throw new Error(`Sheets append error: ${await appendRes.text()}`)
+
+      // Parse the actual row from the response (e.g. "Jan 2026!A3:J3" → index 2)
+      const appendData = await appendRes.json() as { updates?: { updatedRange?: string } }
+      const parsedIndex = appendData.updates?.updatedRange
+        ? rowIndexFromRange(appendData.updates.updatedRange)
+        : null
+
+      // Fallback: next row after current idCol length (idCol includes header at [0])
+      targetRowIndex = parsedIndex ?? idCol.length
     }
 
-    // Row index to format. New rows land at idCol.length (idCol includes header at index 0).
-    const targetRowIndex = existingRowIndex > 0 ? existingRowIndex : idCol.length
+    // Safety guard: never format row 0 (the header) as a data row.
+    // This can't happen in normal flow but guards against any edge case.
+    if (targetRowIndex < 1) {
+      console.warn(`[sheets-append] targetRowIndex ${targetRowIndex} would overwrite header — skipping format`)
+      return res.status(200).json({ ok: true, tab: tabName, warning: 'skipped formatting to protect header' })
+    }
 
-    // Apply original row styling: 56px height, alternating tint, right-aligned numbers, colored status
-    await fetch(
+    // Apply data row styling: 56px height, alternating tint, right-aligned numbers, colored status
+    const fmtRes = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}:batchUpdate`,
       {
         method: 'POST',
@@ -399,6 +430,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         body: JSON.stringify({ requests: buildDataRowRequests(sheetId, targetRowIndex, isPaid) }),
       },
     )
+    if (!fmtRes.ok) throw new Error(`Row format error: ${await fmtRes.text()}`)
 
     return res.status(200).json({ ok: true, tab: tabName })
   } catch (err) {
