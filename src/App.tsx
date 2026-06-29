@@ -2071,7 +2071,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <select value={bookingForm.status} onChange={(e) => updateBookingField('status', e.target.value as BookingStatus)}>
                   <option>Pending</option>
                   <option>Confirmed</option>
-                  <option>Flown</option>
                 </select>
               </label>
               <label className="field-grid-full">
@@ -2716,7 +2715,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   >
                     <option>Pending</option>
                     <option>Confirmed</option>
-                    <option>Flown</option>
                   </select>
                 </label>
                 <button
