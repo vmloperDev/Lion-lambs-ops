@@ -467,8 +467,26 @@ function App() {
     })
   }, [authUser])
 
-  // bookingsFlownKey kept for dependency tracking
+  // Auto-flip bookings to "Flown" once their travel end date has passed
   const bookingsFlownKey = bookings.map(b => b.id + b.status + b.travelEnd).join(',')
+  useEffect(() => {
+    if (!authUser || bookings.length === 0) return
+    const today = new Date().toISOString().slice(0, 10)
+    const toFlown = bookings.filter(b =>
+      b.status !== 'Flown' &&
+      b.travelEnd &&
+      b.travelEnd < today
+    )
+    if (toFlown.length === 0) return
+    toFlown.forEach(b => {
+      const updatedBooking = { ...b, status: 'Flown' as BookingStatus }
+      setBookings(prev => prev.map(x => x.id === b.id ? updatedBooking : x))
+      void setDoc(doc(db, getBookingOwnerPath(b, authUser.uid), b.id), {
+        status: 'Flown',
+        updatedAt: new Date().toISOString(),
+      }, { merge: true })
+    })
+  }, [bookingsFlownKey, authUser])
 
 
   async function handleSaveDtrEntry(event: React.FormEvent<HTMLFormElement>) {
@@ -2053,11 +2071,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <select value={bookingForm.status} onChange={(e) => updateBookingField('status', e.target.value as BookingStatus)}>
                   <option>Pending</option>
                   <option>Confirmed</option>
-                </select>
-              </label>
-            </div>
-            <label className="textarea-field">
-              Item description
+                  <option>Flown</option>
               <textarea rows={6} value={bookingForm.itemDescription} onChange={(e) => updateBookingField('itemDescription', e.target.value)} placeholder="e.g. This package includes round trip airfare, 3 nights accommodation, daily breakfast, airport transfers, island hopping with snorkeling equipment, and a certified tour guide for the entire stay." />
               <span className="field-help">Appears as a sub-row under the package name in the quotation and invoice.</span>
             </label>
@@ -2697,11 +2711,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   >
                     <option>Pending</option>
                     <option>Confirmed</option>
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  className="delete-project-btn"
+                    <option>Flown</option>
                   onClick={handleDeleteBooking}
                 >
                   Delete project
@@ -5113,7 +5123,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <p>Internal</p>
                 <h2>Documents</h2>
               </div>
-              <span>{bookings.filter(b => b.status === 'Confirmed').length} bookings</span>
+              <span>{bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length} bookings</span>
             </div>
 
             <label className="docs-hub-search">
@@ -5134,16 +5144,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               {(() => {
                 const q = docsSearchTerm.trim().toLowerCase()
                 const eligible = bookings.filter(b =>
-                  b.status === 'Confirmed' &&
+                  (b.status === 'Confirmed' || b.status === 'Flown') &&
                   (!q || b.clientName.toLowerCase().includes(q) || b.packageName.toLowerCase().includes(q))
                 )
-                const noBase = bookings.filter(b => b.status === 'Confirmed').length === 0
+                const noBase = bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length === 0
                 const noMatch = !noBase && eligible.length === 0
 
                 const renderList = (targetScreen: 'breakdown-preview' | 'purchase-order-preview') => (
                   <div className="docs-hub-list">
                     {noBase
-                      ? <p className="docs-hub-empty">No confirmed bookings yet.</p>
+                      ? <p className="docs-hub-empty">No confirmed or flown bookings yet.</p>
                       : noMatch
                         ? <p className="docs-hub-empty">No results for “{docsSearchTerm}”.</p>
                         : eligible.map(b => (
@@ -5153,7 +5163,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                             className="docs-hub-row"
                             onClick={() => { setSelectedBookingId(b.id); setScreen(targetScreen) }}
                           >
-                            <span className="docs-hub-badge docs-hub-badge--confirmed">{b.status}</span>
+                            <span className={`docs-hub-badge docs-hub-badge--${b.status === 'Flown' ? 'flown' : 'confirmed'}`}>{b.status}</span>
                             <span className="docs-hub-info">
                               <span className="docs-hub-client">{b.clientName}</span>
                               <span className="docs-hub-pkg">{b.packageName}</span>
