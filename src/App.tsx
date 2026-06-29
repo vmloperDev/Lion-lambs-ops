@@ -2072,9 +2072,14 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   <option>Pending</option>
                   <option>Confirmed</option>
                   <option>Flown</option>
-              <textarea rows={6} value={bookingForm.itemDescription} onChange={(e) => updateBookingField('itemDescription', e.target.value)} placeholder="e.g. This package includes round trip airfare, 3 nights accommodation, daily breakfast, airport transfers, island hopping with snorkeling equipment, and a certified tour guide for the entire stay." />
-              <span className="field-help">Appears as a sub-row under the package name in the quotation and invoice.</span>
-            </label>
+                </select>
+              </label>
+              <label className="field-grid-full">
+                Item description
+                <textarea rows={6} value={bookingForm.itemDescription} onChange={(e) => updateBookingField('itemDescription', e.target.value)} placeholder="e.g. This package includes round trip airfare, 3 nights accommodation, daily breakfast, airport transfers, island hopping with snorkeling equipment, and a certified tour guide for the entire stay." />
+                <span className="field-help">Appears as a sub-row under the package name in the quotation and invoice.</span>
+              </label>
+            </div>
           </section>
 
           {/* 03 · QUOTATION */}
@@ -2712,6 +2717,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                     <option>Pending</option>
                     <option>Confirmed</option>
                     <option>Flown</option>
+                  </select>
+                </label>
+                <button
                   onClick={handleDeleteBooking}
                 >
                   Delete project
