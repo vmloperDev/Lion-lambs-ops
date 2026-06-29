@@ -5047,7 +5047,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               }}
               title="Open Google Sheets"
             >
-              📊 View Sheets
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M14 2H6C4.9 2 4 2.9 4 4V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V8L14 2Z" fill="#23A566"/>
+                <path d="M14 2V8H20L14 2Z" fill="#187A4A"/>
+                <path d="M8 13H16V14.5H8V13ZM8 16H16V17.5H8V16ZM8 10H11V11.5H8V10Z" fill="white"/>
+              </svg>
+              Open Google Sheet
             </button>
         </div>
       </nav>
