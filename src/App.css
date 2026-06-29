@@ -256,6 +256,65 @@
   border-top-color: var(--border);
 }
 
+/* --- Dark mode: docs hub panel -------------------------------- */
+[data-theme="dark"] .docs-hub-panel {
+  background: #111827;
+  border-top-color: #1f2937;
+}
+[data-theme="dark"] .docs-hub-heading h2 {
+  color: #e2e8f0 !important;
+}
+[data-theme="dark"] .docs-hub-heading p {
+  color: var(--gold) !important;
+}
+[data-theme="dark"] .docs-hub-heading > span {
+  background: #1f2937;
+  color: #94a3b8;
+}
+[data-theme="dark"] .docs-hub-card {
+  background: #1f2937;
+  border-color: #374151;
+}
+/* Keep the card header dark navy — resist the breakdown-preview/* color:inherit cascade */
+[data-theme="dark"] .docs-hub-card-header {
+  background: #0b1f30 !important;
+  color: #fff !important;
+}
+[data-theme="dark"] .docs-hub-card-header svg {
+  color: rgba(255,255,255,.6) !important;
+}
+[data-theme="dark"] .docs-hub-card-header strong {
+  background: rgba(255,255,255,.15) !important;
+  color: #fff !important;
+}
+[data-theme="dark"] .docs-hub-row {
+  border-bottom-color: #374151;
+  color: #e2e8f0;
+}
+[data-theme="dark"] .docs-hub-row:hover {
+  background: #374151;
+}
+[data-theme="dark"] .docs-hub-row > svg {
+  color: var(--teal);
+}
+[data-theme="dark"] .docs-hub-client {
+  color: #e2e8f0 !important;
+}
+[data-theme="dark"] .docs-hub-pkg {
+  color: #94a3b8 !important;
+}
+[data-theme="dark"] .docs-hub-empty {
+  color: #64748b;
+}
+[data-theme="dark"] .docs-hub-badge--confirmed {
+  background: #0d2d3a;
+  color: var(--teal);
+}
+[data-theme="dark"] .docs-hub-badge--flown {
+  background: #2d1f00;
+  color: var(--gold);
+}
+
 /* --- Reset --------------------------------------------------- */
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
