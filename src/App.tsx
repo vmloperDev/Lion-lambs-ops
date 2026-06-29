@@ -63,6 +63,12 @@ import {
   Copy,
   ThumbsUp,
   ThumbsDown,
+  FileBarChart2,
+  Receipt,
+  ShoppingCart,
+  Ticket,
+  BadgeCheck,
+  Lock,
 } from 'lucide-react'
 import { auth, db } from './firebase'
 import agencySeal from './assets/brand/agency-seal.png'
@@ -1928,11 +1934,11 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const hasVoucher = Boolean(bookingForm.flightDetails || bookingForm.accommodation)
 
     const docCards = [
-      { id: 'quotation' as const, label: 'Quotation', icon: '📄', desc: 'Client info, package details, pricing, inclusions', filled: hasQuotation },
-      { id: 'breakdown' as const, label: 'Breakdown', icon: '📊', desc: 'Internal costing, supplier nett, pax tiers', filled: hasBreakdown },
-      { id: 'invoice' as const, label: 'Invoice', icon: '🧾', desc: 'Invoice line items, payment records & status', filled: hasInvoice },
-      { id: 'purchase-order' as const, label: 'Purchase Order', icon: '📋', desc: 'Supplier PO line items, payment method', filled: hasPO },
-      { id: 'voucher' as const, label: 'Service Voucher', icon: '🎫', desc: 'Flights, accommodation, itinerary, emergency contact', filled: hasVoucher },
+      { id: 'quotation' as const, label: 'Quotation', icon: <FileText size={28} />, desc: 'Client info, package details, pricing & inclusions', filled: hasQuotation },
+      { id: 'breakdown' as const, label: 'Breakdown', icon: <FileBarChart2 size={28} />, desc: 'Internal costing, supplier nett & pax tiers', filled: hasBreakdown },
+      { id: 'invoice' as const, label: 'Invoice', icon: <Receipt size={28} />, desc: 'Invoice line items, payment records & status', filled: hasInvoice },
+      { id: 'purchase-order' as const, label: 'Purchase Order', icon: <ShoppingCart size={28} />, desc: 'Supplier PO line items & payment method', filled: hasPO },
+      { id: 'voucher' as const, label: 'Service Voucher', icon: <Ticket size={28} />, desc: 'Flights, accommodation, itinerary & emergency contact', filled: hasVoucher },
     ]
 
     const handleBackToPicker = () => setActiveDocTab(null)
@@ -2010,29 +2016,42 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             {dataMessage && <p className="data-alert info" style={{margin: '0 24px'}}>{dataMessage}</p>}
 
             <div className="doc-picker-grid">
-              {docCards.map((card) => (
-                <button
-                  key={card.id}
-                  type="button"
-                  className={`doc-picker-card ${card.filled ? 'doc-picker-card--filled' : ''}`}
-                  onClick={() => {
-                    if (!isEditingBooking && card.id !== 'quotation') return
-                    setActiveDocTab(card.id)
-                    setDataError('')
-                    setDataMessage('')
-                  }}
-                  disabled={!isEditingBooking && card.id !== 'quotation'}
-                  title={!isEditingBooking && card.id !== 'quotation' ? 'Save the quotation first to unlock other documents' : undefined}
-                >
-                  <span className="doc-picker-card-icon">{card.icon}</span>
-                  <div className="doc-picker-card-body">
-                    <strong>{card.label}</strong>
-                    <span>{card.desc}</span>
-                  </div>
-                  {card.filled && <span className="doc-picker-card-badge">✓ Filled</span>}
-                  {!isEditingBooking && card.id !== 'quotation' && <span className="doc-picker-card-lock">🔒</span>}
-                </button>
-              ))}
+              {docCards.map((card) => {
+                const locked = !isEditingBooking && card.id !== 'quotation'
+                return (
+                  <button
+                    key={card.id}
+                    type="button"
+                    className={`doc-picker-card ${card.filled ? 'doc-picker-card--filled' : ''} ${locked ? 'doc-picker-card--locked' : ''}`}
+                    onClick={() => {
+                      if (locked) return
+                      setActiveDocTab(card.id)
+                      setDataError('')
+                      setDataMessage('')
+                    }}
+                    disabled={locked}
+                    title={locked ? 'Save the quotation first to unlock other documents' : undefined}
+                  >
+                    <div className="doc-picker-card-icon">
+                      {card.icon}
+                      {card.filled && <span className="doc-picker-card-check"><BadgeCheck size={16} /></span>}
+                    </div>
+                    <div className="doc-picker-card-body">
+                      <strong>{card.label}</strong>
+                      <span>{card.desc}</span>
+                    </div>
+                    <div className="doc-picker-card-footer">
+                      {locked
+                        ? <span className="doc-picker-card-status doc-picker-card-status--locked"><Lock size={11} /> Locked</span>
+                        : card.filled
+                          ? <span className="doc-picker-card-status doc-picker-card-status--filled">✓ Filled</span>
+                          : <span className="doc-picker-card-status doc-picker-card-status--empty">Not started</span>
+                      }
+                      {!locked && <ArrowRight size={15} className="doc-picker-card-arrow" />}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           </div>
         )}
