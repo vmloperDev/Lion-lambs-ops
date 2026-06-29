@@ -5317,13 +5317,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                           <div className="project-main">
                             <div className="project-icon"><FileText size={20} /></div>
                             <div>
-                              <strong>{booking.packageName}</strong>
-                              <span>{booking.clientName}</span>
+                              <strong style={{ fontSize: '1.05rem', fontWeight: 800 }}>{booking.clientName}</strong>
+                              <span style={{ fontSize: '0.8rem', opacity: 0.75 }}>{booking.packageName}</span>
                             </div>
                           </div>
                           <div className="project-meta">
                             <span className="status-pill">{booking.status}</span>
                             <span><CalendarDays size={14} />{formatProjectDate(booking.createdAt)}</span>
+                            {booking.travelStart && (
+                              <span><Plane size={14} />{formatProjectDate(booking.travelStart)}{booking.travelEnd ? ` – ${formatProjectDate(booking.travelEnd)}` : ''}</span>
+                            )}
                             <span><MapPin size={14} />{formatAmount(String(getBookingClientTotal(booking)))}</span>
                             {(booking.createdByName || (booking as any).createdByEmail) && (
                               <span className="booking-by-tag">
