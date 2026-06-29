@@ -32,7 +32,7 @@ export function normalizeBooking(booking: BookingRecord): BookingRecord {
   return {
     ...emptyBookingForm,
     ...booking,
-    status: booking.status || 'Inquiry',
+    status: (['Pending', 'Confirmed', 'Flown'] as const).includes(booking.status as 'Pending' | 'Confirmed' | 'Flown') ? booking.status : 'Pending',
     id: booking.id,
     createdAt: booking.createdAt || new Date().toISOString(),
   }
