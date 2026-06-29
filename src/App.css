@@ -2087,11 +2087,13 @@ input, select, textarea { font: inherit; }
    ================================================================ */
 @page { size: A4; margin: 12mm; }
 @media print {
+  @page { margin: 10mm; }
+  html, body { margin: 0 !important; padding: 0 !important; background: #fff; }
   body { background: #fff; }
-  .preview-screen { min-height: auto; padding: 0; background: #fff; }
-  .preview-screen .app-nav { display: none; }
+  .preview-screen { min-height: auto !important; height: auto !important; padding: 0 !important; margin: 0 !important; background: #fff; display: block !important; }
+  .preview-screen .app-nav { display: none !important; }
   .quotation-preview, .invoice-preview, .po-preview, .voucher-preview, .breakdown-preview {
-    width: 100%; margin: 0; padding: 0; border-color: #d7e3ea; box-shadow: none;
+    width: 100% !important; margin: 0 !important; padding: 0 !important; border-color: #d7e3ea; box-shadow: none !important;
   }
   .breakdown-preview { border-color: #1f2937; }
   .po-page-break { page-break-before: always; margin-top: 0; }
