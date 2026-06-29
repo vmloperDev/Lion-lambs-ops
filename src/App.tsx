@@ -4825,87 +4825,56 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
             {/* ── Weekly hours tracker ── */}
             {(() => {
-              const weekTarget = 40 * 60 // 40-hour work week in minutes
+              const weekTarget = 40 * 60
               const today = getTodayDateStr()
+              const currentWeekKey = getIsoWeekKey(today)
 
-              // Determine which month to generate weeks for.
-              // If a specific month is selected, use it; otherwise use the current month.
-              const targetMonth = dtrMonthFilter !== 'all'
-                ? dtrMonthFilter
-                : getTodayDateStr().slice(0, 7)
-              const [yr, mo] = targetMonth.split('-').map(Number)
-              const daysInMonth = new Date(yr, mo, 0).getDate()
+              // Get Mon–Sun range for the current week
+              const d = new Date(`${today}T00:00:00`)
+              const day = d.getDay() === 0 ? 7 : d.getDay()
+              const monday = new Date(d); monday.setDate(d.getDate() - (day - 1))
+              const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6)
+              const fmt = (x: Date) => x.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+              const weekLabel = `${fmt(monday)} – ${fmt(sunday)}`
 
-              // Collect every Monday–Sunday week that overlaps this month.
-              const weekKeys = new Set<string>()
-              for (let d = 1; d <= daysInMonth; d++) {
-                const dateStr = `${targetMonth}-${String(d).padStart(2, '0')}`
-                weekKeys.add(getIsoWeekKey(dateStr))
-              }
+              // Sum only entries that fall in the current week
+              const currentWeekEntries = visibleEntries.filter(
+                (e) => getIsoWeekKey(e.date) === currentWeekKey
+              )
+              const minutes = currentWeekEntries.reduce((s, e) => s + getDtrEntryMinutes(e), 0)
+              const days = new Set(currentWeekEntries.map((e) => e.date)).size
+              const pct = Math.min(100, (minutes / weekTarget) * 100)
+              const isOver = minutes > weekTarget
 
-              // Build a lookup of entries by ISO week key from ALL visible entries.
-              const entryByWeek = new Map<string, DtrEntry[]>()
-              for (const entry of visibleEntries) {
-                const key = getIsoWeekKey(entry.date)
-                if (!entryByWeek.has(key)) entryByWeek.set(key, [])
-                entryByWeek.get(key)!.push(entry)
-              }
-
-              // One bar per week, sorted, always present even if no entries yet.
-              const weeks = Array.from(weekKeys)
-                .sort((a, b) => a.localeCompare(b))
-                .map((key) => {
-                  // Derive the Mon–Sun label from the week key itself
-                  const [isoYear, isoWeek] = key.split('-W').map(Number)
-                  // ISO week 1 monday: Jan 4 is always in week 1
-                  const jan4 = new Date(isoYear, 0, 4)
-                  const jan4Day = jan4.getDay() === 0 ? 7 : jan4.getDay()
-                  const monday = new Date(jan4)
-                  monday.setDate(jan4.getDate() - (jan4Day - 1) + (isoWeek - 1) * 7)
-                  const sunday = new Date(monday)
-                  sunday.setDate(monday.getDate() + 6)
-                  const fmt = (x: Date) => x.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                  const label = `${fmt(monday)} – ${fmt(sunday)}`
-
-                  const entries = entryByWeek.get(key) ?? []
-                  const minutes = entries.reduce((s, e) => s + getDtrEntryMinutes(e), 0)
-                  const days = new Set(entries.map((e) => e.date)).size
-                  const pct = Math.min(100, (minutes / weekTarget) * 100)
-                  const isOver = minutes > weekTarget
-                  const isCurrentWeek = key === getIsoWeekKey(today)
-                  return { key, label, minutes, days, pct, isOver, isCurrentWeek }
-                })
               return (
                 <div className="dtr-weekly-tracker no-print">
                   <div className="dtr-weekly-header">
-                    <p className="dtr-weekly-title">Weekly Hours</p>
+                    <p className="dtr-weekly-title">This Week</p>
                     <span className="dtr-weekly-target">Target: 40h / week</span>
                   </div>
                   <div className="dtr-weekly-rows">
-                    {weeks.map((w) => (
-                      <div key={w.key} className={`dtr-week-row ${w.isCurrentWeek ? 'dtr-week-current' : ''}`}>
-                        <div className="dtr-week-meta">
-                          <span className="dtr-week-range">
-                            {w.label}
-                            {w.isCurrentWeek && <span className="dtr-week-now-pill">This week</span>}
-                          </span>
-                          <span className="dtr-week-stats">{w.days > 0 ? `${w.days}d logged` : 'No entries yet'}</span>
-                        </div>
-                        <div className="dtr-week-bar-wrap">
-                          <div className="dtr-week-bar-track">
-                            <div
-                              className={`dtr-week-bar-fill ${w.isOver ? 'dtr-week-bar-over' : w.pct >= 80 ? 'dtr-week-bar-good' : ''}`}
-                              style={{ width: `${w.pct}%` }}
-                            />
-                            <div className="dtr-week-bar-target-line" title="40h target" />
-                          </div>
-                          <span className={`dtr-week-hours ${w.isOver ? 'dtr-week-hours-over' : ''}`}>
-                            {w.minutes > 0 ? formatMinutesAsHm(w.minutes) : '—'}
-                            {w.isOver && <span className="dtr-week-over-badge">+{formatMinutesAsHm(w.minutes - weekTarget)}</span>}
-                          </span>
-                        </div>
+                    <div className="dtr-week-row dtr-week-current">
+                      <div className="dtr-week-meta">
+                        <span className="dtr-week-range">
+                          {weekLabel}
+                          <span className="dtr-week-now-pill">This week</span>
+                        </span>
+                        <span className="dtr-week-stats">{days > 0 ? `${days}d logged` : 'No entries yet'}</span>
                       </div>
-                    ))}
+                      <div className="dtr-week-bar-wrap">
+                        <div className="dtr-week-bar-track">
+                          <div
+                            className={`dtr-week-bar-fill ${isOver ? 'dtr-week-bar-over' : pct >= 80 ? 'dtr-week-bar-good' : ''}`}
+                            style={{ width: `${pct}%` }}
+                          />
+                          <div className="dtr-week-bar-target-line" title="40h target" />
+                        </div>
+                        <span className={`dtr-week-hours ${isOver ? 'dtr-week-hours-over' : ''}`}>
+                          {minutes > 0 ? formatMinutesAsHm(minutes) : '—'}
+                          {isOver && <span className="dtr-week-over-badge">+{formatMinutesAsHm(minutes - weekTarget)}</span>}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )
