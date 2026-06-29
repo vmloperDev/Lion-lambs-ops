@@ -212,6 +212,50 @@ async function sheetsPost(token: string, url: string, body: unknown) {
   return res.json()
 }
 
+// ── Tab ordering ─────────────────────────────────────────────────────────────
+// Parses a tab title like "Jan 2026" → Date so we can sort chronologically.
+
+function parseTabDate(title: string): number {
+  const d = new Date(title + ' 1')
+  return isNaN(d.getTime()) ? Infinity : d.getTime()
+}
+
+// Reorders all month-style tabs (e.g. "Jan 2026") chronologically oldest→newest,
+// leaving any non-month tabs (e.g. "Dashboard") untouched at their current position.
+async function sortMonthTabs(
+  token: string,
+  spreadsheetId: string,
+  sheets: { title: string; sheetId: number }[],
+): Promise<void> {
+  const MONTH_RE = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}$/
+
+  const monthSheets  = sheets.filter(s => MONTH_RE.test(s.title))
+  const otherSheets  = sheets.filter(s => !MONTH_RE.test(s.title))
+
+  if (monthSheets.length < 2) return // nothing to sort
+
+  const sorted = [...monthSheets].sort((a, b) => parseTabDate(a.title) - parseTabDate(b.title))
+
+  // Build the full desired order: non-month tabs first (in their original positions),
+  // then month tabs in chronological order at the end.
+  // We place month tabs after all non-month tabs so the order becomes:
+  // [other tabs...] [Jan 2025] [Feb 2025] … [Jun 2026]
+  const desiredOrder = [...otherSheets, ...sorted]
+
+  const requests = desiredOrder.map((s, idx) => ({
+    updateSheetProperties: {
+      properties: { sheetId: s.sheetId, index: idx },
+      fields: 'index',
+    },
+  }))
+
+  await sheetsPost(
+    token,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+    { requests },
+  )
+}
+
 // ── Booking payload type ──────────────────────────────────────────────────────
 
 type BookingPayload = {
@@ -469,6 +513,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         results.push(tabName)
       }
 
+      // Re-fetch sheet list (new tabs may have been created) then sort chronologically
+      const metaAfter = await sheetsGet(
+        token,
+        `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}?fields=sheets.properties`,
+      ) as { sheets?: { properties: { title: string; sheetId: number } }[] }
+      await sortMonthTabs(token, GOOGLE_SHEET_ID,
+        (metaAfter.sheets || []).map(s => ({ title: s.properties.title, sheetId: s.properties.sheetId }))
+      )
+
       return res.status(200).json({ ok: true, tabs: results })
     }
 
@@ -480,6 +533,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const tabName = getMonthTabName(b.createdAt || new Date().toISOString())
     await syncTab(token, GOOGLE_SHEET_ID, tabName, [b], existingSheets, fmtDate, fmt)
+
+    // Re-fetch and sort after single-booking sync too
+    const metaAfterSingle = await sheetsGet(
+      token,
+      `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEET_ID}?fields=sheets.properties`,
+    ) as { sheets?: { properties: { title: string; sheetId: number } }[] }
+    await sortMonthTabs(token, GOOGLE_SHEET_ID,
+      (metaAfterSingle.sheets || []).map(s => ({ title: s.properties.title, sheetId: s.properties.sheetId }))
+    )
 
     return res.status(200).json({ ok: true, tab: tabName })
   } catch (err) {
