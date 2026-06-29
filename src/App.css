@@ -1906,7 +1906,7 @@ input, select, textarea { font: inherit; }
    ================================================================ */
 .preview-screen { min-height: 100vh; padding: 18px; background: #e6edf3; color: var(--ink); }
 .quotation-preview { width: min(920px,100%); margin: 14px auto 0; padding: clamp(22px,4vw,42px); border: 0; background: #fff; box-shadow: 0 22px 70px rgba(34,63,95,.12); }
-.quote-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; border-top: 10px solid #257588; padding-top: 24px; }
+.quote-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; padding-top: 24px; }
 .quote-company { display: grid; gap: 5px; }
 .quote-company strong { color: #061c30; font-size: 1.1rem; }
 .quote-company span { color: #52667f; font-size: 0.82rem; font-weight: 700; }
