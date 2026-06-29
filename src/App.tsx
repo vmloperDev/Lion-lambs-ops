@@ -467,26 +467,9 @@ function App() {
     })
   }, [authUser])
 
-  // Auto-flip bookings to "Flown" once their travel end date has passed
+  // bookingsFlownKey kept for dependency tracking
   const bookingsFlownKey = bookings.map(b => b.id + b.status + b.travelEnd).join(',')
-  useEffect(() => {
-    if (!authUser || bookings.length === 0) return
-    const today = new Date().toISOString().slice(0, 10)
-    const toFlown = bookings.filter(b =>
-      b.status !== 'Flown' &&
-      b.travelEnd &&
-      b.travelEnd < today
-    )
-    if (toFlown.length === 0) return
-    toFlown.forEach(b => {
-      const updatedBooking = { ...b, status: 'Flown' as BookingStatus }
-      setBookings(prev => prev.map(x => x.id === b.id ? updatedBooking : x))
-      void setDoc(doc(db, getBookingOwnerPath(b, authUser.uid), b.id), {
-        status: 'Flown',
-        updatedAt: new Date().toISOString(),
-      }, { merge: true })
-    })
-  }, [bookingsFlownKey, authUser])
+
 
   async function handleSaveDtrEntry(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -2068,13 +2051,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <label>
                 Booking status
                 <select value={bookingForm.status} onChange={(e) => updateBookingField('status', e.target.value as BookingStatus)}>
-                  <option>Inquiry</option>
-                  <option>Breakdown</option>
-                  <option>Quotation</option>
-                  <option>Purchase Order</option>
-                  <option>Invoice</option>
+                  <option>Pending</option>
                   <option>Confirmed</option>
-                  <option>Flown</option>
                 </select>
               </label>
             </div>
@@ -2717,13 +2695,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                       updateSelectedBookingStatus(event.target.value as BookingStatus)
                     }
                   >
-                    <option>Inquiry</option>
-                    <option>Breakdown</option>
-                    <option>Quotation</option>
-                    <option>Purchase Order</option>
-                    <option>Invoice</option>
+                    <option>Pending</option>
                     <option>Confirmed</option>
-                    <option>Flown</option>
                   </select>
                 </label>
                 <button
@@ -4940,9 +4913,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
   // Home / dashboard screen (default fallback)
   const activeProjects = bookings.length
-  const inquiryCount = bookings.filter((b) => b.status === 'Inquiry').length
+  const pendingCount = bookings.filter((b) => b.status === 'Pending').length
   const confirmedCount = bookings.filter((b) => b.status === 'Confirmed').length
-  const quotationCount = bookings.filter((b) => b.status === 'Quotation' || b.status === 'Inquiry').length
   const totalBookingValue = bookings.reduce((sum, b) => sum + getBookingClientTotal(b), 0)
 
   const currentYear = new Date().getFullYear()
@@ -5113,25 +5085,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
 
           <section className="dashboard-grid">
-            <article className="summary-card teal" onClick={() => setActiveBookingFilter('Inquiry')} style={{ cursor: 'pointer' }}>
+            <article className="summary-card teal" onClick={() => setActiveBookingFilter('Pending')} style={{ cursor: 'pointer' }}>
               <div className="summary-card-top">
                 <div className="summary-icon blue">
                   <ClipboardList size={20} />
                 </div>
-                <span>Inquiries</span>
+                <span>Pending</span>
               </div>
-              <strong>{inquiryCount}</strong>
-              <small>Awaiting preparation</small>
-            </article>
-            <article className="summary-card gold" onClick={() => setActiveBookingFilter('Quotation')} style={{ cursor: 'pointer' }}>
-              <div className="summary-card-top">
-                <div className="summary-icon gold">
-                  <Clock3 size={20} />
-                </div>
-                <span>Open Quotes</span>
-              </div>
-              <strong>{quotationCount}</strong>
-              <small>Inquiry and quotation</small>
+              <strong>{pendingCount}</strong>
+              <small>Pending confirmation</small>
             </article>
             <article className="summary-card green" onClick={() => setActiveBookingFilter('Confirmed')} style={{ cursor: 'pointer' }}>
               <div className="summary-card-top">
@@ -5151,7 +5113,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <p>Internal</p>
                 <h2>Documents</h2>
               </div>
-              <span>{bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length} bookings</span>
+              <span>{bookings.filter(b => b.status === 'Confirmed').length} bookings</span>
             </div>
 
             <label className="docs-hub-search">
@@ -5172,16 +5134,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               {(() => {
                 const q = docsSearchTerm.trim().toLowerCase()
                 const eligible = bookings.filter(b =>
-                  (b.status === 'Confirmed' || b.status === 'Flown') &&
+                  b.status === 'Confirmed' &&
                   (!q || b.clientName.toLowerCase().includes(q) || b.packageName.toLowerCase().includes(q))
                 )
-                const noBase = bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length === 0
+                const noBase = bookings.filter(b => b.status === 'Confirmed').length === 0
                 const noMatch = !noBase && eligible.length === 0
 
                 const renderList = (targetScreen: 'breakdown-preview' | 'purchase-order-preview') => (
                   <div className="docs-hub-list">
                     {noBase
-                      ? <p className="docs-hub-empty">No confirmed or flown bookings yet.</p>
+                      ? <p className="docs-hub-empty">No confirmed bookings yet.</p>
                       : noMatch
                         ? <p className="docs-hub-empty">No results for “{docsSearchTerm}”.</p>
                         : eligible.map(b => (
@@ -5191,7 +5153,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                             className="docs-hub-row"
                             onClick={() => { setSelectedBookingId(b.id); setScreen(targetScreen) }}
                           >
-                            <span className={`docs-hub-badge docs-hub-badge--${b.status === 'Flown' ? 'flown' : 'confirmed'}`}>{b.status}</span>
+                            <span className="docs-hub-badge docs-hub-badge--confirmed">{b.status}</span>
                             <span className="docs-hub-info">
                               <span className="docs-hub-client">{b.clientName}</span>
                               <span className="docs-hub-pkg">{b.packageName}</span>
@@ -5260,7 +5222,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </label>
 
           <div className="booking-tabs" role="tablist">
-            {bookingListFilters.filter(f => !['Inquiry','Breakdown','Purchase Order'].includes(f.value)).map((f) => (
+            {bookingListFilters.map((f) => (
               <button
                 key={f.value}
                 type="button"

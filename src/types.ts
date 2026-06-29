@@ -22,7 +22,7 @@ export type PasswordStrength = {
   score: 1 | 2 | 3
 }
 
-export type BookingStatus = 'Inquiry' | 'Breakdown' | 'Quotation' | 'Purchase Order' | 'Invoice' | 'Confirmed' | 'Flown'
+export type BookingStatus = 'Pending' | 'Confirmed'
 export type BookingListFilter = BookingStatus | 'All'
 
 export type PaxBreakdown = { adult: string; senior: string; child: string; infant: string }
