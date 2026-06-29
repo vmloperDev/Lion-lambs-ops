@@ -4824,24 +4824,55 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </div>
 
             {/* ── Weekly hours tracker ── */}
-            {visibleEntries.length > 0 && (() => {
+            {(() => {
               const weekTarget = 40 * 60 // 40-hour work week in minutes
-              // Group visible entries by ISO week
-              const weekMap = new Map<string, { entries: DtrEntry[]; label: string }>()
+              const today = getTodayDateStr()
+
+              // Determine which month to generate weeks for.
+              // If a specific month is selected, use it; otherwise use the current month.
+              const targetMonth = dtrMonthFilter !== 'all'
+                ? dtrMonthFilter
+                : getTodayDateStr().slice(0, 7)
+              const [yr, mo] = targetMonth.split('-').map(Number)
+              const daysInMonth = new Date(yr, mo, 0).getDate()
+
+              // Collect every Monday–Sunday week that overlaps this month.
+              const weekKeys = new Set<string>()
+              for (let d = 1; d <= daysInMonth; d++) {
+                const dateStr = `${targetMonth}-${String(d).padStart(2, '0')}`
+                weekKeys.add(getIsoWeekKey(dateStr))
+              }
+
+              // Build a lookup of entries by ISO week key from ALL visible entries.
+              const entryByWeek = new Map<string, DtrEntry[]>()
               for (const entry of visibleEntries) {
                 const key = getIsoWeekKey(entry.date)
-                if (!weekMap.has(key)) weekMap.set(key, { entries: [], label: getWeekRangeLabel(entry.date) })
-                weekMap.get(key)!.entries.push(entry)
+                if (!entryByWeek.has(key)) entryByWeek.set(key, [])
+                entryByWeek.get(key)!.push(entry)
               }
-              const weeks = Array.from(weekMap.entries())
-                .sort(([a], [b]) => a.localeCompare(b))
-                .map(([key, { entries, label }]) => {
+
+              // One bar per week, sorted, always present even if no entries yet.
+              const weeks = Array.from(weekKeys)
+                .sort((a, b) => a.localeCompare(b))
+                .map((key) => {
+                  // Derive the Mon–Sun label from the week key itself
+                  const [isoYear, isoWeek] = key.split('-W').map(Number)
+                  // ISO week 1 monday: Jan 4 is always in week 1
+                  const jan4 = new Date(isoYear, 0, 4)
+                  const jan4Day = jan4.getDay() === 0 ? 7 : jan4.getDay()
+                  const monday = new Date(jan4)
+                  monday.setDate(jan4.getDate() - (jan4Day - 1) + (isoWeek - 1) * 7)
+                  const sunday = new Date(monday)
+                  sunday.setDate(monday.getDate() + 6)
+                  const fmt = (x: Date) => x.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                  const label = `${fmt(monday)} – ${fmt(sunday)}`
+
+                  const entries = entryByWeek.get(key) ?? []
                   const minutes = entries.reduce((s, e) => s + getDtrEntryMinutes(e), 0)
                   const days = new Set(entries.map((e) => e.date)).size
                   const pct = Math.min(100, (minutes / weekTarget) * 100)
                   const isOver = minutes > weekTarget
-                  const today = getTodayDateStr()
-                  const isCurrentWeek = entries.some((e) => getIsoWeekKey(e.date) === getIsoWeekKey(today))
+                  const isCurrentWeek = key === getIsoWeekKey(today)
                   return { key, label, minutes, days, pct, isOver, isCurrentWeek }
                 })
               return (
@@ -4858,7 +4889,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                             {w.label}
                             {w.isCurrentWeek && <span className="dtr-week-now-pill">This week</span>}
                           </span>
-                          <span className="dtr-week-stats">{w.days}d logged</span>
+                          <span className="dtr-week-stats">{w.days > 0 ? `${w.days}d logged` : 'No entries yet'}</span>
                         </div>
                         <div className="dtr-week-bar-wrap">
                           <div className="dtr-week-bar-track">
@@ -4869,7 +4900,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                             <div className="dtr-week-bar-target-line" title="40h target" />
                           </div>
                           <span className={`dtr-week-hours ${w.isOver ? 'dtr-week-hours-over' : ''}`}>
-                            {formatMinutesAsHm(w.minutes)}
+                            {w.minutes > 0 ? formatMinutesAsHm(w.minutes) : '—'}
                             {w.isOver && <span className="dtr-week-over-badge">+{formatMinutesAsHm(w.minutes - weekTarget)}</span>}
                           </span>
                         </div>
