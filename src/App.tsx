@@ -2053,6 +2053,43 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               {dataError && <p className="data-alert error">{dataError}</p>}
               {dataMessage && <p className="data-alert info">{dataMessage}</p>}
 
+              <section className="ai-autofill-panel">
+                {!aiPasteOpen ? (
+                  <button type="button" className="ai-autofill-trigger" onClick={() => { setAiPasteOpen(true); setAiError('') }}>
+                    ✨ Paste &amp; auto-fill with AI
+                  </button>
+                ) : (
+                  <div className="ai-autofill-box">
+                    <div className="ai-autofill-box-heading">
+                      <span>✨ Paste chat / email to auto-fill</span>
+                      <button type="button" className="ai-autofill-close" onClick={() => { setAiPasteOpen(false); setAiPasteText(''); setAiError('') }}>
+                        <X size={14} />
+                      </button>
+                    </div>
+                    <textarea
+                      className="ai-autofill-textarea"
+                      rows={6}
+                      placeholder="Paste a WhatsApp conversation, email thread, or any text that contains booking details…"
+                      value={aiPasteText}
+                      onChange={(e) => setAiPasteText(e.target.value)}
+                      disabled={aiLoading}
+                    />
+                    {aiError && <p className="data-alert error">{aiError}</p>}
+                    <div className="ai-autofill-actions">
+                      <span className="ai-autofill-hint">Only fields it can confidently find will be filled — review before saving.</span>
+                      <button
+                        type="button"
+                        className="ai-autofill-submit"
+                        onClick={handleAiAutoFill}
+                        disabled={aiLoading || !aiPasteText.trim()}
+                      >
+                        {aiLoading ? 'Reading...' : 'Auto-fill form'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </section>
+
           {/* 01 · CLIENT */}
           <section className="form-section">
             <div className="form-section-heading">
