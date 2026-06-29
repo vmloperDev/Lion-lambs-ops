@@ -43,44 +43,101 @@ function toPayload(booking: BookingRecord) {
   }
 }
 
-// ── 1. Instant sync — sequential queue ───────────────────────────────────────
-// Serialises rapid saves (e.g. user hits save three times quickly) so they
-// don't arrive at the server out of order.
+// ── 1. Instant sync — sequential queue with startup-burst debounce ───────────
+// On app load Firestore fires every confirmed/flown booking as 'added' at once.
+// Without debouncing, each one enqueues its own POST → 33 sequential API calls
+// → 66+ Sheets reads in seconds → 429.
+//
+// Fix: collect all calls that arrive within the first STARTUP_WINDOW_MS (3s).
+// If more than BATCH_THRESHOLD arrive in that window they're flushed as one
+// batch POST (same path as the periodic re-sync). After the window closes, or
+// for single saves that arrive later, we fall back to individual POSTs as before.
 
+const STARTUP_WINDOW_MS  = 3_000   // collect burst for 3 seconds
+const BATCH_THRESHOLD    = 5       // ≥5 bookings → send as a batch
+
+let _startupWindowOpen   = true
+let _startupBuffer: ReturnType<typeof toPayload>[] = []
+let _startupTimer: ReturnType<typeof setTimeout> | null = null
 let syncQueue: Promise<void> = Promise.resolve()
+
+// Close the startup window after STARTUP_WINDOW_MS. If we collected enough
+// bookings, flush them as one batch; otherwise drain individually as usual.
+function _scheduleStartupFlush() {
+  if (_startupTimer !== null) return
+  _startupTimer = setTimeout(() => {
+    _startupWindowOpen = false
+    const buffered = _startupBuffer.splice(0)
+    if (buffered.length === 0) return
+
+    if (buffered.length >= BATCH_THRESHOLD) {
+      // Flush as a single batch POST — same shape as the periodic re-sync
+      console.log(`[sheetsSync] Startup batch: sending ${buffered.length} bookings in one request`)
+      syncQueue = syncQueue.then(() => _postWithRetry(
+        { bookings: buffered },
+        /* isBatch */ true,
+      ))
+    } else {
+      // Small number — queue individually (avoids the batch overhead)
+      for (const payload of buffered) {
+        const p = payload
+        syncQueue = syncQueue.then(() => _postWithRetry(p, false))
+      }
+    }
+  }, STARTUP_WINDOW_MS)
+}
+
+async function _postWithRetry(body: object, isBatch: boolean): Promise<void> {
+  let lastError = ''
+  const maxAttempts = 3
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch('/api/sheets-append', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+
+      if (res.status === 429) {
+        const wait = attempt * 15_000
+        console.warn(`[sheetsSync] Rate limited, retrying in ${wait / 1000}s…`)
+        await new Promise(r => setTimeout(r, wait))
+        continue
+      }
+
+      if (!res.ok) {
+        const text = await res.text()
+        console.warn('[sheetsSync] Server error:', text)
+      } else if (isBatch) {
+        const data = await res.json() as { tabs?: string[] }
+        console.log('[sheetsSync] Startup batch complete. Tabs:', data.tabs?.join(', ') ?? '—')
+      }
+      return
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err)
+      if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 5_000 * attempt))
+    }
+  }
+  if (lastError) console.warn('[sheetsSync] Gave up after 3 attempts:', lastError)
+}
 
 export function syncBookingToSheets(booking: BookingRecord): void {
   if (!shouldSyncToSheets(booking.status)) return
 
+  const payload = toPayload(booking)
+
+  if (_startupWindowOpen) {
+    // Buffer during the startup window — we'll decide batch vs individual when
+    // the window closes (see _scheduleStartupFlush above).
+    _startupBuffer.push(payload)
+    _scheduleStartupFlush()
+    return
+  }
+
+  // Normal path: outside the startup window — queue individually.
   syncQueue = syncQueue.then(async () => {
-    let lastError = ''
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const res = await fetch('/api/sheets-append', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(toPayload(booking)),
-        })
-
-        if (res.status === 429) {
-          const wait = attempt * 15_000
-          console.warn(`[sheetsSync] Rate limited, retrying in ${wait / 1000}s…`)
-          await new Promise(r => setTimeout(r, wait))
-          continue
-        }
-
-        if (!res.ok) {
-          const body = await res.text()
-          console.warn('[sheetsSync] Server error:', body)
-        }
-        return
-      } catch (err) {
-        lastError = err instanceof Error ? err.message : String(err)
-        if (attempt < 3) await new Promise(r => setTimeout(r, 5_000 * attempt))
-      }
-    }
-    if (lastError) console.warn('[sheetsSync] Gave up after 3 attempts:', lastError)
-
+    await _postWithRetry(payload, false)
     // Small gap after each request to stay under Google's rate limit
     await new Promise(r => setTimeout(r, 300))
   })
