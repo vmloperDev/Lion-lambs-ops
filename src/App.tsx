@@ -2746,13 +2746,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <strong>{selectedBooking.clientEmail || 'Not provided'}</strong>
               </article>
               <article>
-                <span>Facebook</span>
-                <strong>{selectedBooking.clientFacebook
-                  ? <a href={selectedBooking.clientFacebook.startsWith('http') ? selectedBooking.clientFacebook : `https://${selectedBooking.clientFacebook}`} target="_blank" rel="noopener noreferrer">{selectedBooking.clientFacebook}</a>
-                  : 'Not provided'
-                }</strong>
-              </article>
-              <article>
                 <span>Destination</span>
                 <strong>{selectedBooking.destination || 'Not provided'}</strong>
               </article>
@@ -2763,8 +2756,13 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <article>
                 <span>Travel dates</span>
                 <strong>
-                  {selectedBooking.travelStart || 'No start'} to{' '}
-                  {selectedBooking.travelEnd || 'No end'}
+                  {selectedBooking.travelStart
+                    ? new Date(selectedBooking.travelStart + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    : 'No start'}
+                  {' – '}
+                  {selectedBooking.travelEnd
+                    ? new Date(selectedBooking.travelEnd + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    : 'No end'}
                 </strong>
               </article>
               <article>
