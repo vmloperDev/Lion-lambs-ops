@@ -831,6 +831,30 @@ input, select, textarea { font: inherit; }
   border-radius: 999px;
 }
 
+.docs-hub-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  background: #fff;
+  border: 1px solid #b3d4e8;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.docs-hub-search svg { color: #6b839a; flex-shrink: 0; }
+.docs-hub-search input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: .8rem;
+  color: #0b1f30;
+}
+.docs-hub-search input::placeholder { color: #9ab0c2; }
+[data-theme="dark"] .docs-hub-search { background: #1a2a3a; border-color: #2a3f55; }
+[data-theme="dark"] .docs-hub-search input { color: #e2eaf2; }
+
 /* Two cards side by side */
 .docs-hub-cards {
   display: grid;

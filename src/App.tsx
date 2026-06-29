@@ -326,6 +326,7 @@ function App() {
   const [selectedBookingId, setSelectedBookingId] = useState('')
   const [editingBookingId, setEditingBookingId] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
+  const [docsSearchTerm, setDocsSearchTerm] = useState('')
   const passwordStrength = getPasswordStrength(password)
 
   // Options lists
@@ -5199,64 +5200,76 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>{bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length} bookings</span>
             </div>
 
-            <div className="docs-hub-cards">
-              {/* Breakdown */}
-              <div className="docs-hub-card">
-                <div className="docs-hub-card-header">
-                  <FileText size={13} />
-                  <span>Breakdown</span>
-                  <strong>{bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length}</strong>
-                </div>
-                <div className="docs-hub-list">
-                  {bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length === 0
-                    ? <p className="docs-hub-empty">No confirmed or flown bookings yet.</p>
-                    : bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').map(b => (
-                      <button
-                        type="button"
-                        key={b.id}
-                        className="docs-hub-row"
-                        onClick={() => { setSelectedBookingId(b.id); setScreen('breakdown-preview') }}
-                      >
-                        <span className={`docs-hub-badge docs-hub-badge--${b.status === 'Flown' ? 'flown' : 'confirmed'}`}>{b.status}</span>
-                        <span className="docs-hub-info">
-                          <span className="docs-hub-client">{b.clientName}</span>
-                          <span className="docs-hub-pkg">{b.packageName}</span>
-                        </span>
-                        <ChevronRight size={13} />
-                      </button>
-                    ))
-                  }
-                </div>
-              </div>
+            <label className="docs-hub-search">
+              <Search size={13} />
+              <input
+                value={docsSearchTerm}
+                onChange={(e) => setDocsSearchTerm(e.target.value)}
+                placeholder="Search client or package…"
+              />
+              {docsSearchTerm.trim() && (
+                <button type="button" className="clear-search-btn" onClick={() => setDocsSearchTerm('')} title="Clear">
+                  <X size={12} />
+                </button>
+              )}
+            </label>
 
-              {/* Purchase Order */}
-              <div className="docs-hub-card">
-                <div className="docs-hub-card-header">
-                  <FileText size={13} />
-                  <span>Purchase Order</span>
-                  <strong>{bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length}</strong>
-                </div>
-                <div className="docs-hub-list">
-                  {bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length === 0
-                    ? <p className="docs-hub-empty">No confirmed or flown bookings yet.</p>
-                    : bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').map(b => (
-                      <button
-                        type="button"
-                        key={b.id}
-                        className="docs-hub-row"
-                        onClick={() => { setSelectedBookingId(b.id); setScreen('purchase-order-preview') }}
-                      >
-                        <span className={`docs-hub-badge docs-hub-badge--${b.status === 'Flown' ? 'flown' : 'confirmed'}`}>{b.status}</span>
-                        <span className="docs-hub-info">
-                          <span className="docs-hub-client">{b.clientName}</span>
-                          <span className="docs-hub-pkg">{b.packageName}</span>
-                        </span>
-                        <ChevronRight size={13} />
-                      </button>
-                    ))
-                  }
-                </div>
-              </div>
+            <div className="docs-hub-cards">
+              {(() => {
+                const q = docsSearchTerm.trim().toLowerCase()
+                const eligible = bookings.filter(b =>
+                  (b.status === 'Confirmed' || b.status === 'Flown') &&
+                  (!q || b.clientName.toLowerCase().includes(q) || b.packageName.toLowerCase().includes(q))
+                )
+                const noBase = bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length === 0
+                const noMatch = !noBase && eligible.length === 0
+
+                const renderList = (targetScreen: 'breakdown-preview' | 'purchase-order-preview') => (
+                  <div className="docs-hub-list">
+                    {noBase
+                      ? <p className="docs-hub-empty">No confirmed or flown bookings yet.</p>
+                      : noMatch
+                        ? <p className="docs-hub-empty">No results for “{docsSearchTerm}”.</p>
+                        : eligible.map(b => (
+                          <button
+                            type="button"
+                            key={b.id}
+                            className="docs-hub-row"
+                            onClick={() => { setSelectedBookingId(b.id); setScreen(targetScreen) }}
+                          >
+                            <span className={`docs-hub-badge docs-hub-badge--${b.status === 'Flown' ? 'flown' : 'confirmed'}`}>{b.status}</span>
+                            <span className="docs-hub-info">
+                              <span className="docs-hub-client">{b.clientName}</span>
+                              <span className="docs-hub-pkg">{b.packageName}</span>
+                            </span>
+                            <ChevronRight size={13} />
+                          </button>
+                        ))
+                    }
+                  </div>
+                )
+
+                return (
+                  <>
+                    <div className="docs-hub-card">
+                      <div className="docs-hub-card-header">
+                        <FileText size={13} />
+                        <span>Breakdown</span>
+                        <strong>{eligible.length}</strong>
+                      </div>
+                      {renderList('breakdown-preview')}
+                    </div>
+                    <div className="docs-hub-card">
+                      <div className="docs-hub-card-header">
+                        <FileText size={13} />
+                        <span>Purchase Order</span>
+                        <strong>{eligible.length}</strong>
+                      </div>
+                      {renderList('purchase-order-preview')}
+                    </div>
+                  </>
+                )
+              })()}
             </div>
           </section>
         </section>
