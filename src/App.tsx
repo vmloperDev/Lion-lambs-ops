@@ -327,6 +327,7 @@ function App() {
   const [editingBookingId, setEditingBookingId] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const [docsSearchTerm, setDocsSearchTerm] = useState('')
+  const [activeDocTab, setActiveDocTab] = useState<'quotation' | 'breakdown' | 'invoice' | 'purchase-order' | 'voucher' | null>(null)
   const passwordStrength = getPasswordStrength(password)
 
   // Options lists
@@ -1044,6 +1045,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     
     setBookingCreatedAt(new Date().toISOString().slice(0, 10))
     setBookingForm(freshForm)
+    setActiveDocTab(null)
     setScreen('data-form')
   }
 
@@ -1096,6 +1098,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         : new Date().toISOString().slice(0, 10)
     )
     setBookingForm(normalized)
+    setActiveDocTab(null)
     setScreen('data-form')
   }
 
@@ -1917,6 +1920,47 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const displayTotalNett = getBookingBreakdownNettTotal(bookingForm)
     const displayTotalProfit = displayTotalClient - displayTotalNett
 
+    // Completion helpers
+    const hasQuotation = Boolean(bookingForm.clientName && bookingForm.packageName)
+    const hasBreakdown = (() => { try { const b = JSON.parse(bookingForm.breakdownLineItemsJson); return Array.isArray(b) && b.some((i: {isPackageRow?: boolean}) => !i.isPackageRow) } catch { return false } })()
+    const hasInvoice = Boolean(bookingForm.invoiceAmountPaid || bookingForm.invoicePaymentStatus !== 'Unpaid')
+    const hasPO = (() => { try { const b = JSON.parse(bookingForm.breakdownLineItemsJson); return Array.isArray(b) && b.some((i: {sendToPO?: boolean}) => i.sendToPO) } catch { return false } })()
+    const hasVoucher = Boolean(bookingForm.flightDetails || bookingForm.accommodation)
+
+    const docCards = [
+      { id: 'quotation' as const, label: 'Quotation', icon: '📄', desc: 'Client info, package details, pricing, inclusions', filled: hasQuotation },
+      { id: 'breakdown' as const, label: 'Breakdown', icon: '📊', desc: 'Internal costing, supplier nett, pax tiers', filled: hasBreakdown },
+      { id: 'invoice' as const, label: 'Invoice', icon: '🧾', desc: 'Invoice line items, payment records & status', filled: hasInvoice },
+      { id: 'purchase-order' as const, label: 'Purchase Order', icon: '📋', desc: 'Supplier PO line items, payment method', filled: hasPO },
+      { id: 'voucher' as const, label: 'Service Voucher', icon: '🎫', desc: 'Flights, accommodation, itinerary, emergency contact', filled: hasVoucher },
+    ]
+
+    const handleBackToPicker = () => setActiveDocTab(null)
+
+    const sharedBookingStrip = (
+      <div className="doc-booking-strip">
+        <div className="doc-booking-strip-info">
+          <span className="doc-booking-strip-label">Booking</span>
+          <strong>{bookingForm.clientName || <em>No client name yet</em>}</strong>
+          {bookingForm.packageName && <span>· {bookingForm.packageName}</span>}
+          {bookingForm.destination && <span>· {bookingForm.destination}</span>}
+          {bookingForm.travelStart && <span>· {bookingForm.travelStart}</span>}
+        </div>
+        <div className="doc-booking-strip-actions">
+          <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', fontSize: '0.72rem', gap: '3px', opacity: 0.75 }}>
+            Date created
+            <input
+              type="date"
+              value={bookingCreatedAt}
+              onChange={(e) => setBookingCreatedAt(e.target.value)}
+              max={new Date().toISOString().slice(0, 10)}
+              style={{ font: 'inherit', fontSize: '0.82rem' }}
+            />
+          </label>
+        </div>
+      </div>
+    )
+
     return (
       <main className="data-screen">
         <nav className="app-nav">
@@ -1924,7 +1968,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <img src={logo} alt="Lion and Lamb Travel logo" />
             <div>
               <strong>Lion and Lamb Travel</strong>
-              <span>{isEditingBooking ? 'Edit Booking' : 'Data Gathering'}</span>
+              <span>{isEditingBooking ? 'Edit Booking' : 'New Inquiry'}</span>
             </div>
           </div>
           <div className="nav-actions">
@@ -1938,7 +1982,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </button>
             <button
               type="button"
-              onClick={() => { setEditingBookingId(''); setScreen(isEditingBooking ? 'booking-detail' : 'home') }}
+              onClick={() => { setEditingBookingId(''); setActiveDocTab(null); setScreen(isEditingBooking ? 'booking-detail' : 'home') }}
               title="Close"
             >
               <X size={18} />
@@ -1946,72 +1990,68 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </div>
         </nav>
 
-        <form className="data-form" onSubmit={handleSaveBooking}>
-          <header className="data-form-header">
-            <div>
-              <p>{isEditingBooking ? 'Update master record' : 'New inquiry'}</p>
-              <h1>{isEditingBooking ? 'Edit Booking Info' : 'Data Gathering Form'}</h1>
-              <span>Configure client, travel, pricing, and document details from a single workspace.</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
-              <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', fontSize: '0.75rem', gap: '4px', opacity: 0.75 }}>
-                Date created
-                <input
-                  type="date"
-                  value={bookingCreatedAt}
-                  onChange={(e) => setBookingCreatedAt(e.target.value)}
-                  max={new Date().toISOString().slice(0, 10)}
-                  style={{ font: 'inherit', fontSize: '0.85rem' }}
-                />
-              </label>
-              <button type="submit" className="save-booking-btn">
-                <Save size={18} />
-                {isEditingBooking ? 'Save Changes' : 'Save Inquiry'}
-              </button>
-            </div>
-          </header>
-
-          <section className="ai-autofill-panel">
-            {!aiPasteOpen ? (
-              <button type="button" className="ai-autofill-trigger" onClick={() => { setAiPasteOpen(true); setAiError('') }}>
-                <Sparkles size={16} />
-                Paste & auto-fill with AI
-              </button>
-            ) : (
-              <div className="ai-autofill-box">
-                <div className="ai-autofill-box-heading">
-                  <Sparkles size={16} />
-                  <span>Paste a chat, email, or any client conversation — AI will fill in what it finds</span>
-                  <button type="button" className="ai-autofill-close" onClick={() => { setAiPasteOpen(false); setAiPasteText(''); setAiError('') }}>
-                    <X size={16} />
-                  </button>
-                </div>
-                <textarea
-                  className="ai-autofill-textarea"
-                  rows={6}
-                  placeholder="Paste the client's message, email thread, or notes here..."
-                  value={aiPasteText}
-                  onChange={(e) => setAiPasteText(e.target.value)}
-                  disabled={aiLoading}
-                />
-                {aiError && <p className="data-alert error">{aiError}</p>}
-                <div className="ai-autofill-actions">
-                  <span className="ai-autofill-hint">Only fields it can confidently find will be filled — review before saving.</span>
-                  <button
-                    type="button"
-                    className="ai-autofill-submit"
-                    onClick={handleAiAutoFill}
-                    disabled={aiLoading || !aiPasteText.trim()}
-                  >
-                    {aiLoading ? 'Reading...' : 'Auto-fill form'}
-                  </button>
-                </div>
+        {/* ── DOCUMENT PICKER ── */}
+        {activeDocTab === null && (
+          <div className="doc-picker-screen">
+            <div className="doc-picker-header">
+              <div>
+                <p>{isEditingBooking ? 'Edit Booking' : 'New Inquiry'}</p>
+                <h1>{isEditingBooking ? 'Which document do you want to work on?' : 'Start with your Quotation'}</h1>
+                <span>{isEditingBooking
+                  ? 'Pick a document to fill in or update. All changes save to the same booking record.'
+                  : 'Fill in the client and package details to generate a quotation. You can work on other documents after saving.'
+                }</span>
               </div>
-            )}
-          </section>
+            </div>
 
-          {dataError && <p className="data-alert error">{dataError}</p>}
-          {dataMessage && <p className="data-alert info">{dataMessage}</p>}
+            {isEditingBooking && sharedBookingStrip}
+
+            {dataError && <p className="data-alert error" style={{margin: '0 24px'}}>{dataError}</p>}
+            {dataMessage && <p className="data-alert info" style={{margin: '0 24px'}}>{dataMessage}</p>}
+
+            <div className="doc-picker-grid">
+              {docCards.map((card) => (
+                <button
+                  key={card.id}
+                  type="button"
+                  className={`doc-picker-card ${card.filled ? 'doc-picker-card--filled' : ''}`}
+                  onClick={() => {
+                    if (!isEditingBooking && card.id !== 'quotation') return
+                    setActiveDocTab(card.id)
+                    setDataError('')
+                    setDataMessage('')
+                  }}
+                  disabled={!isEditingBooking && card.id !== 'quotation'}
+                  title={!isEditingBooking && card.id !== 'quotation' ? 'Save the quotation first to unlock other documents' : undefined}
+                >
+                  <span className="doc-picker-card-icon">{card.icon}</span>
+                  <div className="doc-picker-card-body">
+                    <strong>{card.label}</strong>
+                    <span>{card.desc}</span>
+                  </div>
+                  {card.filled && <span className="doc-picker-card-badge">✓ Filled</span>}
+                  {!isEditingBooking && card.id !== 'quotation' && <span className="doc-picker-card-lock">🔒</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── DOCUMENT FORM ── */}
+        {activeDocTab !== null && (
+          <>
+            <div className="doc-form-subnav">
+              <button type="button" className="doc-back-btn" onClick={handleBackToPicker}>
+                <CornerUpLeft size={15} /> Back to documents
+              </button>
+              <span className="doc-form-subnav-title">
+                {docCards.find(c => c.id === activeDocTab)?.icon} {docCards.find(c => c.id === activeDocTab)?.label}
+              </span>
+            </div>
+            {sharedBookingStrip}
+            <form className="data-form" onSubmit={handleSaveBooking}>
+              {dataError && <p className="data-alert error">{dataError}</p>}
+              {dataMessage && <p className="data-alert info">{dataMessage}</p>}
 
           {/* 01 · CLIENT */}
           <section className="form-section">
@@ -2605,22 +2645,21 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </div>
           </section>
 
-          <footer className="form-actions-bar">
-            <button
-              type="button"
-              className="cancel-form-btn"
-              onClick={() => { setEditingBookingId(''); setScreen(isEditingBooking ? 'booking-detail' : 'home') }}
-            >
-              Cancel changes
-            </button>
-            <button type="submit" className="save-booking-btn">
-              <Save size={18} />
-              {isEditingBooking ? 'Save Changes' : 'Save Booking Record'}
-            </button>
-          </footer>
-        </form>
 
-        {/* PAX MODAL */}
+              <footer className="form-actions-bar">
+                <button type="button" className="cancel-form-btn" onClick={handleBackToPicker}>
+                  ← Back to documents
+                </button>
+                <button type="submit" className="save-booking-btn">
+                  <Save size={18} />
+                  {isEditingBooking ? 'Save Changes' : 'Save Booking Record'}
+                </button>
+              </footer>
+            </form>
+          </>
+        )}
+
+                {/* PAX MODAL */}
         {paxModalIndex >= 0 && (() => {
           const item = currentBreakdownItems[paxModalIndex]
           const label = item?.description || (item?.isPackageRow ? 'Package' : '')
@@ -2650,6 +2689,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </div>
           )
         })()}
+
       </main>
     )
   }
@@ -4080,7 +4120,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               {itineraryRows.map((row) => (
                 <tr key={row.date}>
                   <td>{row.date}</td>
-                  <td>{row.itinerary}</td>
+                  <td style={{ whiteSpace: 'pre-wrap' }}>{row.itinerary}</td>
                   <td>{row.hotel}</td>
                 </tr>
               ))}

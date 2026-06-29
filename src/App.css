@@ -3472,3 +3472,195 @@ input, select, textarea { font: inherit; }
   color: var(--text-tertiary, #8a9ab0);
   margin-top: 2px;
 }
+
+/* ── Document Picker ─────────────────────────────────────────── */
+.doc-picker-screen {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 0 40px;
+}
+.doc-picker-header {
+  padding: 32px 28px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.doc-picker-header p {
+  margin: 0 0 4px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: var(--gold);
+}
+.doc-picker-header h1 {
+  margin: 0 0 6px;
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--ink);
+}
+.doc-picker-header span {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.doc-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+  padding: 24px 28px;
+}
+
+.doc-picker-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 16px;
+  border: 2px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 150ms, box-shadow 150ms, transform 100ms;
+  position: relative;
+  width: 100%;
+}
+.doc-picker-card:hover:not(:disabled) {
+  border-color: var(--teal);
+  box-shadow: var(--sh-sm);
+  transform: translateY(-1px);
+}
+.doc-picker-card:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.doc-picker-card--filled {
+  border-color: var(--teal-mid);
+  background: var(--teal-light);
+}
+.doc-picker-card-icon {
+  font-size: 1.8rem;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.doc-picker-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.doc-picker-card-body strong {
+  font-size: 0.92rem;
+  font-weight: 800;
+  color: var(--ink);
+}
+.doc-picker-card-body span {
+  font-size: 0.73rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.doc-picker-card-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--teal);
+  color: #fff;
+  letter-spacing: .04em;
+}
+.doc-picker-card-lock {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 0.85rem;
+  opacity: 0.5;
+}
+
+/* Booking info strip */
+.doc-booking-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 28px;
+  background: var(--surface-3);
+  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.doc-booking-strip-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  font-size: 0.82rem;
+  color: var(--body);
+}
+.doc-booking-strip-info strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+.doc-booking-strip-label {
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--teal-dark);
+  background: var(--teal-mid);
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.doc-booking-strip-actions {
+  flex-shrink: 0;
+}
+
+/* Doc form subnav with back button */
+.doc-form-subnav {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.doc-form-subnav-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+.doc-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--body);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color var(--t), color var(--t);
+  flex-shrink: 0;
+}
+.doc-back-btn:hover {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+
+/* Dark mode */
+[data-theme="dark"] .doc-picker-card--filled {
+  background: var(--teal-light);
+  border-color: var(--teal-mid);
+}
+[data-theme="dark"] .doc-picker-header h1 { color: var(--navy); }
+[data-theme="dark"] .doc-picker-card-body strong { color: var(--navy); }
+[data-theme="dark"] .doc-form-subnav-title { color: var(--navy); }
+[data-theme="dark"] .doc-booking-strip-info strong { color: var(--navy); }
