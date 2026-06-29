@@ -458,9 +458,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         byTab.get(tab)!.push(b)
       }
 
-      // Process each tab sequentially (avoids parallel mutations to the same spreadsheet)
+      // Process each tab sequentially with a 2s pause between tabs to stay comfortably
+      // under Google's 60 writes/min rate limit across multi-tab re-syncs.
       const results: string[] = []
+      let firstTab = true
       for (const [tabName, tabBookings] of byTab) {
+        if (!firstTab) await new Promise(r => setTimeout(r, 10000))
+        firstTab = false
         await syncTab(token, GOOGLE_SHEET_ID, tabName, tabBookings, existingSheets, fmtDate, fmt)
         results.push(tabName)
       }
