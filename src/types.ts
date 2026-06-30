@@ -60,11 +60,26 @@ export type BreakdownLineItem = {
   mirrorId?: string
 }
 
+export type POLineItem = {
+  id: string
+  vendor: string
+  contactNo: string
+  paymentMethod: string
+  agent: string
+  serviceItem: string
+  description: string
+  adultPax: string
+  childPax: string
+  seniorPax: string
+  infantPax: string
+  supplierNett: string
+  showInDocument?: boolean
+}
+
 export type BookingFormData = {
   clientName: string
   contactNumber: string
   clientEmail: string
-  clientFacebook: string
   currency: string
   packageName: string
   destination: string
@@ -74,6 +89,9 @@ export type BookingFormData = {
   quotationNo: string
   lineItems: string
   invoiceLineItemsJson: string
+  invoicePackage: string   // JSON: {name, qty, price}
+  quotationPaxRates: string // JSON: [{count,rate}] for [Adult, Child, Senior, Infant]
+  invoiceAddons: string    // JSON: [{name, qty, price, nett}]
   breakdownLineItemsJson: string
   breakdownPaxTiers: string
   breakdownColLabels: string
@@ -106,6 +124,7 @@ export type BookingFormData = {
   createdByName: string
   status: BookingStatus
   notes: string
+  poLineItemsJson: string  // JSON: POLineItem[]
 }
 
 export type BookingRecord = BookingFormData & {

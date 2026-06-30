@@ -305,6 +305,80 @@ function buildRow(b: BookingPayload, fmtDate: (v: string) => string, fmt: (n: nu
   return { row, isPaid, gross }
 }
 
+// ── Delete a single row by booking ID from a specific tab ─────────────────────
+// Returns true if a matching row was found and removed.
+async function deleteRowById(
+  token: string,
+  spreadsheetId: string,
+  tabName: string,
+  sheetId: number,
+  bookingId: string,
+): Promise<boolean> {
+  const idColData = await sheetsGet(
+    token,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(tabName + '!J:J')}`,
+  ) as { values?: string[][] }
+  const idCol = (idColData.values || []).map(r => r[0] || '')
+  const rowIdx = idCol.findIndex((id, i) => i > 0 && id === bookingId)
+  if (rowIdx === -1) return false
+
+  await sheetsPost(
+    token,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+    {
+      requests: [{
+        deleteDimension: {
+          range: { sheetId, dimension: 'ROWS', startIndex: rowIdx, endIndex: rowIdx + 1 },
+        },
+      }],
+    },
+  )
+  return true
+}
+
+// ── Reconcile a tab against the app's current set of eligible booking IDs ─────
+// Removes any row whose _id is no longer expected in this tab — this is what
+// "self-heals" deletions that happened directly in the sheet (or while the
+// app was offline, so the real-time delete handler never fired). Only called
+// during the periodic full re-sync, which is the only request that carries a
+// complete picture of what *should* exist.
+async function reconcileTab(
+  token: string,
+  spreadsheetId: string,
+  tabName: string,
+  sheetId: number,
+  keepIds: Set<string>,
+): Promise<number> {
+  const idColData = await sheetsGet(
+    token,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(tabName + '!J:J')}`,
+  ) as { values?: string[][] }
+  const idCol = (idColData.values || []).map(r => r[0] || '')
+
+  // Collect 0-based row indices to delete, descending so removing one doesn't
+  // shift the index of the next one still pending removal.
+  const toDelete: number[] = []
+  for (let i = 1; i < idCol.length; i++) {
+    const id = idCol[i]
+    if (id && !keepIds.has(id)) toDelete.push(i)
+  }
+  if (toDelete.length === 0) return 0
+
+  toDelete.sort((a, b) => b - a)
+  await sheetsPost(
+    token,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+    {
+      requests: toDelete.map(rowIdx => ({
+        deleteDimension: {
+          range: { sheetId, dimension: 'ROWS', startIndex: rowIdx, endIndex: rowIdx + 1 },
+        },
+      })),
+    },
+  )
+  return toDelete.length
+}
+
 // ── Core: sync one tab's worth of bookings ────────────────────────────────────
 // All bookings for a given month tab are processed together in one function
 // call. This means: one tab creation, one header write, one header format,
@@ -502,15 +576,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         byTab.get(tab)!.push(b)
       }
 
+      // reconcile=true only on the periodic full re-sync (it's the only caller
+      // that sends every eligible booking, so it's the only one that can safely
+      // tell which sheet rows are orphans vs. just not part of this request).
+      const shouldReconcile = req.body?.reconcile === true
+
       // Process each tab sequentially with a 2s pause between tabs to stay comfortably
       // under Google's 60 writes/min rate limit across multi-tab re-syncs.
       const results: string[] = []
+      let healedCount = 0
       let firstTab = true
       for (const [tabName, tabBookings] of byTab) {
         if (!firstTab) await new Promise(r => setTimeout(r, 10000))
         firstTab = false
         await syncTab(token, GOOGLE_SHEET_ID, tabName, tabBookings, existingSheets, fmtDate, fmt)
         results.push(tabName)
+
+        if (shouldReconcile) {
+          // Look up (or re-resolve, if the tab was just created) the sheetId
+          const tabSheet = existingSheets.find(s => s.title === tabName)
+          if (tabSheet) {
+            const keepIds = new Set(tabBookings.map(b => b.bookingId).filter(Boolean))
+            const removed = await reconcileTab(token, GOOGLE_SHEET_ID, tabName, tabSheet.sheetId, keepIds)
+            if (removed > 0) {
+              console.log(`[sheets-append] Healed ${removed} orphan row(s) from "${tabName}"`)
+              healedCount += removed
+            }
+          }
+        }
       }
 
       // Re-fetch sheet list (new tabs may have been created) then sort chronologically
@@ -522,7 +615,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         (metaAfter.sheets || []).map(s => ({ title: s.properties.title, sheetId: s.properties.sheetId }))
       )
 
-      return res.status(200).json({ ok: true, tabs: results })
+      return res.status(200).json({ ok: true, tabs: results, healed: healedCount })
+    }
+
+    // ── Delete mode: { action: 'delete', bookingId, createdAt } ───────────────
+    // Fired immediately when a booking is deleted inside the app, so its row
+    // disappears from the sheet right away instead of waiting for the next
+    // periodic reconcile pass.
+    if (req.body?.action === 'delete') {
+      const { bookingId, createdAt } = req.body as { bookingId: string; createdAt?: string }
+      if (!bookingId) return res.status(400).json({ error: 'Missing bookingId.' })
+
+      const primaryTab = getMonthTabName(createdAt || new Date().toISOString())
+      const tried = new Set<string>()
+      let deleted = false
+
+      // Try the tab the booking should be in first (cheap, common case).
+      const primarySheet = existingSheets.find(s => s.title === primaryTab)
+      if (primarySheet) {
+        tried.add(primaryTab)
+        deleted = await deleteRowById(token, GOOGLE_SHEET_ID, primaryTab, primarySheet.sheetId, bookingId)
+      }
+
+      // Fallback: createdAt may be missing/stale — scan remaining tabs.
+      if (!deleted) {
+        for (const sheet of existingSheets) {
+          if (tried.has(sheet.title)) continue
+          deleted = await deleteRowById(token, GOOGLE_SHEET_ID, sheet.title, sheet.sheetId, bookingId)
+          if (deleted) break
+        }
+      }
+
+      return res.status(200).json({ ok: true, deleted })
     }
 
     // ── Single booking mode (backwards compat): { bookingId, clientName, … } ─

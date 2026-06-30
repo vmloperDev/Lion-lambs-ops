@@ -15,7 +15,6 @@ export const emptyBookingForm: BookingFormData = {
   clientName: '',
   contactNumber: '',
   clientEmail: '',
-  clientFacebook: '',
   currency: 'PHP',
   packageName: '',
   destination: '',
@@ -25,6 +24,9 @@ export const emptyBookingForm: BookingFormData = {
   quotationNo: '',
   lineItems: '',
   invoiceLineItemsJson: '',
+  invoicePackage: '',
+  quotationPaxRates: '',
+  invoiceAddons: '',
   breakdownLineItemsJson: '',
   breakdownPaxTiers: '',
   breakdownColLabels: '',
@@ -57,6 +59,7 @@ export const emptyBookingForm: BookingFormData = {
   createdByName: '',
   status: 'Pending',
   notes: '',
+  poLineItemsJson: '',
 }
 
 const previousProjects = [

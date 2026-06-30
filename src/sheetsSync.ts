@@ -3,10 +3,17 @@
 //
 // 1. INSTANT sync — when a single booking is saved/changed, it's sent immediately
 //    as a single-booking POST. Uses a sequential queue so rapid saves don't pile up.
+//    A booking that's deleted in the app is also removed from the sheet instantly
+//    (see deleteBookingFromSheets).
 //
 // 2. PERIODIC re-sync — every 10 minutes, ALL confirmed/flown bookings are sent
 //    in ONE batch POST (grouped by month tab server-side). A single request per
 //    re-sync cycle means zero concurrency, zero races, zero missing rows.
+//    This pass also SELF-HEALS: it carries `reconcile: true`, so the server
+//    removes any sheet row whose _id isn't in this complete booking list
+//    (e.g. a row deleted directly in the sheet gets re-added by the upsert
+//    logic, and a row for a booking that no longer exists in the app gets
+//    removed) and overwrites any row whose cells were hand-edited in the sheet.
 
 import type { BookingRecord, BookingStatus } from './types'
 import { getBookingClientTotal, getBookingBreakdownNettTotal } from './utils'
@@ -143,6 +150,46 @@ export function syncBookingToSheets(booking: BookingRecord): void {
   })
 }
 
+// ── 1b. Instant delete — booking removed from the app ─────────────────────────
+// Fired immediately when a booking doc is deleted in Firestore so its row
+// disappears from the sheet right away rather than waiting for the next
+// periodic reconcile pass (which still catches it as a fallback if this
+// request fails or the app was offline when the deletion happened).
+
+export function deleteBookingFromSheets(booking: Pick<BookingRecord, 'id' | 'createdAt'>): void {
+  if (!booking.id) return
+  const body = { action: 'delete', bookingId: booking.id, createdAt: booking.createdAt }
+
+  syncQueue = syncQueue.then(async () => {
+    let lastError = ''
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await fetch('/api/sheets-append', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        if (res.status === 429) {
+          await new Promise(r => setTimeout(r, attempt * 15_000))
+          continue
+        }
+        if (!res.ok) {
+          console.warn('[sheetsSync] Delete failed:', await res.text())
+        } else {
+          const data = await res.json() as { deleted?: boolean }
+          console.log(`[sheetsSync] Delete ${data.deleted ? 'removed row for' : 'found no row for'} ${booking.id}`)
+        }
+        break
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err)
+        if (attempt < 3) await new Promise(r => setTimeout(r, 5_000 * attempt))
+      }
+    }
+    if (lastError) console.warn('[sheetsSync] Delete gave up after 3 attempts:', lastError)
+    await new Promise(r => setTimeout(r, 300))
+  })
+}
+
 // ── 2. Periodic re-sync — single batch request ────────────────────────────────
 // Sends ALL confirmed/flown bookings in one POST so the server can process each
 // month tab atomically with no concurrent invocations racing each other.
@@ -164,7 +211,7 @@ export function startPeriodicReSync(
         const res = await fetch('/api/sheets-append', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bookings: eligible.map(toPayload) }),
+          body: JSON.stringify({ bookings: eligible.map(toPayload), reconcile: true }),
         })
 
         if (res.status === 429) {
@@ -178,8 +225,9 @@ export function startPeriodicReSync(
           const body = await res.text()
           console.warn('[sheetsSync] Re-sync server error:', body)
         } else {
-          const data = await res.json() as { tabs?: string[] }
+          const data = await res.json() as { tabs?: string[]; healed?: number }
           console.log('[sheetsSync] Re-sync complete. Tabs updated:', data.tabs?.join(', ') ?? '—')
+          if (data.healed) console.log(`[sheetsSync] Self-heal: removed ${data.healed} orphan row(s) (deleted in sheet or app)`)
         }
         return
       } catch (err) {
