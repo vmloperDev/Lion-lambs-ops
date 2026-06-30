@@ -4248,65 +4248,10 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       )
     }
 
-    // Package + Addons (new dedicated invoice fields), falling back to legacy
-    // breakdown-derived line items if neither has been filled in yet.
-    type PackageRow = { name: string; qty: string; price: string }
-    type AddonRow = { name: string; qty: string; price: string; nett: string; showInDocument?: boolean }
-    let invPkg: PackageRow = { name: '', qty: '1', price: '' }
-    try { const p = JSON.parse(selectedBooking.invoicePackage || ''); if (p && typeof p === 'object') invPkg = p } catch {}
-    let invAddons: AddonRow[] = []
-    try { const a = JSON.parse(selectedBooking.invoiceAddons || ''); if (Array.isArray(a)) invAddons = a } catch {}
-
-    // Optional pax-tier breakdown (Adult/Child/Senior/Infant) — shared with
-    // the Quotation tab. When filled in, the package row expands into one
-    // row per pax type here too, instead of duplicating the entry fields.
-    type PaxRate = { count: string; rate: string }
-    const paxLabels = ['Adult', 'Child', 'Senior', 'Infant']
-    let invPaxRates: PaxRate[] = paxLabels.map(() => ({ count: '', rate: '' }))
-    try {
-      const p = JSON.parse(selectedBooking.quotationPaxRates || '')
-      if (Array.isArray(p) && p.length === 4) invPaxRates = p
-    } catch {}
-    const hasInvPaxRates = invPaxRates.some((r) => (parseFloat(r.count) || 0) > 0 && (parseFloat(r.rate) || 0) > 0)
-
-    const hasNewInvoiceData = !!(invPkg.name || invPkg.price) || invAddons.some(a => a.name || a.price)
-
-    const packageRows = hasInvPaxRates
-      ? invPaxRates
-          .map((r, i) => ({ label: paxLabels[i], count: parseFloat(r.count) || 0, rate: parseFloat(r.rate) || 0 }))
-          .filter((r) => r.count > 0 && r.rate > 0)
-          .map((r) => ({
-            description: `${invPkg.name || selectedBooking.packageName || 'Package'} — ${r.label}`,
-            quantity: r.count,
-            unitPrice: r.rate,
-            nettCost: 0,
-            total: r.count * r.rate,
-            nettTotal: 0,
-            profit: r.count * r.rate,
-          }))
-      : [
-          {
-            description: invPkg.name || selectedBooking.packageName || 'Package',
-            quantity: parseQuantity(invPkg.qty || '1'),
-            unitPrice: parseAmount(invPkg.price),
-            nettCost: 0,
-            total: parseQuantity(invPkg.qty || '1') * parseAmount(invPkg.price),
-            nettTotal: 0,
-            profit: parseQuantity(invPkg.qty || '1') * parseAmount(invPkg.price),
-          },
-        ]
-
-    const lineItems = hasNewInvoiceData
-      ? [
-          ...packageRows,
-          ...invAddons.filter(a => (a.name || a.price) && a.showInDocument !== false).map(a => {
-            const q = parseQuantity(a.qty || '1')
-            const u = parseAmount(a.price)
-            const n = parseAmount(a.nett)
-            return { description: a.name || 'Addon', quantity: q, unitPrice: u, nettCost: n, total: q * u, nettTotal: q * n, profit: q * (u - n) }
-          }),
-        ]
-      : getBookingLineItems(selectedBooking)
+    // Package + Addons — now reads through the same shared helper used for
+    // payment/balance/Sheets totals, so this document can never show numbers
+    // that disagree with what "PAID?" or the dashboard think is owed.
+    const lineItems = getBookingLineItems(selectedBooking)
 
     const totalPrice = sumLineItems(lineItems, 'total')
     const amountPaid = parseAmount(selectedBooking.invoiceAmountPaid)

@@ -136,6 +136,87 @@ export function readInvoiceItems(booking: BookingFormData): InvoiceLineItem[] {
   return [{ description: booking.packageName || 'Basic Package', quantity: booking.quantity || '1', unitPrice: booking.unitPrice || booking.sellingPrice, nettCost: '0', isPackageRow: true }]
 }
 
+// ── Invoice "Package" + "Addons" — the dedicated, newer invoice fields ────────
+// These are edited in their own UI table (separate from the legacy
+// invoiceLineItemsJson rows) and are what the printed invoice document
+// actually renders. This is the single source of truth for them so every
+// other total (payment balance, "PAID?" logic, dashboard totals, Sheets
+// sync) reads the SAME numbers the client sees on the invoice — addons can
+// never again be visible on the document but silently excluded from totals.
+
+export type InvoicePackageRow = { name: string; qty: string; price: string }
+export type InvoiceAddonRow = { name?: string; qty?: string; price?: string; nett?: string; showInDocument?: boolean }
+type InvoicePaxRate = { count: string; rate: string }
+
+export function readInvoicePackage(booking: BookingFormData): InvoicePackageRow {
+  try {
+    const p = JSON.parse(booking.invoicePackage || '')
+    if (p && typeof p === 'object') return { name: p.name || '', qty: p.qty || '1', price: p.price || '' }
+  } catch {}
+  return { name: '', qty: '1', price: '' }
+}
+
+export function readInvoiceAddons(booking: BookingFormData): InvoiceAddonRow[] {
+  try {
+    const a = JSON.parse(booking.invoiceAddons || '')
+    if (Array.isArray(a)) return a
+  } catch {}
+  return []
+}
+
+function readInvoicePaxRates(booking: BookingFormData): InvoicePaxRate[] {
+  const fallback: InvoicePaxRate[] = [0, 1, 2, 3].map(() => ({ count: '', rate: '' }))
+  try {
+    const p = JSON.parse(booking.quotationPaxRates || '')
+    if (Array.isArray(p) && p.length === 4) return p
+  } catch {}
+  return fallback
+}
+
+// Builds the package + addon line items exactly as the printed invoice does
+// (including the showInDocument filter — an addon hidden from the document
+// is also excluded from what the client is billed for it). Returns null if
+// neither the package nor any addon has been filled in, so callers know to
+// fall back to the legacy invoiceLineItemsJson rows instead.
+export function readInvoicePackageAndAddonLines(booking: BookingFormData): BookingLineItem[] | null {
+  const invPkg = readInvoicePackage(booking)
+  const invAddons = readInvoiceAddons(booking)
+  const hasNewInvoiceData = !!(invPkg.name || invPkg.price) || invAddons.some(a => a.name || a.price)
+  if (!hasNewInvoiceData) return null
+
+  const paxLabels = ['Adult', 'Child', 'Senior', 'Infant']
+  const invPaxRates = readInvoicePaxRates(booking)
+  const hasInvPaxRates = invPaxRates.some((r) => (parseFloat(r.count) || 0) > 0 && (parseFloat(r.rate) || 0) > 0)
+
+  const packageRows: BookingLineItem[] = hasInvPaxRates
+    ? invPaxRates
+        .map((r, i) => ({ label: paxLabels[i], count: parseFloat(r.count) || 0, rate: parseFloat(r.rate) || 0 }))
+        .filter((r) => r.count > 0 && r.rate > 0)
+        .map((r) => ({
+          description: `${invPkg.name || booking.packageName || 'Package'} — ${r.label}`,
+          quantity: r.count, unitPrice: r.rate, nettCost: 0,
+          total: r.count * r.rate, nettTotal: 0, profit: r.count * r.rate,
+        }))
+    : [{
+        description: invPkg.name || booking.packageName || 'Package',
+        quantity: parseQuantity(invPkg.qty || '1'),
+        unitPrice: parseAmount(invPkg.price),
+        nettCost: 0,
+        total: parseQuantity(invPkg.qty || '1') * parseAmount(invPkg.price),
+        nettTotal: 0,
+        profit: parseQuantity(invPkg.qty || '1') * parseAmount(invPkg.price),
+      }]
+
+  const addonRows: BookingLineItem[] = invAddons
+    .filter(a => (a.name || a.price) && a.showInDocument !== false)
+    .map(a => {
+      const q = parseQuantity(a.qty || '1'), u = parseAmount(a.price), n = parseAmount(a.nett)
+      return { description: a.name || 'Addon', quantity: q, unitPrice: u, nettCost: n, total: q * u, nettTotal: q * n, profit: q * (u - n) }
+    })
+
+  return [...packageRows, ...addonRows]
+}
+
 export function readBreakdownItems(booking: BookingFormData): BreakdownLineItem[] {
   try {
     if (booking.breakdownLineItemsJson) return JSON.parse(booking.breakdownLineItemsJson)
@@ -158,6 +239,11 @@ export function mapBreakdownItemsToBookingLines(items: BreakdownLineItem[], pack
 }
 
 export function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
+  // Prefer the dedicated Package + Addons fields (what the printed invoice
+  // actually shows) — this is what fixes addons being invisible to totals.
+  const newStyleLines = readInvoicePackageAndAddonLines(booking)
+  if (newStyleLines && newStyleLines.length > 0) return newStyleLines
+
   const invoiceItems = readInvoiceItems(booking)
   if (invoiceItems.length > 0) return mapInvoiceItemsToBookingLines(invoiceItems, booking.packageName)
   const quantity = parseQuantity(booking.quantity)
