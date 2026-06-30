@@ -69,6 +69,7 @@ import {
   Ticket,
   BadgeCheck,
   Lock,
+  Coins,
 } from 'lucide-react'
 import { auth, db } from './firebase'
 import agencySeal from './assets/brand/agency-seal.png'
@@ -306,6 +307,21 @@ function App() {
     const php = amount / rate
     return `≈ PHP ${php.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
+  // Convert a document total (already in the booking's chosen currency)
+  // to PHP using the manually entered Airline Conversion Rate (ACR) —
+  // distinct from the live exchange rate, since agencies often ticket
+  // at a fixed rate set by the airline rather than the market rate.
+  // ACR — the document total automatically converted to PHP using the
+  // live exchange rate (PHP base). Only shown when the booking's
+  // currency isn't already PHP.
+  function acrPhpTotal(amount: number, currency: string): string | null {
+    if (!currency || currency === 'PHP') return null
+    const rate = exchangeRates[currency] ?? null // 1 PHP = rate units of currency
+    if (!rate || rate <= 0) return null
+    const php = amount / rate
+    return `PHP ${php.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
+
   const [invoiceForm, setInvoiceForm] = useState({
     paymentMethod: '',
     paymentRecords: '',
@@ -1427,10 +1443,64 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     saveBreakdownItemsList(nextBrk)
   }
 
+  // Mirror a breakdown row's name to its linked Invoice addon / P.O.
+  // supplier item (matched by the shared id encoded in mirrorId), so
+  // edits made on the Breakdown side flow the other way too.
+  function syncMirrorName(mirrorId: string | undefined, name: string) {
+    if (!mirrorId) return
+    const sharedId = mirrorId.replace(/^item-/, '')
+    setBookingForm((prev) => {
+      let curAddons: Array<{ id?: string; name?: string; [k: string]: any }> = []
+      try { const a = JSON.parse(prev.invoiceAddons); if (Array.isArray(a)) curAddons = a } catch {}
+      let poItems: POLineItem[] = []
+      try { const p = JSON.parse(prev.poLineItemsJson || '[]'); if (Array.isArray(p)) poItems = p } catch {}
+      const nextAddons = curAddons.map((r) => (r.id === sharedId ? { ...r, name } : r))
+      const nextPO = poItems.map((p) => (p.id === sharedId ? { ...p, serviceItem: name } : p))
+      return { ...prev, invoiceAddons: JSON.stringify(nextAddons), poLineItemsJson: JSON.stringify(nextPO) }
+    })
+  }
+
+  // Remove a breakdown row's linked Invoice addon / P.O. supplier item
+  // (if any) when the breakdown row itself is removed.
+  function removeMirroredAddonAndPO(mirrorId: string | undefined) {
+    if (!mirrorId) return
+    const sharedId = mirrorId.replace(/^item-/, '')
+    setBookingForm((prev) => {
+      let curAddons: Array<{ id?: string; [k: string]: any }> = []
+      try { const a = JSON.parse(prev.invoiceAddons); if (Array.isArray(a)) curAddons = a } catch {}
+      let poItems: POLineItem[] = []
+      try { const p = JSON.parse(prev.poLineItemsJson || '[]'); if (Array.isArray(p)) poItems = p } catch {}
+      return {
+        ...prev,
+        invoiceAddons: JSON.stringify(curAddons.filter((r) => r.id !== sharedId)),
+        poLineItemsJson: JSON.stringify(poItems.filter((p) => p.id !== sharedId)),
+      }
+    })
+  }
+
   function addBreakdownItemRow() {
+    const sharedId = createLineItemId()
+    const mirrorId = `item-${sharedId}`
+    const name = breakdownOptions[0]
     const current = getBreakdownItemsList()
-    current.push({ id: createLineItemId(), description: breakdownOptions[0], details: '', vendor: '', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false, sendToPO: false })
+    current.push({ id: createLineItemId(), mirrorId, description: name, details: '', vendor: '', quantity: '1', unitPrice: '', nettCost: '', sendToInvoice: false, sendToPO: false })
     saveBreakdownItemsList(current)
+
+    // A new Breakdown row also creates a matching Invoice addon and
+    // Purchase Order supplier item, mirroring what already happens when
+    // an addon/P.O. item is created on those tabs.
+    setBookingForm((prev) => {
+      let curAddons: Array<{ id: string; name: string; qty: string; price: string; nett: string; showInDocument?: boolean }> = []
+      try { const a = JSON.parse(prev.invoiceAddons); if (Array.isArray(a)) curAddons = a } catch {}
+      let poItems: POLineItem[] = []
+      try { const p = JSON.parse(prev.poLineItemsJson || '[]'); if (Array.isArray(p)) poItems = p } catch {}
+      const nextAddons = [...curAddons, { id: sharedId, name, qty: '1', price: '', nett: '', showInDocument: true }]
+      const nextPO: POLineItem[] = [...poItems, {
+        id: sharedId, vendor: '', contactNo: '', paymentMethod: '', agent: '', serviceItem: name, description: '',
+        adultPax: '1', childPax: '0', seniorPax: '0', infantPax: '0', supplierNett: '', showInDocument: false,
+      }]
+      return { ...prev, invoiceAddons: JSON.stringify(nextAddons), poLineItemsJson: JSON.stringify(nextPO) }
+    })
   }
 
   function removeBreakdownItemRow(index: number) {
@@ -1439,12 +1509,15 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     if (item?.isPackageRow) return
     brkCurrent.splice(index, 1)
     saveBreakdownItemsList(brkCurrent)
+    removeMirroredAddonAndPO(item?.mirrorId)
   }
 
   function changeBreakdownItemField(index: number, field: keyof BreakdownLineItem, value: any) {
     const brkCurrent = getBreakdownItemsList()
-    brkCurrent[index] = { ...brkCurrent[index], [field]: value }
+    const item = brkCurrent[index]
+    brkCurrent[index] = { ...item, [field]: value }
     saveBreakdownItemsList(brkCurrent)
+    if (field === 'description') syncMirrorName(item?.mirrorId, value)
   }
 
   // Typing a plain qty directly should win over any old Adult/Child/Senior/Infant
@@ -2629,10 +2702,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   return (
                     <div key={index} className="line-item-data-row">
                       <div className="line-items-row pax-tier-row">
-                        {item.mirrorId ? (
-                          <div className="pax-tier-service-label">{item.description}</div>
-                        ) : (
-                          <div className="po-service-dropdown-wrap">
+                        <div className="po-service-dropdown-wrap">
                             <button
                               type="button"
                               ref={(el) => { breakdownDropdownTriggerRefs.current[realIndex] = el }}
@@ -2696,7 +2766,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                               </FloatingDropdownMenu>
                             )}
                           </div>
-                        )}
                         <input
                           type="text"
                           value={item.details || ''}
@@ -2712,18 +2781,14 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                             placeholder="0.00"
                           />
                         ))}
-                        {item.mirrorId ? (
-                          <span className="pax-tier-mirror-hint" title="Synced from the Invoice/PO tab — remove it there to remove this row">Synced</span>
-                        ) : (
-                          <button
-                            type="button"
-                            className="remove-line-btn"
-                            onClick={() => removeBreakdownItemRow(realIndex)}
-                            title="Remove this row"
-                          >
+                        <button
+                          type="button"
+                          className="remove-line-btn"
+                          onClick={() => removeBreakdownItemRow(realIndex)}
+                          title="Remove this row"
+                        >
                             <X size={14} />
                           </button>
-                        )}
                       </div>
                     </div>
                   )
@@ -2844,7 +2909,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               return (
                 <div className="invoice-addons-editor">
                   <div className="invoice-addons-heading">
-                    <p className="field-help" style={{ margin: 0 }}>Optional extras with their own client price and supplier nett. Each addon also creates a matching Purchase Order line item (name, qty &amp; nett stay in sync) — toggle "Show to Document" to control whether it appears on the printed invoice.</p>
+                    <p className="field-help" style={{ margin: 0 }}>Optional extras with their own client price. Each addon also creates a matching Purchase Order line item (name &amp; qty stay in sync — set the supplier nett there) — toggle "Show to Document" to control whether it appears on the printed invoice.</p>
                     <button type="button" className="invoice-addon-add-btn" onClick={addRow}>
                       <Plus size={14} /> Add addon
                     </button>
@@ -2858,7 +2923,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                         <span>Addon name</span>
                         <span>Qty</span>
                         <span>Client price</span>
-                        <span>Supplier nett</span>
                         <span>Show to Document</span>
                         <span></span>
                       </div>
@@ -2946,12 +3010,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                             type="number" min="0"
                             value={row.price}
                             onChange={(e) => updateAddon(i, 'price', e.target.value)}
-                            placeholder="0.00"
-                          />
-                          <input
-                            type="number" min="0"
-                            value={row.nett}
-                            onChange={(e) => updateAddon(i, 'nett', e.target.value)}
                             placeholder="0.00"
                           />
                           <button
@@ -3426,6 +3484,56 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           )
         })()}
 
+        {/* Currency picker — bottom-left, while editing this booking.
+            Sets which currency the Quotation & Invoice documents are
+            labeled in. Live rate is fetched with PHP as the base
+            (open.er-api.com, refreshed every 10 min); ACR is a separate,
+            manually-set airline/agency rate used to print a PHP total. */}
+        {(() => {
+          const bookingCurrency = bookingForm.currency || 'PHP'
+          const liveRate = exchangeRates[bookingCurrency] ?? null // 1 PHP = liveRate units of bookingCurrency
+          const phpPerUnit = liveRate && liveRate > 0 ? 1 / liveRate : null
+          return (
+            <div className="currency-picker-card">
+              <div className="currency-picker-head">
+                <Coins size={16} />
+                <span>Document currency</span>
+              </div>
+              <select
+                className="currency-picker-select"
+                value={bookingCurrency}
+                onChange={(e) => {
+                  const next = e.target.value
+                  setDataError('')
+                  setDataMessage('')
+                  setBookingForm((prev) => ({ ...prev, currency: next, ...(next === 'PHP' ? { acr: '' } : {}) }))
+                }}
+              >
+                {SUPPORTED_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+
+              {bookingCurrency === 'PHP' ? (
+                <p className="currency-picker-rate currency-picker-rate-base">Base currency — quotation &amp; invoice amounts print as-is.</p>
+              ) : (
+                <div className="currency-picker-rate">
+                  {ratesLoading && !phpPerUnit ? (
+                    <span className="currency-picker-rate-loading">Fetching live rate…</span>
+                  ) : phpPerUnit ? (
+                    <>
+                      <span className="currency-picker-rate-eq">1 {bookingCurrency} ≈ <strong>₱{phpPerUnit.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</strong></span>
+                      <span className="currency-picker-rate-tag">Live rate</span>
+                    </>
+                  ) : (
+                    <span className="currency-picker-rate-loading">Live rate unavailable</span>
+                  )}
+                </div>
+              )}
+              {bookingCurrency !== 'PHP' && (
+                <p className="currency-picker-acr-note">The Quotation &amp; Invoice will show an "ACR" line with the total automatically converted to PHP at this rate.</p>
+              )}
+            </div>
+          )
+        })()}
       </main>
     )
   }
@@ -3973,6 +4081,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>TOTAL</span>
               <strong>{convertAndFormat(quoteTotal, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
             </div>
+            {acrPhpTotal(quoteTotal, selectedBooking.currency) && (
+              <div className="invoice-total-row">
+                <span>ACR (Converted to PHP)</span>
+                <strong>{acrPhpTotal(quoteTotal, selectedBooking.currency)}</strong>
+              </div>
+            )}
           </section>
 
           <section className="quote-notes">
@@ -4385,6 +4499,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <span>TOTAL</span>
                 <strong>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
               </div>
+              {acrPhpTotal(totalPrice, selectedBooking.currency) && (
+                <div className="invoice-total-row">
+                  <span>ACR (Converted to PHP)</span>
+                  <strong>{acrPhpTotal(totalPrice, selectedBooking.currency)}</strong>
+                </div>
+              )}
               <div className="invoice-total-row">
                 <span>PAID</span>
                 <strong>{convertAndFormat(parseAmount(selectedBooking.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</strong>

@@ -81,6 +81,7 @@ export type BookingFormData = {
   contactNumber: string
   clientEmail: string
   currency: string
+  acr: string  // Airline Conversion Rate: PHP value of 1 unit of `currency`, used to convert foreign-currency invoice/quotation totals to PHP
   packageName: string
   destination: string
   travelStart: string

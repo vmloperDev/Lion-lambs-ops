@@ -16,6 +16,7 @@ export const emptyBookingForm: BookingFormData = {
   contactNumber: '',
   clientEmail: '',
   currency: 'PHP',
+  acr: '',
   packageName: '',
   destination: '',
   travelStart: '',
