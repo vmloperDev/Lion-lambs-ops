@@ -146,7 +146,6 @@ export function readInvoiceItems(booking: BookingFormData): InvoiceLineItem[] {
 
 export type InvoicePackageRow = { name: string; qty: string; price: string }
 export type InvoiceAddonRow = { id?: string; name?: string; qty?: string; price?: string; nett?: string; showInDocument?: boolean }
-type InvoicePaxRate = { count: string; rate: string }
 
 export function readInvoicePackage(booking: BookingFormData): InvoicePackageRow {
   try {
@@ -164,15 +163,6 @@ export function readInvoiceAddons(booking: BookingFormData): InvoiceAddonRow[] {
   return []
 }
 
-function readInvoicePaxRates(booking: BookingFormData): InvoicePaxRate[] {
-  const fallback: InvoicePaxRate[] = [0, 1, 2, 3].map(() => ({ count: '', rate: '' }))
-  try {
-    const p = JSON.parse(booking.quotationPaxRates || '')
-    if (Array.isArray(p) && p.length === 4) return p
-  } catch {}
-  return fallback
-}
-
 // Builds the package + addon line items exactly as the printed invoice does
 // (including the showInDocument filter — an addon hidden from the document
 // is also excluded from what the client is billed for it). Returns null if
@@ -184,39 +174,21 @@ export function readInvoicePackageAndAddonLines(booking: BookingFormData): Booki
   const hasNewInvoiceData = !!(invPkg.name || invPkg.price) || invAddons.some(a => a.name || a.price)
   if (!hasNewInvoiceData) return null
 
-  const paxLabels = ['Adult', 'Child', 'Senior', 'Infant']
-  const invPaxRates = readInvoicePaxRates(booking)
-  const hasInvPaxRates = invPaxRates.some((r) => (parseFloat(r.count) || 0) > 0 && (parseFloat(r.rate) || 0) > 0)
-
   const paxTotal = getBreakdownPaxTotal(booking)
-
-  const paxTierLabels = ['Adult', 'Child', 'Senior', 'Infant']
-  const paxTierFields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
   const colPax = getBreakdownColPax(booking)
   const brkItemsForAddons = readBreakdownItems(booking)
 
+  // Each addon prints as ONE combined line — if it mirrors a Breakdown row
+  // priced per pax tier (e.g. Adult ₱222, Child ₱3), its Qty is the sum of
+  // those tiers' headcounts (e.g. 2 Adult + 3 Child = Qty 5) and its Unit
+  // Price is the total averaged back over that Qty.
   const addonRows: BookingLineItem[] = invAddons
     .filter(a => (a.name || a.price) && a.showInDocument !== false)
-    .flatMap(a => {
-      // If this addon mirrors a Breakdown row that has different prices set
-      // per pax tier (e.g. Adult ₱222, Child ₱3), split it into one line
-      // per tier — "Hotel - Adult" (2 qty), "Hotel - Child" (1 qty) — using
-      // that tier's own headcount and rate, instead of one blended row.
+    .map(a => {
       const linkedBrk = brkItemsForAddons.find(b => b.mirrorId === `item-${a.id}`)
-      const tierRows = linkedBrk
-        ? paxTierFields
-            .map((field, i) => ({ label: paxTierLabels[i], price: parseAmount(linkedBrk[field] as string), count: parseQuantity(colPax[i] || '0') }))
-            .filter((t) => t.price > 0 && t.count > 0)
-        : []
-
-      if (tierRows.length > 0) {
-        return tierRows.map((t) => ({
-          description: `${a.name || linkedBrk?.description || 'Addon'} - ${t.label}`,
-          quantity: t.count, unitPrice: t.price, nettCost: 0,
-          total: t.count * t.price, nettTotal: 0, profit: t.count * t.price,
-        }))
+      if (linkedBrk) {
+        return buildCombinedTierLine(a.name || linkedBrk.description || 'Addon', linkedBrk, colPax, paxTotal)
       }
-
       const originalQty = parseQuantity(a.qty || '1'), price = parseAmount(a.price), n = parseAmount(a.nett)
       const amount = originalQty * price
       // The Breakdown's pax headcount becomes this addon's Qty (its price
@@ -224,7 +196,7 @@ export function readInvoicePackageAndAddonLines(booking: BookingFormData): Booki
       // total dollar amount is preserved either way.
       const q = paxTotal > 0 ? paxTotal : originalQty
       const u = q > 0 ? amount / q : price
-      return [{ description: a.name || 'Addon', quantity: q, unitPrice: u, nettCost: n, total: amount, nettTotal: q * n, profit: amount - q * n }]
+      return { description: a.name || 'Addon', quantity: q, unitPrice: u, nettCost: n, total: amount, nettTotal: q * n, profit: amount - q * n }
     })
 
   // Once any addon is shown on the Invoice, the Package row itself carries
@@ -235,15 +207,19 @@ export function readInvoicePackageAndAddonLines(booking: BookingFormData): Booki
   const breakdownTotal = getBreakdownTotal(booking)
   const pkgUnitPrice = hasOtherItems ? 0 : (breakdownTotal > 0 ? breakdownTotal : parseAmount(invPkg.price))
 
-  const packageRows: BookingLineItem[] = hasInvPaxRates
-    ? invPaxRates
-        .map((r, i) => ({ label: paxLabels[i], count: parseFloat(r.count) || 0, rate: parseFloat(r.rate) || 0 }))
-        .filter((r) => r.count > 0 && r.rate > 0)
-        .map((r) => ({
-          description: `${invPkg.name || booking.packageName || 'Package'} — ${r.label}`,
-          quantity: r.count, unitPrice: r.rate, nettCost: 0,
-          total: r.count * r.rate, nettTotal: 0, profit: r.count * r.rate,
-        }))
+  // The Package row's per-pax-tier rates print UN-combined — "Adult Rate"
+  // (Qty 5), "Child Rate" (Qty 1) — under a plain package-name header with
+  // no Qty/Unit Price of its own.
+  const pkgTierRows = buildPackageTierLines(booking)
+  const packageRows: BookingLineItem[] = pkgTierRows.length > 0
+    ? [
+        {
+          description: invPkg.name || booking.packageName || 'Package',
+          quantity: 0, unitPrice: 0, nettCost: 0, total: 0, nettTotal: 0, profit: 0,
+          hideQty: true, hidePrice: true,
+        },
+        ...pkgTierRows,
+      ]
     : [{
         description: invPkg.name || booking.packageName || 'Package',
         quantity: parseQuantity(invPkg.qty || '1'),
@@ -257,6 +233,41 @@ export function readInvoicePackageAndAddonLines(booking: BookingFormData): Booki
       }]
 
   return [...packageRows, ...addonRows]
+}
+
+// Combines a Breakdown item's per-pax-tier prices into a SINGLE printed
+// line — Qty is the sum of headcounts across whichever pax tiers have both
+// a price and a headcount set (e.g. 2 Adult + 3 Child = Qty 5), and Unit
+// Price is the item's total averaged back over that combined Qty, so the
+// printed Amount still matches the internal Breakdown sheet exactly.
+export function buildCombinedTierLine(description: string, item: BreakdownLineItem, colPax: string[], fallbackQty: number): BookingLineItem {
+  const fields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
+  const tierRows = fields
+    .map((field, i) => ({ price: parseAmount(item[field] as string), count: parseQuantity(colPax[i] || '0') }))
+    .filter((t) => t.price > 0 && t.count > 0)
+  const amount = getBreakdownItemTotal(item, colPax)
+  const q = tierRows.length > 0 ? tierRows.reduce((sum, t) => sum + t.count, 0) : (fallbackQty > 0 ? fallbackQty : 1)
+  const u = q > 0 ? amount / q : 0
+  return { description, quantity: q, unitPrice: u, nettCost: 0, total: amount, nettTotal: 0, profit: amount }
+}
+
+// The Package row's (first row of Pax-Tier Pricing) per-pax-tier rates —
+// these stay UN-combined, one printed line per pax type that has both a
+// rate and a headcount set, e.g. "Adult Rate" (Qty 5), "Child Rate" (Qty 1).
+export function buildPackageTierLines(booking: BookingFormData): BookingLineItem[] {
+  const pkgItem = readBreakdownItems(booking).find((item) => item.isPackageRow)
+  if (!pkgItem) return []
+  const paxLabels = ['Adult', 'Child', 'Senior', 'Infant']
+  const fields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
+  const colPax = getBreakdownColPax(booking)
+  return fields
+    .map((field, i) => ({ label: paxLabels[i], price: parseAmount(pkgItem[field] as string), count: parseQuantity(colPax[i] || '0') }))
+    .filter((t) => t.price > 0 && t.count > 0)
+    .map((t) => ({
+      description: `${t.label} Rate`,
+      quantity: t.count, unitPrice: t.price, nettCost: 0,
+      total: t.count * t.price, nettTotal: 0, profit: t.count * t.price,
+    }))
 }
 
 export function readBreakdownItems(booking: BookingFormData): BreakdownLineItem[] {

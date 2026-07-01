@@ -2410,6 +2410,8 @@ input, select, textarea { font: inherit; }
 .pax-tier-mirror-hint { font-size: 0.6rem; text-transform: uppercase; font-weight: 700; color: var(--text-secondary); opacity: 0.6; white-space: nowrap; }
 .line-items-row.pax-tier-row.header { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); padding-bottom: 6px; }
 .pax-tier-service-label { font-size: 0.82rem; font-weight: 700; color: var(--text-primary); padding: 0 4px; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.package-tier-row { background: var(--surface-hover, rgba(37, 99, 235, 0.06)); border-radius: 8px; margin-bottom: 4px; }
+.package-tier-row .line-items-row.pax-tier-row { border-bottom: none; padding: 8px 6px; }
 
 /* ── 05b clearer labels ── */
 .breakdown-tier-config-header { margin-bottom: 0.75rem; }

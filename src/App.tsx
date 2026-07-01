@@ -95,7 +95,8 @@ import {
   readPaxBreakdown, sumPaxBreakdown, formatPaxBreakdownLabel,
   createLineItemId, getLines,
   readInvoiceItems, readBreakdownItems,
-  getBreakdownColPax, getBreakdownItemTotal, getBreakdownTotal, getBreakdownPaxTotal,
+  getBreakdownColPax, getBreakdownTotal, getBreakdownPaxTotal,
+  buildCombinedTierLine, buildPackageTierLines,
   mapInvoiceItemsToBookingLines, mapBreakdownItemsToBookingLines,
   getBookingLineItems, sumLineItems,
   getBookingClientTotal, getBookingBreakdownNettTotal,
@@ -2209,15 +2210,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     let quotePkg: PackageRow = { name: '', qty: '1', price: '' }
     try { const p = JSON.parse(selectedBooking.invoicePackage || ''); if (p && typeof p === 'object') quotePkg = p } catch {}
 
-    type PaxRate = { count: string; rate: string }
-    const paxLabels = ['Adult', 'Child', 'Senior', 'Infant']
-    let quotePaxRates: PaxRate[] = paxLabels.map(() => ({ count: '', rate: '' }))
-    try {
-      const p = JSON.parse(selectedBooking.quotationPaxRates || '')
-      if (Array.isArray(p) && p.length === 4) quotePaxRates = p
-    } catch {}
-    const hasPaxRates = quotePaxRates.some((r) => (parseFloat(r.count) || 0) > 0 && (parseFloat(r.rate) || 0) > 0)
-
     const hasNewQuoteData = !!(quotePkg.name || quotePkg.price)
 
     // Pax-type addons — merged by name across all pax types into one line
@@ -2245,29 +2237,25 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     })
 
     // Breakdown Pax-Tier Pricing rows explicitly toggled "Show to Quotation"
-    // are split into one line per pax tier that has both a price and a
-    // headcount set — e.g. "Hotel - Adult" (2 qty), "Hotel - Child" (1 qty)
-    // — priced the same way the internal Breakdown sheet totals them.
+    // render as ONE combined line per item — its Qty is the sum of the
+    // headcounts across whichever pax tiers actually have a price filled in
+    // for that item (e.g. 2 Adult + 3 Child = Qty 5), and its Unit Price is
+    // the total amount averaged back over that combined Qty, so the printed
+    // Amount still matches the internal Breakdown sheet exactly. This is the
+    // same combining logic used on the Invoice, via the shared helper.
     const breakdownColPax = getBreakdownColPax(selectedBooking)
-    const breakdownTierFields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
     const breakdownQuoteLineItems: BookingLineItem[] = readBreakdownItems(selectedBooking)
       .filter((item) => !item.isPackageRow && item.sendToQuotation)
-      .flatMap((item) => {
-        const tierRows = breakdownTierFields
-          .map((field, i) => ({ label: paxLabels[i], price: parseAmount(item[field] as string), count: parseQuantity(breakdownColPax[i] || '0') }))
-          .filter((t) => t.price > 0 && t.count > 0)
-        if (tierRows.length > 0) {
-          return tierRows.map((t) => ({
-            description: `${item.description} - ${t.label}`,
-            quantity: t.count, unitPrice: t.price, nettCost: 0,
-            total: t.count * t.price, nettTotal: 0, profit: t.count * t.price,
-          }))
-        }
-        const amount = getBreakdownItemTotal(item, breakdownColPax)
-        const q = quotePaxTotal > 0 ? quotePaxTotal : 1
-        const u = amount / q
-        return [{ description: item.description, quantity: q, unitPrice: u, nettCost: 0, total: amount, nettTotal: 0, profit: amount }]
-      })
+      .map((item) => buildCombinedTierLine(item.description, item, breakdownColPax, quotePaxTotal))
+
+    // The Package row (first row of Pax-Tier Pricing) carries its own
+    // per-pax-type rate instead of a single flat price. On the document it
+    // prints as a plain label (no Qty/Unit Price of its own), followed by
+    // one UN-combined sub-row per pax type that has both a rate and a
+    // headcount set — e.g. "Adult Rate" (Qty 5), "Child Rate" (Qty 1).
+    // Same source used on the Invoice, via the shared helper.
+    const pkgTierRows = buildPackageTierLines(selectedBooking)
+    const hasPkgTierRates = pkgTierRows.length > 0
 
     // Once addons or "Show to Quotation" breakdown rows are on the
     // document, the Package row itself carries no price of its own — those
@@ -2279,19 +2267,21 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const quotePkgUnitPrice = otherQuoteItemsPresent ? 0 : (quoteBreakdownTotal > 0 ? quoteBreakdownTotal : parseAmount(quotePkg.price))
 
     const lineItems: BookingLineItem[] = [
-      ...(hasPaxRates
-      ? quotePaxRates
-          .map((r, i) => ({ label: paxLabels[i], count: parseFloat(r.count) || 0, rate: parseFloat(r.rate) || 0 }))
-          .filter((r) => r.count > 0 && r.rate > 0)
-          .map((r) => ({
-            description: `${quotePkg.name || selectedBooking.packageName || 'Package'} — ${r.label}`,
-            quantity: r.count,
-            unitPrice: r.rate,
+      ...(hasPkgTierRates
+      ? [
+          {
+            description: quotePkg.name || selectedBooking.packageName || 'Package',
+            quantity: 0,
+            unitPrice: 0,
             nettCost: 0,
-            total: r.count * r.rate,
+            total: 0,
             nettTotal: 0,
-            profit: r.count * r.rate,
-          }))
+            profit: 0,
+            hideQty: true,
+            hidePrice: true,
+          },
+          ...pkgTierRows,
+        ]
       : hasNewQuoteData
       ? [
           {
@@ -3225,11 +3215,21 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const hasVoucher = Boolean(bookingForm.flightDetails || bookingForm.accommodation)
 
     const docCards = [
-      { id: 'breakdown' as const, label: 'Breakdown', icon: <FileBarChart2 size={28} />, desc: 'Client info, package details, internal costing, supplier nett & pax tiers', filled: hasBreakdown },
-      { id: 'quotation' as const, label: 'Quotation', icon: <FileText size={28} />, desc: 'Pricing & inclusions', filled: hasQuotation },
+      { id: 'breakdown' as const, label: 'Breakdown/Quotation', icon: <FileBarChart2 size={28} />, desc: 'Client info, package details, pricing, inclusions, internal costing, supplier nett & pax tiers', filled: hasBreakdown || hasQuotation },
       { id: 'invoice' as const, label: 'Invoice', icon: <Receipt size={28} />, desc: 'Invoice line items, payment records & status', filled: hasInvoice },
       { id: 'purchase-order' as const, label: 'Purchase Order', icon: <ShoppingCart size={28} />, desc: 'Supplier PO line items & payment method', filled: hasPO },
       { id: 'voucher' as const, label: 'Service Voucher', icon: <Ticket size={28} />, desc: 'Flights, accommodation, itinerary & emergency contact', filled: hasVoucher },
+    ]
+
+    // The live preview shows every printable document type on its own,
+    // including Quotation — even though its editing fields now live inside
+    // the merged Breakdown/Quotation editing card above.
+    const livePreviewCards = [
+      { id: 'breakdown' as const, label: 'Breakdown', icon: <FileBarChart2 size={28} /> },
+      { id: 'quotation' as const, label: 'Quotation', icon: <FileText size={28} /> },
+      { id: 'invoice' as const, label: 'Invoice', icon: <Receipt size={28} /> },
+      { id: 'purchase-order' as const, label: 'Purchase Order', icon: <ShoppingCart size={28} /> },
+      { id: 'voucher' as const, label: 'Service Voucher', icon: <Ticket size={28} /> },
     ]
 
 
@@ -3239,12 +3239,11 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const SECTION_VISIBILITY: Record<string, Array<typeof activeDocTab>> = {
       client:      ['breakdown'],
       travel:      ['breakdown'],
-      quotation:   ['quotation'],
       costing:     ['breakdown'],
       paxTier:     ['breakdown'],
       logistics:   ['invoice', 'voucher'],
       invoiceItems: ['invoice'],
-      inclusions:  ['quotation'],
+      inclusions:  ['breakdown'],
       schedule:    ['voucher'],
       remarks:     ['purchase-order', 'voucher'],
       po:          ['purchase-order'],
@@ -3386,7 +3385,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                     onChange={(e) => setLivePreviewDoc(e.target.value as typeof livePreviewDoc)}
                     title="Choose which document to preview live"
                   >
-                    {docCards.map((card) => (
+                    {livePreviewCards.map((card) => (
                       <option key={card.id} value={card.id}>{card.label}</option>
                     ))}
                   </select>
@@ -3500,363 +3499,11 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <span className="field-label"><span>Travel end</span><span className="required-marker">Required</span></span>
                 <input required={activeDocTab === 'breakdown'} type="date" value={bookingForm.travelEnd} onChange={(e) => updateBookingField('travelEnd', e.target.value)} />
               </label>
-            </div>
-          </section>
-          )}
-
-          {/* QUOTATION INFO */}
-          {showSection('quotation') && (
-          <section className="form-section">
-            <div className="form-section-heading">
-              <p>Quotation Info</p>
-              <h2>Reference and base price</h2>
-            </div>
-            <div className="field-grid three">
-              <label>
-                Package name
-                <input value={bookingForm.packageName} onChange={(e) => handlePackageNameChange(e.target.value)} placeholder="3D2N Clark and Olongapo" />
-              </label>
-              <label>
-                Quotation no.
-                <input value={bookingForm.quotationNo} onChange={(e) => updateBookingField('quotationNo', e.target.value)} placeholder="QT-2026-0001" />
-              </label>
               <label>
                 Option date
                 <input type="date" value={bookingForm.optionDate} onChange={(e) => updateBookingField('optionDate', e.target.value)} />
               </label>
             </div>
-
-            {/* Pax-tier rate pricing — optional. When filled in, the computed
-                total (count × rate per pax type) drives the package price
-                above and the quotation document shows a per-pax breakdown
-                table with a total, similar to the invoice. */}
-            {(() => {
-              type PaxRate = { count: string; rate: string }
-              type PackageRow = { name: string; qty: string; price: string }
-              type PaxAddon = { id: string; paxType: string; name: string; price: string }
-              const fixedLabels = ['Adult', 'Child', 'Senior', 'Infant']
-              let paxRates: PaxRate[] = fixedLabels.map(() => ({ count: '', rate: '' }))
-              try {
-                const p = JSON.parse(bookingForm.quotationPaxRates)
-                if (Array.isArray(p) && p.length === 4) paxRates = p
-              } catch {}
-              let paxAddons: PaxAddon[] = []
-              try {
-                const a = JSON.parse(bookingForm.quotationPaxAddons)
-                if (Array.isArray(a)) paxAddons = a
-              } catch {}
-              // Older saved addons may not have an id yet — backfill on read.
-              paxAddons = paxAddons.map((r) => r.id ? r : { ...r, id: createLineItemId() })
-
-              const slugify = (s: string) => (s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-+|-+$)/g, '') || 'addon')
-
-              // Merges addons with the same name across pax types into a
-              // single row (summed), then pushes that merged set onto the
-              // Invoice addons, P.O. supplier line items, and Breakdown line
-              // items — using a stable id per addon name so re-syncing
-              // updates the same row instead of duplicating it, and leaving
-              // any other manually-added rows on those documents untouched.
-              const syncPaxAddons = (nextAddons: PaxAddon[], prev: typeof bookingForm) => {
-                const totalsByName = new Map<string, number>()
-                nextAddons.forEach((a) => {
-                  const name = (a.name || '').trim()
-                  if (!name) return
-                  totalsByName.set(name, (totalsByName.get(name) || 0) + (parseFloat(a.price) || 0))
-                })
-                const merged = Array.from(totalsByName.entries()).map(([name, total]) => ({ id: `paxaddon-${slugify(name)}`, name, total }))
-
-                type InvAddonRow = { id: string; name: string; qty: string; price: string; nett: string; showInDocument?: boolean }
-                let curInvAddons: InvAddonRow[] = []
-                try { const a = JSON.parse(prev.invoiceAddons); if (Array.isArray(a)) curInvAddons = a } catch {}
-                const keptInvAddons = curInvAddons.filter((r) => !(r.id || '').startsWith('paxaddon-'))
-                const mergedInvAddons = merged.map((m) => {
-                  const existing = curInvAddons.find((r) => r.id === m.id)
-                  return { id: m.id, name: m.name, qty: '1', price: String(m.total), nett: existing?.nett || '', showInDocument: existing?.showInDocument !== false }
-                })
-                const nextInvoiceAddons = [...keptInvAddons, ...mergedInvAddons]
-
-                let curPO: POLineItem[] = []
-                try { const p = JSON.parse(prev.poLineItemsJson || '[]'); if (Array.isArray(p)) curPO = p } catch {}
-                const keptPO = curPO.filter((r) => !(r.id || '').startsWith('paxaddon-'))
-                const mergedPO = merged.map((m) => {
-                  const existing = curPO.find((r) => r.id === m.id)
-                  return {
-                    id: m.id,
-                    vendor: existing?.vendor || '', contactNo: existing?.contactNo || '', paymentMethod: existing?.paymentMethod || '', agent: existing?.agent || '',
-                    serviceItem: m.name, description: existing?.description || '',
-                    adultPax: '1', childPax: '0', seniorPax: '0', infantPax: '0',
-                    supplierNett: existing?.supplierNett || '', showInDocument: existing?.showInDocument ?? false,
-                  } as POLineItem
-                })
-                const nextPO = [...keptPO, ...mergedPO]
-
-                let curBrk: BreakdownLineItem[] = []
-                try { curBrk = readBreakdownItems(prev) } catch {}
-                const keptBrk = curBrk.filter((r) => !(r.id || '').startsWith('paxaddon-'))
-                const mergedBrk = merged.map((m) => {
-                  const existing = curBrk.find((r) => r.id === m.id)
-                  return {
-                    id: m.id, description: m.name, details: existing?.details || '', vendor: existing?.vendor || '',
-                    quantity: '1', unitPrice: String(m.total), nettCost: existing?.nettCost || '0',
-                    sendToInvoice: true, sendToPO: true,
-                  } as BreakdownLineItem
-                })
-                const nextBrk = [...keptBrk, ...mergedBrk]
-
-                return {
-                  invoiceAddons: JSON.stringify(nextInvoiceAddons),
-                  poLineItemsJson: JSON.stringify(nextPO),
-                  breakdownLineItemsJson: JSON.stringify(nextBrk),
-                }
-              }
-
-              const setPaxRates = (next: PaxRate[]) => {
-                setDataError('')
-                setDataMessage('')
-                setBookingForm((prev) => {
-                  const addonsTotal = paxAddons.reduce((sum, a) => sum + (parseFloat(a.price) || 0), 0)
-                  const ratesTotal = next.reduce((sum, r) => sum + (parseFloat(r.count) || 0) * (parseFloat(r.rate) || 0), 0) + addonsTotal
-                  const paxCountTotal = next.reduce((sum, r) => sum + (parseFloat(r.count) || 0), 0)
-                  const updated = { ...prev, quotationPaxRates: JSON.stringify(next) }
-
-                  // Reflect the pax counts in the booking's "No. of pax" field
-                  // (shown on the PO, breakdown, and booking detail screens).
-                  const paxLabelParts: string[] = []
-                  fixedLabels.forEach((label, i) => {
-                    const c = parseFloat(next[i].count) || 0
-                    if (c > 0) paxLabelParts.push(`${next[i].count} ${label}`)
-                  })
-                  updated.pax = paxLabelParts.join(', ')
-
-                  let curPkg: PackageRow = { name: '', qty: '1', price: '' }
-                  try { const p = JSON.parse(prev.invoicePackage); if (p && typeof p === 'object') curPkg = p } catch {}
-                  // With per-pax rates filled in, the document renders one row
-                  // per pax type directly, so the package qty/price just need
-                  // to multiply back to the correct total (qty 1 × total).
-                  // Without rates, the pax headcount itself acts as the Qty
-                  // against whatever flat client price was entered.
-                  const nextPkg: PackageRow = ratesTotal > 0
-                    ? { ...curPkg, qty: '1', price: String(ratesTotal) }
-                    : paxCountTotal > 0
-                    ? { ...curPkg, qty: String(paxCountTotal) }
-                    : curPkg
-                  updated.invoicePackage = JSON.stringify(nextPkg)
-                  try {
-                    const invItems: InvoiceLineItem[] = readInvoiceItems(prev)
-                    const brkItems: BreakdownLineItem[] = readBreakdownItems(prev)
-                    updated.invoiceLineItemsJson = JSON.stringify(invItems.map(item => item.isPackageRow ? {
-                      ...item,
-                      quantity: nextPkg.qty,
-                      unitPrice: nextPkg.price,
-                    } : item))
-                    updated.breakdownLineItemsJson = JSON.stringify(brkItems.map(item => item.isPackageRow ? {
-                      ...item,
-                      quantity: nextPkg.qty,
-                      unitPrice: nextPkg.price,
-                    } : item))
-                  } catch (e) {}
-                  return updated
-                })
-              }
-
-              const setRate = (i: number, field: keyof PaxRate, val: string) => {
-                const next = paxRates.map((r, idx) => idx === i ? { ...r, [field]: val } : r)
-                setPaxRates(next)
-              }
-
-              const setPaxAddons = (nextAddons: PaxAddon[]) => {
-                setDataError('')
-                setDataMessage('')
-                setBookingForm((prev) => {
-                  const ratesTotal = paxRates.reduce((sum, r) => sum + (parseFloat(r.count) || 0) * (parseFloat(r.rate) || 0), 0)
-                  const addonsTotal = nextAddons.reduce((sum, a) => sum + (parseFloat(a.price) || 0), 0)
-                  const total = ratesTotal + addonsTotal
-                  const paxCountTotal = paxRates.reduce((sum, r) => sum + (parseFloat(r.count) || 0), 0)
-
-                  let curPkg: PackageRow = { name: '', qty: '1', price: '' }
-                  try { const p = JSON.parse(prev.invoicePackage); if (p && typeof p === 'object') curPkg = p } catch {}
-                  const nextPkg: PackageRow = total > 0
-                    ? { ...curPkg, qty: '1', price: String(total) }
-                    : paxCountTotal > 0
-                    ? { ...curPkg, qty: String(paxCountTotal) }
-                    : curPkg
-
-                  const synced = syncPaxAddons(nextAddons, prev)
-                  return {
-                    ...prev,
-                    quotationPaxAddons: JSON.stringify(nextAddons),
-                    invoicePackage: JSON.stringify(nextPkg),
-                    ...synced,
-                  }
-                })
-              }
-
-              const addAddon = () => {
-                setPaxAddons([...paxAddons, { id: createLineItemId(), paxType: 'Adult', name: '', price: '' }])
-              }
-              const updateAddon = (i: number, field: keyof PaxAddon, val: string) => {
-                setPaxAddons(paxAddons.map((r, idx) => idx === i ? { ...r, [field]: val } : r))
-              }
-              const removeAddon = (i: number) => {
-                setPaxAddons(paxAddons.filter((_, idx) => idx !== i))
-              }
-
-              const paxTotal = paxRates.reduce((sum, r) => sum + (parseFloat(r.count) || 0) * (parseFloat(r.rate) || 0), 0)
-                + paxAddons.reduce((sum, a) => sum + (parseFloat(a.price) || 0), 0)
-              const hasAnyPaxRate = paxRates.some((r) => r.count || r.rate) || paxAddons.length > 0
-
-              return (
-                <div className="invoice-package-editor">
-                  <p className="field-help">Enter how many Adult/Child/Senior/Infant and the rate for each — the package price and quotation total are calculated automatically.</p>
-                  <div className="breakdown-tier-grid">
-                    {fixedLabels.map((label, i) => (
-                      <div key={i} className="breakdown-tier-col">
-                        <p className="tier-col-num">{label}</p>
-                        <label className="tier-field-label">How many?</label>
-                        <input
-                          type="number" min="0"
-                          value={paxRates[i].count}
-                          onChange={(e) => setRate(i, 'count', e.target.value)}
-                          placeholder="0"
-                          className="tier-pax-input"
-                        />
-                        <label className="tier-field-label">Rate</label>
-                        <input
-                          type="number" min="0"
-                          value={paxRates[i].rate}
-                          onChange={(e) => setRate(i, 'rate', e.target.value)}
-                          placeholder="0.00"
-                          className="tier-pax-input"
-                        />
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Addons — optional extras tied to a specific pax type.
-                      Addons sharing the same name across pax types merge
-                      into a single line item (summed) on the Invoice,
-                      Purchase Order, and Breakdown documents. */}
-                  <div className="invoice-addons-heading" style={{ marginTop: '16px' }}>
-                    <p className="field-help" style={{ margin: 0 }}>Optional — addons tied to a pax type (e.g. a hotel upgrade for Adults only). Same-named addons across pax types combine into one line on the other documents.</p>
-                    <button type="button" className="invoice-addon-add-btn" onClick={addAddon}>
-                      <Plus size={14} /> Add addon
-                    </button>
-                  </div>
-
-                  {paxAddons.length > 0 && (
-                    <div className="invoice-addons-table pax-addons-table">
-                      <div className="invoice-addons-row pax-addons-row header">
-                        <span>Pax type</span>
-                        <span>Addon name</span>
-                        <span>Price</span>
-                        <span></span>
-                      </div>
-                      {paxAddons.map((row, i) => (
-                        <div className="invoice-addons-row pax-addons-row" key={row.id}>
-                          <select
-                            className="pax-addon-type-select"
-                            value={row.paxType}
-                            onChange={(e) => updateAddon(i, 'paxType', e.target.value)}
-                          >
-                            {fixedLabels.map((label) => <option key={label} value={label}>{label}</option>)}
-                          </select>
-                          <div className="po-service-dropdown-wrap">
-                            <button
-                              type="button"
-                              ref={(el) => { addonDropdownTriggerRefs.current[row.id] = el }}
-                              className="po-service-dropdown-trigger"
-                              onClick={() => setOpenAddonNameDropdownId(openAddonNameDropdownId === row.id ? null : row.id)}
-                            >
-                              <span>{row.name || 'Select…'}</span>
-                              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                            </button>
-                            {openAddonNameDropdownId === row.id && (
-                              <FloatingDropdownMenu
-                                anchorRef={{ current: addonDropdownTriggerRefs.current[row.id] ?? null }}
-                                onClose={() => { setOpenAddonNameDropdownId(null); setAddingCustomAddonName(false); setCustomAddonNameDraft('') }}
-                              >
-                                <ul className="po-service-dropdown-list">
-                                  {serviceItemOptions.map(opt => (
-                                    <li key={opt} className={`po-service-dropdown-item${row.name === opt ? ' selected' : ''}`}>
-                                      <button
-                                        type="button"
-                                        className="po-service-dropdown-select"
-                                        onClick={() => { updateAddon(i, 'name', opt); setOpenAddonNameDropdownId(null) }}
-                                      >{opt}</button>
-                                      <button
-                                        type="button"
-                                        className="po-service-dropdown-delete"
-                                        title="Remove option"
-                                        onClick={() => {
-                                          const next = serviceItemOptions.filter(o => o !== opt)
-                                          setServiceItemOptions(next)
-                                          if (row.name === opt) updateAddon(i, 'name', next[0] || '')
-                                        }}
-                                      ><X size={11} /></button>
-                                    </li>
-                                  ))}
-                                </ul>
-                                <div className="po-service-dropdown-add">
-                                  {addingCustomAddonName ? (
-                                    <div className="po-service-dropdown-custom-row">
-                                      <input
-                                        autoFocus
-                                        value={customAddonNameDraft}
-                                        onChange={e => setCustomAddonNameDraft(e.target.value)}
-                                        onKeyDown={e => {
-                                          if (e.key === 'Enter' && customAddonNameDraft.trim()) {
-                                            const val = customAddonNameDraft.trim()
-                                            if (!serviceItemOptions.includes(val)) setServiceItemOptions(prev => [...prev, val])
-                                            updateAddon(i, 'name', val)
-                                            setCustomAddonNameDraft('')
-                                            setAddingCustomAddonName(false)
-                                            setOpenAddonNameDropdownId(null)
-                                          }
-                                          if (e.key === 'Escape') { setAddingCustomAddonName(false); setCustomAddonNameDraft('') }
-                                        }}
-                                        placeholder="Type and press Enter…"
-                                        className="po-service-dropdown-custom-input"
-                                      />
-                                      <button type="button" className="po-service-dropdown-cancel" onClick={() => { setAddingCustomAddonName(false); setCustomAddonNameDraft('') }}>
-                                        <X size={11} />
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <button type="button" className="po-service-dropdown-add-btn" onClick={() => setAddingCustomAddonName(true)}>
-                                      <Plus size={12} /> Add custom option
-                                    </button>
-                                  )}
-                                </div>
-                              </FloatingDropdownMenu>
-                            )}
-                          </div>
-                          <input
-                            type="number" min="0"
-                            value={row.price}
-                            onChange={(e) => updateAddon(i, 'price', e.target.value)}
-                            placeholder="0.00"
-                          />
-                          <button type="button" className="remove-line-btn" onClick={() => removeAddon(i)} title="Remove addon">
-                            <X size={14} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {hasAnyPaxRate && (
-                    <div className="line-items-summary">
-                      <article>
-                        <span>Pax-tier total</span>
-                        <strong>{formatWithCurrency(paxTotal)}</strong>
-                        {currentCurrency !== 'PHP' && <small className="php-equiv-total">{toPhpEquivalent(paxTotal, currentCurrency, bookingForm.acr)}</small>}
-                      </article>
-                    </div>
-                  )}
-                </div>
-              )
-            })()}
-
           </section>
           )}
 
@@ -3923,6 +3570,42 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   <span>Price per person<br/>(Infant)</span>
                   <span></span>
                 </div>
+
+                {/* Package row — always first. Its name comes from the
+                    Package name field on the Trip section above; the rate
+                    entered here per pax type is what prints on the
+                    Quotation as "Adult Rate" / "Child Rate" / etc. under
+                    the package name (no flat qty/price of its own). */}
+                {(() => {
+                  const pkgItem = currentBreakdownItems.find((item) => item.isPackageRow)
+                  if (!pkgItem) return null
+                  const realIndex = currentBreakdownItems.indexOf(pkgItem)
+                  return (
+                    <div className="line-item-data-row package-tier-row">
+                      <div className="line-items-row pax-tier-row">
+                        <div className="pax-tier-service-label" title="Set on the Trip section above">
+                          {bookingForm.packageName || 'Package'}
+                        </div>
+                        <input
+                          type="text"
+                          value={pkgItem.details || ''}
+                          onChange={(e) => changeBreakdownItemField(realIndex, 'details', e.target.value)}
+                          placeholder="e.g. CRK - MPH"
+                        />
+                        {(['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant'] as const).map((field) => (
+                          <input
+                            key={field}
+                            type="text"
+                            value={(pkgItem[field] as string) || ''}
+                            onChange={(e) => changeBreakdownItemField(realIndex, field, e.target.value)}
+                            placeholder="0.00"
+                          />
+                        ))}
+                        <span></span>
+                      </div>
+                    </div>
+                  )
+                })()}
 
                 {currentBreakdownItems.filter(item => !item.isPackageRow).map((item, index) => {
                   const realIndex = currentBreakdownItems.indexOf(item)
@@ -4720,7 +4403,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <aside className="live-preview-panel">
                 <div className="live-preview-panel-header">
                   <Eye size={14} />
-                  <span>Live preview — {docCards.find(c => c.id === livePreviewDoc)?.label}</span>
+                  <span>Live preview — {livePreviewCards.find(c => c.id === livePreviewDoc)?.label}</span>
                 </div>
                 <div className="live-preview-panel-body">
                   {renderDocByType(livePreviewDoc, buildDraftBookingFromForm())}
