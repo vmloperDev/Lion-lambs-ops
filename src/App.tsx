@@ -347,9 +347,28 @@ function App() {
   })
   const [selectedBookingId, setSelectedBookingId] = useState('')
   const [editingBookingId, setEditingBookingId] = useState('')
+
+  // Draft currency for the "Document currency" picker shown on read-only
+  // project screens (booking detail, document folder, previews, invoice
+  // editor) — separate from bookingForm.currency, which only exists while
+  // actively editing a booking on the data-form screen. Resets to the
+  // saved booking's currency each time a different project is opened.
+  const [documentCurrencyDraft, setDocumentCurrencyDraft] = useState('PHP')
+  useEffect(() => {
+    const b = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
+    setDocumentCurrencyDraft(b?.currency || 'PHP')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBookingId])
   const [searchTerm, setSearchTerm] = useState('')
   const [docsSearchTerm, setDocsSearchTerm] = useState('')
   const [activeDocTab, setActiveDocTab] = useState<'quotation' | 'breakdown' | 'invoice' | 'purchase-order' | 'voucher' | null>(null)
+  // Live Preview: while filling the Data Gathering form, split the screen
+  // and render the real document markup — driven by the live form state —
+  // so the user sees the doc update as they type. `livePreviewDoc` is the
+  // document type currently shown in the panel; the user can switch it
+  // independently of which form tab they're editing.
+  const [showLivePreview, setShowLivePreview] = useState(false)
+  const [livePreviewDoc, setLivePreviewDoc] = useState<'quotation' | 'invoice' | 'purchase-order' | 'voucher' | 'breakdown'>('quotation')
   const passwordStrength = getPasswordStrength(password)
 
   // Options lists
@@ -1652,6 +1671,120 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     }
   }
 
+  // Pushes a currency straight onto a saved booking (local state +
+  // Firestore) — without requiring a full Save Booking submit. Used by
+  // every "Apply to Document" button (data-form editor and every
+  // read-only project screen) so Quotation & Invoice pick up the new
+  // currency (and the ACR line) right away.
+  function applyCurrencyToBookingId(bookingId: string, nextCurrency: string) {
+    if (!bookingId) return
+    const clearAcr = nextCurrency === 'PHP' ? { acr: '' } : {}
+    const targetBooking = (lastSavedBookingRef.current?.id === bookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === bookingId)
+    if (!targetBooking) return
+
+    setBookings((currentBookings) =>
+      currentBookings.map((booking) => booking.id === bookingId ? { ...booking, currency: nextCurrency, ...clearAcr } : booking)
+    )
+    if (lastSavedBookingRef.current?.id === bookingId) {
+      lastSavedBookingRef.current = { ...lastSavedBookingRef.current, currency: nextCurrency, ...clearAcr }
+    }
+
+    setDataError('')
+    setDataMessage(
+      nextCurrency === 'PHP'
+        ? 'Document currency reset to PHP on the Quotation & Invoice.'
+        : `Applied ${nextCurrency} to the Quotation & Invoice. The ACR (PHP total) will show automatically.`
+    )
+
+    if (!authUser) {
+      setDataError('Log in again before updating cloud records.')
+      return
+    }
+    void setDoc(doc(db, getBookingOwnerPath(targetBooking, authUser.uid), bookingId), {
+      currency: nextCurrency,
+      ...clearAcr,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true }).catch(() => {
+      setDataError('Currency updated locally, but cloud update failed.')
+    })
+  }
+
+  // Used by the picker on the data-form screen, which edits currency via
+  // the live bookingForm state rather than a saved-booking id directly.
+  function applyCurrencyToDocuments() {
+    applyCurrencyToBookingId(editingBookingId, bookingForm.currency || 'PHP')
+  }
+
+  // The same "Document currency" card, reused on every read-only project
+  // screen (booking detail, document folder, all previews, invoice editor)
+  // so it's available wherever a project is open — not just while editing
+  // the booking form. Edits go through documentCurrencyDraft and apply
+  // straight to the saved booking via applyCurrencyToBookingId.
+  function renderProjectCurrencyPicker() {
+    const savedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
+    if (!savedBooking) return null
+
+    const savedCurrency = savedBooking.currency || 'PHP'
+    const draftCurrency = documentCurrencyDraft || 'PHP'
+    const liveRate = exchangeRates[draftCurrency] ?? null
+    const phpPerUnit = liveRate && liveRate > 0 ? 1 / liveRate : null
+    const hasPendingCurrencyChange = draftCurrency !== savedCurrency
+
+    return (
+      <div className="currency-picker-card">
+        <div className="currency-picker-head">
+          <Coins size={16} />
+          <span>Document currency</span>
+        </div>
+        <select
+          className="currency-picker-select"
+          value={draftCurrency}
+          onChange={(e) => {
+            setDataError('')
+            setDataMessage('')
+            setDocumentCurrencyDraft(e.target.value)
+          }}
+        >
+          {SUPPORTED_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+
+        <button
+          type="button"
+          className="currency-picker-apply-btn"
+          onClick={() => applyCurrencyToBookingId(selectedBookingId, draftCurrency)}
+          disabled={!hasPendingCurrencyChange}
+        >
+          Apply to Document
+        </button>
+        <p className={hasPendingCurrencyChange ? 'currency-picker-apply-hint currency-picker-apply-hint-pending' : 'currency-picker-apply-hint'}>
+          {hasPendingCurrencyChange
+            ? `Not applied yet — Quotation & Invoice still show ${savedCurrency}.`
+            : `Applied — Quotation & Invoice are set to ${draftCurrency}.`}
+        </p>
+
+        {draftCurrency === 'PHP' ? (
+          <p className="currency-picker-rate currency-picker-rate-base">Base currency — quotation &amp; invoice amounts print as-is.</p>
+        ) : (
+          <div className="currency-picker-rate">
+            {ratesLoading && !phpPerUnit ? (
+              <span className="currency-picker-rate-loading">Fetching live rate…</span>
+            ) : phpPerUnit ? (
+              <>
+                <span className="currency-picker-rate-eq">1 {draftCurrency} ≈ <strong>₱{phpPerUnit.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</strong></span>
+                <span className="currency-picker-rate-tag">Live rate</span>
+              </>
+            ) : (
+              <span className="currency-picker-rate-loading">Live rate unavailable</span>
+            )}
+          </div>
+        )}
+        {draftCurrency !== 'PHP' && (
+          <p className="currency-picker-acr-note">The Quotation &amp; Invoice will show an "ACR" line with the total automatically converted to PHP at this rate.</p>
+        )}
+      </div>
+    )
+  }
+
   function openQuotationPreview() { setScreen('quotation-preview') }
   
   function openInvoiceEditor() {
@@ -2014,6 +2147,810 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     }
   }
 
+  // ────────────────────────────────────────────────────────────────────
+  // Reusable document body renderers. Each takes any booking-shaped data
+  // (a saved BookingRecord OR a live in-progress draft built from
+  // bookingForm) and renders the same document markup used by the full
+  // preview screens. This lets the Data Gathering form show a genuine
+  // live preview of the actual document while the user types, and keeps
+  // the full preview screens and the live preview panel pixel-identical.
+  // ────────────────────────────────────────────────────────────────────
+  function renderQuotationDoc(selectedBooking: BookingRecord) {
+    type PackageRow = { name: string; qty: string; price: string }
+    let quotePkg: PackageRow = { name: '', qty: '1', price: '' }
+    try { const p = JSON.parse(selectedBooking.invoicePackage || ''); if (p && typeof p === 'object') quotePkg = p } catch {}
+
+    type PaxRate = { count: string; rate: string }
+    const paxLabels = ['Adult', 'Child', 'Senior', 'Infant']
+    let quotePaxRates: PaxRate[] = paxLabels.map(() => ({ count: '', rate: '' }))
+    try {
+      const p = JSON.parse(selectedBooking.quotationPaxRates || '')
+      if (Array.isArray(p) && p.length === 4) quotePaxRates = p
+    } catch {}
+    const hasPaxRates = quotePaxRates.some((r) => (parseFloat(r.count) || 0) > 0 && (parseFloat(r.rate) || 0) > 0)
+
+    const hasNewQuoteData = !!(quotePkg.name || quotePkg.price)
+
+    const lineItems = hasPaxRates
+      ? quotePaxRates
+          .map((r, i) => ({ label: paxLabels[i], count: parseFloat(r.count) || 0, rate: parseFloat(r.rate) || 0 }))
+          .filter((r) => r.count > 0 && r.rate > 0)
+          .map((r) => ({
+            description: `${quotePkg.name || selectedBooking.packageName || 'Package'} — ${r.label}`,
+            quantity: r.count,
+            unitPrice: r.rate,
+            nettCost: 0,
+            total: r.count * r.rate,
+            nettTotal: 0,
+            profit: r.count * r.rate,
+          }))
+      : hasNewQuoteData
+      ? [
+          {
+            description: quotePkg.name || selectedBooking.packageName || 'Package',
+            quantity: parseQuantity(quotePkg.qty || '1'),
+            unitPrice: parseAmount(quotePkg.price),
+            nettCost: 0,
+            total: parseQuantity(quotePkg.qty || '1') * parseAmount(quotePkg.price),
+            nettTotal: 0,
+            profit: parseQuantity(quotePkg.qty || '1') * parseAmount(quotePkg.price),
+          },
+        ]
+      : getBookingLineItems(selectedBooking)
+
+    const quoteTotal = sumLineItems(lineItems, 'total')
+
+    const inclusions = getLines(selectedBooking.inclusions, [
+      'Travel arrangement based on selected package',
+    ])
+    const exclusions = getLines(selectedBooking.exclusions, [
+      'Meals not stated',
+      'Other incidental charges not stated',
+    ])
+
+    return (
+      <section className="quotation-preview print-document">
+        <header className="quote-header">
+          <div className="quote-company">
+            <strong>LION AND LAMB TRAVEL</strong>
+            <span>BLK C 7-17 Olongapo City Public Market</span>
+            <span>East Bajac Bajac Olongapo City</span>
+            <span>travel_lionlamb@yahoo.com</span>
+          </div>
+          <img src={logo} alt="Lion and Lamb Travel logo" />
+        </header>
+
+        <h1>Quotation</h1>
+
+        <section className="quote-meta-grid">
+          <article>
+            <span>Date</span>
+            <strong>{formatProjectDate(new Date().toISOString())}</strong>
+          </article>
+          <article>
+            <span>Quotation For</span>
+            <strong>{selectedBooking.clientName}</strong>
+          </article>
+          <article>
+            <span>Package Name</span>
+            <strong>{selectedBooking.packageName}</strong>
+          </article>
+          <article>
+            <span>Quotation No.</span>
+            <strong>{selectedBooking.quotationNo || selectedBooking.id}</strong>
+          </article>
+          <article>
+            <span>Date of Travel</span>
+            <strong>
+              {selectedBooking.travelStart
+                ? `${formatProjectDate(selectedBooking.travelStart)}${
+                    selectedBooking.travelEnd
+                      ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
+                      : ''
+                  }`
+                : 'To be advised'}
+            </strong>
+          </article>
+          <article>
+            <span>Condition</span>
+            <strong>Rate subject to change and availability</strong>
+          </article>
+        </section>
+
+        <table className="quote-table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th className="desc-col">Description</th>
+              <th>Qty</th>
+              <th>Unit Price</th>
+              <th>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lineItems.map((item, index) => (
+              <tr key={`${item.description}-${index}`}>
+                <td className="item-col">{item.description}</td>
+                <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
+                <td>{item.quantity}</td>
+                <td>{convertAndFormat(item.unitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                <td>{convertAndFormat(item.total, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <section className="invoice-total-panel quote-total-panel">
+          <div className="invoice-total-row total-row">
+            <span>TOTAL</span>
+            <strong>{convertAndFormat(quoteTotal, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+          </div>
+          {acrPhpTotal(quoteTotal, selectedBooking.currency) && (
+            <div className="invoice-total-row">
+              <span>ACR (Converted to PHP)</span>
+              <strong>{acrPhpTotal(quoteTotal, selectedBooking.currency)}</strong>
+            </div>
+          )}
+        </section>
+
+        <section className="quote-notes">
+          <p>Notes: No booking has been made yet.</p>
+          <strong>RATE SUBJECT TO CHANGE AND AVAILABILITY</strong>
+        </section>
+
+        <section className="preview-list-grid document-checklists">
+          <div className="included-list">
+            <h2>Inclusions</h2>
+            <ul>
+              {inclusions.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="excluded-list">
+            <h2>Exclusions</h2>
+            <ul>
+              {exclusions.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        </section>
+      </section>
+    )
+  }
+
+  function renderInvoiceDoc(selectedBooking: BookingRecord) {
+    const lineItems = getBookingLineItems(selectedBooking)
+
+    const totalPrice = sumLineItems(lineItems, 'total')
+    const amountPaid = parseAmount(selectedBooking.invoiceAmountPaid)
+    const balance = Math.max(totalPrice - amountPaid, 0)
+    const paymentRecords = getLines(selectedBooking.paymentRecords, [
+      'No payment updates yet.',
+    ])
+
+    return (
+      <section className="invoice-preview print-document">
+        <header className="invoice-header">
+          <img src={logo} alt="Lion and Lamb Travel logo" />
+          <div>
+            <h1>INVOICE</h1>
+            <strong>LION AND LAMB TRAVEL</strong>
+            <span>BLK C 7-17, Olongapo City Public Market</span>
+            <span>Rizal Ave. Olongapo City, Zambales 2200</span>
+            <span>travel_lionlamb@yahoo.com</span>
+          </div>
+          <img src={agencySeal} alt="DOT accreditation seal" />
+        </header>
+
+        <section className="invoice-strip">
+          <div>
+            <span>Invoice #</span>
+            <strong>{(selectedBooking.id || 'DRAFT').replace('BK-', 'LLTP')}</strong>
+          </div>
+          <div>
+            <span>Invoice Date</span>
+            <strong>{formatProjectDate(new Date().toISOString())}</strong>
+          </div>
+          <div className="amount-due-box">
+            <span>Amount Due</span>
+            <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+          </div>
+        </section>
+
+        <section className="bill-to-row">
+          <strong>Bill To:</strong>
+          <span>{selectedBooking.clientName}</span>
+        </section>
+
+        <div className="invoice-body-grid">
+          <table className="invoice-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th className="desc-col">Description</th>
+                <th>Qty</th>
+                <th>Unit Price</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lineItems.map((item, index) => (
+                <tr key={`${item.description}-${index}`}>
+                  <td className="item-col">{item.description}</td>
+                  <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
+                  <td>{item.quantity}</td>
+                  <td>{convertAndFormat(item.unitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                  <td>{convertAndFormat(item.total, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <section className="invoice-total-panel">
+            <div className="invoice-total-row total-row">
+              <span>TOTAL</span>
+              <strong>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+            </div>
+            {acrPhpTotal(totalPrice, selectedBooking.currency) && (
+              <div className="invoice-total-row acr-row">
+                <span>ACR (Converted to PHP)</span>
+                <strong>{acrPhpTotal(totalPrice, selectedBooking.currency)}</strong>
+              </div>
+            )}
+            <div className="invoice-total-row">
+              <span>PAID</span>
+              <strong>{convertAndFormat(parseAmount(selectedBooking.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+            </div>
+            <div className="invoice-total-row">
+              <span>BALANCE</span>
+              <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+            </div>
+            {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate && (
+              <div className="invoice-total-row fully-paid-badge">
+                <span>FULLY PAID ON</span>
+                <strong>{formatProjectDate(selectedBooking.invoiceFullyPaidDate)}</strong>
+              </div>
+            )}
+            <div className="payment-placeholder">
+              <span>PAYMENT UPDATES</span>
+              <ul>
+                {paymentRecords.map((record) => (
+                  <li key={record}>{record}</li>
+                ))}
+              </ul>
+            </div>
+          </section>
+        </div>
+
+        <section className="invoice-notes">
+          <p>
+            Status: {selectedBooking.invoicePaymentStatus || 'Unpaid'}.
+            {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate
+              ? ` Fully paid on ${formatProjectDate(selectedBooking.invoiceFullyPaidDate)}.`
+              : ''}
+            Payment method: {selectedBooking.paymentMethod || 'To be advised'}.
+            Payment date:{' '}
+            {selectedBooking.invoicePaymentDate
+              ? formatProjectDate(selectedBooking.invoicePaymentDate)
+              : 'To be advised'}.
+            Reference: {selectedBooking.invoiceReference || 'N/A'}.
+            Flight details: {selectedBooking.flightDetails || 'To be advised'}.
+          </p>
+          <section className="invoice-policy">
+            <h3>Flight Details</h3>
+            <p>{selectedBooking.flightDetails || 'To be advised'}</p>
+            <h3>Terms and Conditions</h3>
+            <p>Booking Policy: Payments are non-refundable once made.</p>
+            <p>
+              Hotel and tours are re-bookable under certain conditions and
+              subject to fees and penalties.
+            </p>
+            <p>
+              Any alteration made without approval from the issuing office
+              will be deemed null and void.
+            </p>
+            <p>
+              Any incidental expenses will be on the guest account. The
+              issuing office is not liable for problems caused by airline,
+              hotel, or local tour operators.
+            </p>
+            <p>
+              Passengers are responsible for checking travel documents and
+              immigration requirements before booking.
+            </p>
+          </section>
+          <div className="transaction-box">
+            <strong>For faster transactions:</strong>
+            <span>You may deposit your payment below:</span>
+            <div className="transaction-banks">
+              <div>
+                <span className="bank-name">BDO - OLONGAPO</span>
+                <span>Sharon R. Morine</span>
+                <span>PESO SA: 007700076844</span>
+              </div>
+              <div>
+                <span className="bank-name">CHINA BANK - OLONGAPO</span>
+                <span>Sharon R. Morine</span>
+                <span>USD SA: 167352000868</span>
+              </div>
+              <div>
+                <span className="bank-name">GCASH</span>
+                <span>Sharon R.</span>
+                <span>9613495114</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+    )
+  }
+
+  function renderPurchaseOrderDoc(selectedBooking: BookingRecord) {
+    let poItems: POLineItem[] = []
+    try { const p = JSON.parse(selectedBooking.poLineItemsJson || '[]'); if (Array.isArray(p)) poItems = p } catch {}
+    poItems = poItems.filter(item => item.showInDocument !== false)
+
+    const poNumber = (selectedBooking.id || 'DRAFT').replace('BK-', new Date().getFullYear().toString())
+    const travelDateStr = selectedBooking.travelStart
+      ? `${formatProjectDate(selectedBooking.travelStart)}${selectedBooking.travelEnd ? ` - ${formatProjectDate(selectedBooking.travelEnd)}` : ''}`
+      : 'TBA'
+    const optionDateStr = selectedBooking.optionDate ? formatProjectDate(selectedBooking.optionDate) : 'TBA'
+
+    const poGroups: POLineItem[][] = []
+    const vendorKeyMap = new Map<string, number>()
+    for (const item of poItems) {
+      const key = (item.vendor || '').trim().toLowerCase() || `__no_vendor_${poGroups.length}`
+      if (vendorKeyMap.has(key)) {
+        poGroups[vendorKeyMap.get(key)!].push(item)
+      } else {
+        vendorKeyMap.set(key, poGroups.length)
+        poGroups.push([item])
+      }
+    }
+
+    const formatPHP = (n: number) => `₱ ${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    const paxTotal = (item: POLineItem) =>
+      (parseInt(item.adultPax) || 0) + (parseInt(item.childPax) || 0) + (parseInt(item.seniorPax) || 0) + (parseInt(item.infantPax) || 0)
+    const rowTotal = (item: POLineItem) => {
+      const pax = paxTotal(item) || 1
+      return (parseFloat(item.supplierNett) || 0) * pax
+    }
+
+    const renderPODocument = (items: POLineItem[], groupIndex: number, isLast: boolean) => {
+      const first = items[0]
+      const groupTotal = items.reduce((sum, item) => sum + rowTotal(item), 0)
+
+      return (
+        <section key={groupIndex} className={`po-preview print-document${!isLast ? ' po-page-break' : ''}`}>
+          <header className="po-header">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>LION AND LAMB TRAVEL</strong>
+              <span>BLK #7-17 OLONGAPO CITY PUBLIC MARKET</span>
+              <span>Olongapo City, Philippines 2200</span>
+              <span>travel_lionlamb@yahoo.com</span>
+              <span>DOT No: R03 - TTA 013652023</span>
+            </div>
+            <img src={agencySeal} alt="DOT accreditation seal" />
+          </header>
+
+          <h1>Purchase Order</h1>
+
+          <section className="po-meta-grid">
+            <article>
+              <span>Date</span>
+              <strong>{formatProjectDate(new Date().toISOString())}</strong>
+            </article>
+            <article>
+              <span>Invoice</span>
+              <strong>{selectedBooking.quotationNo || selectedBooking.id}</strong>
+            </article>
+            <article>
+              <span>P.O. No.</span>
+              <strong>{poNumber}-{groupIndex + 1}</strong>
+            </article>
+          </section>
+
+          <section className="po-party-grid">
+            <div>
+              <span>Vendor:</span>
+              <strong>{first.vendor || 'To be assigned'}</strong>
+              <small>Agent: {first.agent || 'N/A'}</small>
+              <small>Contact No.: {first.contactNo || 'N/A'}</small>
+            </div>
+            <div>
+              <span>Client Details:</span>
+              <strong>{selectedBooking.clientName || '—'}</strong>
+              <small>No. of pax: {selectedBooking.pax || '—'}</small>
+              <small>Contact No.: {selectedBooking.contactNumber || 'N/A'}</small>
+            </div>
+          </section>
+
+          <table className="po-table po-service-table">
+            <thead>
+              <tr>
+                <th>Payment Method</th>
+                <th>Type of Service</th>
+                <th>Travel Date</th>
+                <th>Option Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>{first.paymentMethod || 'N/A'}</td>
+                <td>{first.serviceItem || '—'}</td>
+                <td>{travelDateStr}</td>
+                <td>{optionDateStr}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table className="po-table particulars">
+            <thead>
+              <tr>
+                <th>Qty</th>
+                <th># of Pax</th>
+                <th>Particular</th>
+                <th>Description</th>
+                <th>Unit Price</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item, rowIndex) => {
+                const pax = paxTotal(item) || 1
+                const nett = parseFloat(item.supplierNett) || 0
+                const amount = nett * pax
+                return (
+                  <tr key={rowIndex}>
+                    <td>{pax}</td>
+                    <td>{pax}</td>
+                    <td>{item.serviceItem || '—'}</td>
+                    <td>{item.description || '—'}</td>
+                    <td>{formatPHP(nett)}</td>
+                    <td>{formatPHP(amount)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+
+          <section className="po-total">
+            <span>Total Amount:</span>
+            <strong>{formatPHP(groupTotal)}</strong>
+          </section>
+
+          <section className="po-notes-grid">
+            <div>
+              <span>Hotel:</span>
+              <strong>{selectedBooking.accommodation || 'N/A'}</strong>
+            </div>
+            <div>
+              <span>Flight Details:</span>
+              <strong>{selectedBooking.flightDetails || 'N/A'}</strong>
+            </div>
+            <div>
+              <span>Special Instructions:</span>
+              <strong>{selectedBooking.specialInstructions || selectedBooking.notes || 'N/A'}</strong>
+            </div>
+          </section>
+        </section>
+      )
+    }
+
+    if (poItems.length === 0) {
+      return (
+        <section className="po-preview print-document">
+          <header className="po-header">
+            <img src={logo} alt="Lion and Lamb Travel logo" />
+            <div>
+              <strong>LION AND LAMB TRAVEL</strong>
+              <span>BLK #7-17 OLONGAPO CITY PUBLIC MARKET</span>
+              <span>Olongapo City, Philippines 2200</span>
+              <span>travel_lionlamb@yahoo.com</span>
+              <span>DOT No: R03 - TTA 013652023</span>
+            </div>
+            <img src={agencySeal} alt="DOT accreditation seal" />
+          </header>
+          <h1>Purchase Order</h1>
+          <p className="po-empty-row">No PO items yet — add supplier line items in the Purchase Order tab.</p>
+        </section>
+      )
+    }
+
+    return <>{poGroups.map((group, index) => renderPODocument(group, index, index === poGroups.length - 1))}</>
+  }
+
+  function renderVoucherDoc(selectedBooking: BookingRecord) {
+    const inclusions = getLines(selectedBooking.inclusions, [
+      'Travel arrangement based on confirmed package',
+      'Accommodation / service details as stated above',
+      'Assistance from Lion and Lamb Travel',
+    ])
+    const exclusions = getLines(selectedBooking.exclusions, [
+      'Meals not stated',
+      'Optional tours or personal expenses',
+      'Other incidental charges not stated',
+    ])
+    const itineraryRows: { date: string; itinerary: string; hotel: string }[] = (() => {
+      if (selectedBooking.voucherRowsJson) {
+        try {
+          const parsed = JSON.parse(selectedBooking.voucherRowsJson)
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed.map((r) => ({
+            date: r.date ? formatProjectDate(r.date) : '',
+            itinerary: r.itinerary || '',
+            hotel: r.hotel || '',
+          }))
+        } catch { /* fall through */ }
+      }
+      const lines = getLines(selectedBooking.itinerary, [
+        selectedBooking.itemDescription || `Arrival and start of ${selectedBooking.packageName}`,
+        'Free own leisure. Final reminders and departure arrangements.',
+      ])
+      return lines.map((line, index) => ({
+        date: index === 0
+          ? selectedBooking.travelStart ? formatProjectDate(selectedBooking.travelStart) : `Day ${index + 1}`
+          : index === lines.length - 1 && selectedBooking.travelEnd ? formatProjectDate(selectedBooking.travelEnd) : `Day ${index + 1}`,
+        itinerary: line,
+        hotel: selectedBooking.hotelAddress || selectedBooking.accommodation || selectedBooking.destination || 'Accommodation to be advised',
+      }))
+    })()
+
+    return (
+      <section className="voucher-preview print-document">
+        <header className="voucher-header">
+          <img src={logo} alt="Lion and Lamb Travel logo" />
+          <div>
+            <strong>LION AND LAMB TRAVEL</strong>
+            <span>BLK C #7-17 OLONGAPO CITY PUBLIC MARKET</span>
+            <span>Olongapo City, Philippines 2200</span>
+            <span>travel_lionlamb@yahoo.com</span>
+            <span>DOT No: R03 - TTA 013652023</span>
+          </div>
+          <img src={agencySeal} alt="DOT accreditation seal" />
+        </header>
+
+        <h1>Service Voucher</h1>
+
+        <section className="voucher-meta">
+          <div>
+            <span>Date</span>
+            <strong>{formatProjectDate(new Date().toISOString())}</strong>
+          </div>
+          <div>
+            <span>Invoice</span>
+            <strong>{selectedBooking.quotationNo || selectedBooking.id}</strong>
+          </div>
+        </section>
+
+        <section className="voucher-party-grid">
+          <div>
+            <span>Package:</span>
+            <strong>{selectedBooking.packageName}</strong>
+            <small>
+              Tour Date:{' '}
+              {selectedBooking.travelStart
+                ? `${formatProjectDate(selectedBooking.travelStart)}${
+                    selectedBooking.travelEnd
+                      ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
+                      : ''
+                  }`
+                : 'TBA'}
+            </small>
+            <small>Flight Details: {selectedBooking.flightDetails || 'TBA'}</small>
+            <small>
+              Emergency Contact #: {selectedBooking.emergencyContact || 'TBA'}
+            </small>
+          </div>
+          <div>
+            <span>Client Details:</span>
+            <strong>Name: {selectedBooking.clientName}</strong>
+            <small>Guest Contact Number: {selectedBooking.contactNumber || 'TBA'}</small>
+            <small>
+              Accommodation:{' '}
+              {selectedBooking.accommodation || selectedBooking.packageName || 'TBA'}
+            </small>
+          </div>
+        </section>
+
+        <table className="voucher-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Itinerary</th>
+              <th>Hotel</th>
+            </tr>
+          </thead>
+          <tbody>
+            {itineraryRows.map((row, i) => (
+              <tr key={`${row.date}-${i}`}>
+                <td>{row.date}</td>
+                <td style={{ whiteSpace: 'pre-wrap' }}>{row.itinerary}</td>
+                <td>{row.hotel}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <section className="voucher-lists document-checklists">
+          <div className="included-list">
+            <h2>Package Inclusions</h2>
+            <ul>
+              {inclusions.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="excluded-list">
+            <h2>Package Exclusions</h2>
+            <ul>
+              {exclusions.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
+        <section className="voucher-reminders">
+          <p>Itinerary may change depending on local weather condition or other unavoidable circumstances.</p>
+          <p>For any flight schedule change or flight delays, please inform us immediately.</p>
+          <p>Please be informed that whole period quarantine is needed and full charge for any cancellation, amendment, no show, or early check-out may apply.</p>
+          <p>Any unused portion for land arrangement is non-refundable.</p>
+          <p>All rights reserved by Lion and Lamb Travel if any changes occur without prior notice.</p>
+          {selectedBooking.specialInstructions && (
+            <p>{selectedBooking.specialInstructions}</p>
+          )}
+        </section>
+
+        <section className="voucher-disclaimer">
+          <strong>Disclaimer and Confidentiality Notice</strong>
+          <p>
+            Lion and Lamb Travel arranges travel services through independent
+            vendors such as airlines, accommodation, transportation, tours, and
+            related services. Confirmation vouchers are non-refundable,
+            non-transferable, and subject to supplier rules and availability.
+          </p>
+        </section>
+      </section>
+    )
+  }
+
+  function renderBreakdownDoc(selectedBooking: BookingRecord) {
+    const brkItems = readBreakdownItems(selectedBooking)
+
+    let colLabels = ['ADULT', 'CHILD', 'SENIOR', 'INFANT']
+    try {
+      const parsed = JSON.parse(selectedBooking.breakdownColLabels)
+      if (Array.isArray(parsed) && parsed.length === 4) colLabels = parsed
+    } catch {}
+
+    let colPaxStored = ['', '', '', '']
+    try {
+      const parsed = JSON.parse(selectedBooking.breakdownPaxTiers)
+      if (Array.isArray(parsed) && parsed.length === 4) colPaxStored = parsed
+    } catch {}
+    const colPax = colLabels.map((label, i) => {
+      const match = label.match(/^(\d+)/)
+      return match ? match[1] : colPaxStored[i]
+    })
+
+    const paxPriceFields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
+
+    const subtotals = paxPriceFields.map((field) =>
+      brkItems
+        .filter((item) => !item.isPackageRow)
+        .reduce((sum, item) => sum + parseAmount(item[field] as string), 0)
+    )
+
+    const totals = subtotals.map((sub, i) => {
+      const pax = parseQuantity(colPax[i])
+      return sub * pax
+    })
+
+    return (
+      <section className="breakdown-preview print-document">
+        <table className="breakdown-quotation-table">
+          <thead>
+            <tr className="bq-title-row">
+              <th colSpan={2}>QUOTATION: {selectedBooking.quotationNo || selectedBooking.id}</th>
+              <th colSpan={4} className="bq-amount-header">AMOUNT</th>
+            </tr>
+            <tr className="bq-info-row">
+              <td className="bq-label">NAME:</td>
+              <td className="bq-value">
+                {selectedBooking.packageName}
+              </td>
+              <td rowSpan={3} colSpan={4} className="bq-amount-cell"></td>
+            </tr>
+            <tr className="bq-info-row">
+              <td className="bq-label">DATE OF TRAVEL:</td>
+              <td className="bq-value">
+                {selectedBooking.travelStart
+                  ? `${formatProjectDate(selectedBooking.travelStart)}${selectedBooking.travelEnd ? ` - ${formatProjectDate(selectedBooking.travelEnd)}` : ''}`
+                  : 'TBA'}
+              </td>
+            </tr>
+            <tr className="bq-info-row">
+              <td className="bq-label">NO OF PAX:</td>
+              <td className="bq-value">{formatPaxBreakdownLabel(readPaxBreakdown(readBreakdownItems(selectedBooking).find(i => i.isPackageRow)?.paxBreakdown)) || selectedBooking.pax || '—'}</td>
+            </tr>
+            <tr className="bq-col-header">
+              <th>SERVICE</th>
+              <th>DETAILS</th>
+              {colLabels.map((label, i) => (
+                <th key={i} className={i === 3 ? 'bq-infant-col' : ''}>{label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {brkItems.filter(item => !item.isPackageRow).map((item, index) => (
+              <tr key={index} className="bq-data-row">
+                <td className="bq-service">{item.description.toUpperCase()}</td>
+                <td className="bq-details">{item.details || ''}</td>
+                {paxPriceFields.map((field, ci) => {
+                  const val = parseAmount(item[field] as string)
+                  return (
+                    <td key={ci} className={`bq-price${val > 0 ? ' bq-has-value' : ''}${ci === 3 ? ' bq-infant-col' : ''}`}>
+                      {val > 0 ? `₱${val.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+            <tr className="bq-subtotal-row">
+              <td colSpan={2}>SUBTOTAL:</td>
+              {subtotals.map((val, i) => (
+                <td key={i} className={`bq-price${val > 0 ? ' bq-has-value' : ''}${i === 3 ? ' bq-infant-col' : ''}`}>
+                  {val > 0 ? `₱${val.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'}
+                </td>
+              ))}
+            </tr>
+            <tr className="bq-pax-row">
+              <td colSpan={2}>NO. OF PAX</td>
+              {colPax.map((pax, i) => (
+                <td key={i} className={`bq-price${pax ? ' bq-has-value' : ''}${i === 3 ? ' bq-infant-col' : ''}`}>
+                  {pax || ''}
+                </td>
+              ))}
+            </tr>
+            <tr className="bq-total-row">
+              <td colSpan={2}>TOTAL:</td>
+              {totals.map((val, i) => (
+                <td key={i} className={`bq-price${val > 0 ? ' bq-has-value' : ''}${i === 3 ? ' bq-infant-col' : ''}`}>
+                  {val > 0 ? `₱${val.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'}
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    )
+  }
+
+  // Builds a BookingRecord-shaped object from the live, in-progress
+  // Data Gathering form state so it can be fed straight into the document
+  // renderers above — this is what powers the live preview panel.
+  function buildDraftBookingFromForm(): BookingRecord {
+    return {
+      ...bookingForm,
+      id: editingBookingId || selectedBookingId || 'DRAFT',
+      createdAt: bookingCreatedAt ? new Date(bookingCreatedAt + 'T00:00:00').toISOString() : new Date().toISOString(),
+    }
+  }
+
+  function renderDocByType(docType: 'quotation' | 'invoice' | 'purchase-order' | 'voucher' | 'breakdown', data: BookingRecord) {
+    switch (docType) {
+      case 'quotation': return renderQuotationDoc(data)
+      case 'invoice': return renderInvoiceDoc(data)
+      case 'purchase-order': return renderPurchaseOrderDoc(data)
+      case 'voucher': return renderVoucherDoc(data)
+      case 'breakdown': return renderBreakdownDoc(data)
+      default: return null
+    }
+  }
+
   if (screen === 'splash') {
     return (
       <main className="splash-screen">
@@ -2323,7 +3260,34 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span className="doc-form-subnav-title">
                 {docCards.find(c => c.id === activeDocTab)?.icon} {docCards.find(c => c.id === activeDocTab)?.label}
               </span>
+              <div className="live-preview-controls">
+                {showLivePreview && (
+                  <select
+                    className="live-preview-doc-select"
+                    value={livePreviewDoc}
+                    onChange={(e) => setLivePreviewDoc(e.target.value as typeof livePreviewDoc)}
+                    title="Choose which document to preview live"
+                  >
+                    {docCards.map((card) => (
+                      <option key={card.id} value={card.id}>{card.label}</option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  type="button"
+                  className={`live-preview-toggle-btn ${showLivePreview ? 'live-preview-toggle-btn--active' : ''}`}
+                  onClick={() => {
+                    setShowLivePreview((v) => !v)
+                    if (!showLivePreview && activeDocTab) setLivePreviewDoc(activeDocTab)
+                  }}
+                  title={showLivePreview ? 'Hide live preview' : 'Show live preview'}
+                >
+                  <Eye size={15} /> {showLivePreview ? 'Hide preview' : 'Live preview'}
+                </button>
+              </div>
             </div>
+            <div className={`data-form-split ${showLivePreview ? 'data-form-split--active' : ''}`}>
+            <div className="data-form-main">
             {sharedBookingStrip}
             <form className="data-form" onSubmit={handleSaveBooking}>
               {dataError && <p className="data-alert error">{dataError}</p>}
@@ -3450,6 +4414,20 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 </button>
               </footer>
             </form>
+            </div>
+
+            {showLivePreview && (
+              <aside className="live-preview-panel">
+                <div className="live-preview-panel-header">
+                  <Eye size={14} />
+                  <span>Live preview — {docCards.find(c => c.id === livePreviewDoc)?.label}</span>
+                </div>
+                <div className="live-preview-panel-body">
+                  {renderDocByType(livePreviewDoc, buildDraftBookingFromForm())}
+                </div>
+              </aside>
+            )}
+            </div>
           </>
         )}
 
@@ -3493,6 +4471,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           const bookingCurrency = bookingForm.currency || 'PHP'
           const liveRate = exchangeRates[bookingCurrency] ?? null // 1 PHP = liveRate units of bookingCurrency
           const phpPerUnit = liveRate && liveRate > 0 ? 1 / liveRate : null
+          const savedBookingForCurrency = (lastSavedBookingRef.current?.id === editingBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((b) => b.id === editingBookingId)
+          const savedCurrency = savedBookingForCurrency?.currency || 'PHP'
+          const hasPendingCurrencyChange = isEditingBooking && bookingCurrency !== savedCurrency
           return (
             <div className="currency-picker-card">
               <div className="currency-picker-head">
@@ -3511,6 +4492,26 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               >
                 {SUPPORTED_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
+
+              {isEditingBooking ? (
+                <>
+                  <button
+                    type="button"
+                    className="currency-picker-apply-btn"
+                    onClick={applyCurrencyToDocuments}
+                    disabled={!hasPendingCurrencyChange}
+                  >
+                    Apply to Document
+                  </button>
+                  <p className={hasPendingCurrencyChange ? 'currency-picker-apply-hint currency-picker-apply-hint-pending' : 'currency-picker-apply-hint'}>
+                    {hasPendingCurrencyChange
+                      ? `Not applied yet — Quotation & Invoice still show ${savedCurrency}.`
+                      : `Applied — Quotation & Invoice are set to ${bookingCurrency}.`}
+                  </p>
+                </>
+              ) : (
+                <p className="currency-picker-apply-hint">Save this booking first — then you can apply a currency to its Quotation &amp; Invoice.</p>
+              )}
 
               {bookingCurrency === 'PHP' ? (
                 <p className="currency-picker-rate currency-picker-rate-base">Base currency — quotation &amp; invoice amounts print as-is.</p>
@@ -3719,6 +4720,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </div>
           </aside>
         </div>
+        {renderProjectCurrencyPicker()}
       </main>
     )
   }
@@ -3875,6 +4877,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </p>
           </section>
         </section>
+        {renderProjectCurrencyPicker()}
       </main>
     )
   }
@@ -3895,66 +4898,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         </main>
       )
     }
-
-    // Package only — addons are invoice-only and never appear on the
-    // quotation, even if they've been filled in. Falls back to legacy
-    // breakdown-derived line items if the package hasn't been filled in yet.
-    type PackageRow = { name: string; qty: string; price: string }
-    let quotePkg: PackageRow = { name: '', qty: '1', price: '' }
-    try { const p = JSON.parse(selectedBooking.invoicePackage || ''); if (p && typeof p === 'object') quotePkg = p } catch {}
-
-    // Optional pax-tier breakdown (Adult/Child/Senior/Infant) — when filled
-    // in, the quotation shows one row per pax type instead of a single
-    // package row, plus a total panel similar to the invoice.
-    type PaxRate = { count: string; rate: string }
-    const paxLabels = ['Adult', 'Child', 'Senior', 'Infant']
-    let quotePaxRates: PaxRate[] = paxLabels.map(() => ({ count: '', rate: '' }))
-    try {
-      const p = JSON.parse(selectedBooking.quotationPaxRates || '')
-      if (Array.isArray(p) && p.length === 4) quotePaxRates = p
-    } catch {}
-    const hasPaxRates = quotePaxRates.some((r) => (parseFloat(r.count) || 0) > 0 && (parseFloat(r.rate) || 0) > 0)
-
-    // Quotation shows ONLY the package — addons are invoice-only and never
-    // appear here, even if they've been filled in.
-    const hasNewQuoteData = !!(quotePkg.name || quotePkg.price)
-
-    const lineItems = hasPaxRates
-      ? quotePaxRates
-          .map((r, i) => ({ label: paxLabels[i], count: parseFloat(r.count) || 0, rate: parseFloat(r.rate) || 0 }))
-          .filter((r) => r.count > 0 && r.rate > 0)
-          .map((r) => ({
-            description: `${quotePkg.name || selectedBooking.packageName || 'Package'} — ${r.label}`,
-            quantity: r.count,
-            unitPrice: r.rate,
-            nettCost: 0,
-            total: r.count * r.rate,
-            nettTotal: 0,
-            profit: r.count * r.rate,
-          }))
-      : hasNewQuoteData
-      ? [
-          {
-            description: quotePkg.name || selectedBooking.packageName || 'Package',
-            quantity: parseQuantity(quotePkg.qty || '1'),
-            unitPrice: parseAmount(quotePkg.price),
-            nettCost: 0,
-            total: parseQuantity(quotePkg.qty || '1') * parseAmount(quotePkg.price),
-            nettTotal: 0,
-            profit: parseQuantity(quotePkg.qty || '1') * parseAmount(quotePkg.price),
-          },
-        ]
-      : getBookingLineItems(selectedBooking)
-
-    const quoteTotal = sumLineItems(lineItems, 'total')
-
-    const inclusions = getLines(selectedBooking.inclusions, [
-      'Travel arrangement based on selected package',
-    ])
-    const exclusions = getLines(selectedBooking.exclusions, [
-      'Meals not stated',
-      'Other incidental charges not stated',
-    ])
 
     return (
       <main className="preview-screen">
@@ -4005,115 +4948,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </div>
         </nav>
 
-        <section className="quotation-preview print-document">
-          <header className="quote-header">
-            <div className="quote-company">
-              <strong>LION AND LAMB TRAVEL</strong>
-              <span>BLK C 7-17 Olongapo City Public Market</span>
-              <span>East Bajac Bajac Olongapo City</span>
-              <span>travel_lionlamb@yahoo.com</span>
-            </div>
-            <img src={logo} alt="Lion and Lamb Travel logo" />
-          </header>
-
-          <h1>Quotation</h1>
-
-          <section className="quote-meta-grid">
-            <article>
-              <span>Date</span>
-              <strong>{formatProjectDate(new Date().toISOString())}</strong>
-            </article>
-            <article>
-              <span>Quotation For</span>
-              <strong>{selectedBooking.clientName}</strong>
-            </article>
-            <article>
-              <span>Package Name</span>
-              <strong>{selectedBooking.packageName}</strong>
-            </article>
-            <article>
-              <span>Quotation No.</span>
-              <strong>{selectedBooking.quotationNo || selectedBooking.id}</strong>
-            </article>
-            <article>
-              <span>Date of Travel</span>
-              <strong>
-                {selectedBooking.travelStart
-                  ? `${formatProjectDate(selectedBooking.travelStart)}${
-                      selectedBooking.travelEnd
-                        ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
-                        : ''
-                    }`
-                  : 'To be advised'}
-              </strong>
-            </article>
-            <article>
-              <span>Condition</span>
-              <strong>Rate subject to change and availability</strong>
-            </article>
-          </section>
-
-          <table className="quote-table">
-            <thead>
-              <tr>
-                <th>Item</th>
-                <th className="desc-col">Description</th>
-                <th>Qty</th>
-                <th>Unit Price</th>
-                <th>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lineItems.map((item, index) => (
-                <tr key={`${item.description}-${index}`}>
-                  <td className="item-col">{item.description}</td>
-                  <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
-                  <td>{item.quantity}</td>
-                  <td>{convertAndFormat(item.unitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
-                  <td>{convertAndFormat(item.total, selectedBooking.currency || 'PHP', exchangeRates)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <section className="invoice-total-panel quote-total-panel">
-            <div className="invoice-total-row total-row">
-              <span>TOTAL</span>
-              <strong>{convertAndFormat(quoteTotal, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
-            </div>
-            {acrPhpTotal(quoteTotal, selectedBooking.currency) && (
-              <div className="invoice-total-row">
-                <span>ACR (Converted to PHP)</span>
-                <strong>{acrPhpTotal(quoteTotal, selectedBooking.currency)}</strong>
-              </div>
-            )}
-          </section>
-
-          <section className="quote-notes">
-            <p>Notes: No booking has been made yet.</p>
-            <strong>RATE SUBJECT TO CHANGE AND AVAILABILITY</strong>
-          </section>
-
-          <section className="preview-list-grid document-checklists">
-            <div className="included-list">
-              <h2>Inclusions</h2>
-              <ul>
-                {inclusions.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </div>
-            <div className="excluded-list">
-              <h2>Exclusions</h2>
-              <ul>
-                {exclusions.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          </section>
-
-        </section>
+        {renderQuotationDoc(selectedBooking)}
+        {renderProjectCurrencyPicker()}
       </main>
     )
   }
@@ -4341,6 +5177,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </div>
           </div>
         )}
+        {renderProjectCurrencyPicker()}
       </main>
     )
   }
@@ -4361,25 +5198,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         </main>
       )
     }
-
-    // Package + Addons — now reads through the same shared helper used for
-    // payment/balance/Sheets totals, so this document can never show numbers
-    // that disagree with what "PAID?" or the dashboard think is owed.
-    const lineItems = getBookingLineItems(selectedBooking)
-
-    const totalPrice = sumLineItems(lineItems, 'total')
-    const amountPaid = parseAmount(selectedBooking.invoiceAmountPaid)
-    const balance = Math.max(totalPrice - amountPaid, 0)
-    const paymentRecords = getLines(selectedBooking.paymentRecords, [
-      'No payment updates yet.',
-    ])
-    const inclusions = getLines(selectedBooking.inclusions, [
-      'Travel arrangement based on confirmed package',
-    ])
-    const exclusions = getLines(selectedBooking.exclusions, [
-      'Meals not stated',
-      'Other services not mentioned above',
-    ])
 
     return (
       <main className="preview-screen">
@@ -4437,160 +5255,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </div>
         </nav>
 
-        <section className="invoice-preview print-document">
-          <header className="invoice-header">
-            <img src={logo} alt="Lion and Lamb Travel logo" />
-            <div>
-              <h1>INVOICE</h1>
-              <strong>LION AND LAMB TRAVEL</strong>
-              <span>BLK C 7-17, Olongapo City Public Market</span>
-              <span>Rizal Ave. Olongapo City, Zambales 2200</span>
-              <span>travel_lionlamb@yahoo.com</span>
-            </div>
-            <img src={agencySeal} alt="DOT accreditation seal" />
-          </header>
-
-          <section className="invoice-strip">
-            <div>
-              <span>Invoice #</span>
-              <strong>{selectedBooking.id.replace('BK-', 'LLTP')}</strong>
-            </div>
-            <div>
-              <span>Invoice Date</span>
-              <strong>{formatProjectDate(new Date().toISOString())}</strong>
-            </div>
-            <div className="amount-due-box">
-              <span>Amount Due</span>
-              <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
-            </div>
-          </section>
-
-          <section className="bill-to-row">
-            <strong>Bill To:</strong>
-            <span>{selectedBooking.clientName}</span>
-          </section>
-
-          <div className="invoice-body-grid">
-            <table className="invoice-table">
-              <thead>
-                <tr>
-                  <th>Item</th>
-                  <th className="desc-col">Description</th>
-                  <th>Qty</th>
-                  <th>Unit Price</th>
-                  <th>Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lineItems.map((item, index) => (
-                  <tr key={`${item.description}-${index}`}>
-                    <td className="item-col">{item.description}</td>
-                    <td className="desc-col">{index === 0 ? (selectedBooking.itemDescription || '') : ''}</td>
-                    <td>{item.quantity}</td>
-                    <td>{convertAndFormat(item.unitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
-                    <td>{convertAndFormat(item.total, selectedBooking.currency || 'PHP', exchangeRates)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <section className="invoice-total-panel">
-              <div className="invoice-total-row total-row">
-                <span>TOTAL</span>
-                <strong>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
-              </div>
-              {acrPhpTotal(totalPrice, selectedBooking.currency) && (
-                <div className="invoice-total-row">
-                  <span>ACR (Converted to PHP)</span>
-                  <strong>{acrPhpTotal(totalPrice, selectedBooking.currency)}</strong>
-                </div>
-              )}
-              <div className="invoice-total-row">
-                <span>PAID</span>
-                <strong>{convertAndFormat(parseAmount(selectedBooking.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
-              </div>
-              <div className="invoice-total-row">
-                <span>BALANCE</span>
-                <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
-              </div>
-              {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate && (
-                <div className="invoice-total-row fully-paid-badge">
-                  <span>FULLY PAID ON</span>
-                  <strong>{formatProjectDate(selectedBooking.invoiceFullyPaidDate)}</strong>
-                </div>
-              )}
-              <div className="payment-placeholder">
-                <span>PAYMENT UPDATES</span>
-                <ul>
-                  {paymentRecords.map((record) => (
-                    <li key={record}>{record}</li>
-                  ))}
-                </ul>
-              </div>
-            </section>
-          </div>
-
-          <section className="invoice-notes">
-            <p>
-              Status: {selectedBooking.invoicePaymentStatus || 'Unpaid'}.
-              {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate
-                ? ` Fully paid on ${formatProjectDate(selectedBooking.invoiceFullyPaidDate)}.`
-                : ''}
-              Payment method: {selectedBooking.paymentMethod || 'To be advised'}.
-              Payment date:{' '}
-              {selectedBooking.invoicePaymentDate
-                ? formatProjectDate(selectedBooking.invoicePaymentDate)
-                : 'To be advised'}.
-              Reference: {selectedBooking.invoiceReference || 'N/A'}.
-              Flight details: {selectedBooking.flightDetails || 'To be advised'}.
-            </p>
-            <section className="invoice-policy">
-              <h3>Flight Details</h3>
-              <p>{selectedBooking.flightDetails || 'To be advised'}</p>
-              <h3>Terms and Conditions</h3>
-              <p>Booking Policy: Payments are non-refundable once made.</p>
-              <p>
-                Hotel and tours are re-bookable under certain conditions and
-                subject to fees and penalties.
-              </p>
-              <p>
-                Any alteration made without approval from the issuing office
-                will be deemed null and void.
-              </p>
-              <p>
-                Any incidental expenses will be on the guest account. The
-                issuing office is not liable for problems caused by airline,
-                hotel, or local tour operators.
-              </p>
-              <p>
-                Passengers are responsible for checking travel documents and
-                immigration requirements before booking.
-              </p>
-            </section>
-            <div className="transaction-box">
-              <strong>For faster transactions:</strong>
-              <span>You may deposit your payment below:</span>
-              <div className="transaction-banks">
-                <div>
-                  <span className="bank-name">BDO - OLONGAPO</span>
-                  <span>Sharon R. Morine</span>
-                  <span>PESO SA: 007700076844</span>
-                </div>
-                <div>
-                  <span className="bank-name">CHINA BANK - OLONGAPO</span>
-                  <span>Sharon R. Morine</span>
-                  <span>USD SA: 167352000868</span>
-                </div>
-                <div>
-                  <span className="bank-name">GCASH</span>
-                  <span>Sharon R.</span>
-                  <span>9613495114</span>
-                </div>
-              </div>
-            </div>
-          </section>
-
-        </section>
+        {renderInvoiceDoc(selectedBooking)}
+        {renderProjectCurrencyPicker()}
       </main>
     )
   }
@@ -4609,168 +5275,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </button>
           </section>
         </main>
-      )
-    }
-
-    let poItems: POLineItem[] = []
-    try { const p = JSON.parse(selectedBooking.poLineItemsJson || '[]'); if (Array.isArray(p)) poItems = p } catch {}
-    poItems = poItems.filter(item => item.showInDocument !== false)
-
-    const poNumber = selectedBooking.id.replace('BK-', new Date().getFullYear().toString())
-    const travelDateStr = selectedBooking.travelStart
-      ? `${formatProjectDate(selectedBooking.travelStart)}${selectedBooking.travelEnd ? ` - ${formatProjectDate(selectedBooking.travelEnd)}` : ''}`
-      : 'TBA'
-    const optionDateStr = selectedBooking.optionDate ? formatProjectDate(selectedBooking.optionDate) : 'TBA'
-
-    // Group items by vendor so same supplier = one P.O. document
-    const poGroups: POLineItem[][] = []
-    const vendorKeyMap = new Map<string, number>()
-    for (const item of poItems) {
-      const key = (item.vendor || '').trim().toLowerCase() || `__no_vendor_${poGroups.length}`
-      if (vendorKeyMap.has(key)) {
-        poGroups[vendorKeyMap.get(key)!].push(item)
-      } else {
-        vendorKeyMap.set(key, poGroups.length)
-        poGroups.push([item])
-      }
-    }
-
-    const formatPHP = (n: number) => `₱ ${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    const paxTotal = (item: POLineItem) =>
-      (parseInt(item.adultPax) || 0) + (parseInt(item.childPax) || 0) + (parseInt(item.seniorPax) || 0) + (parseInt(item.infantPax) || 0)
-    const paxLabel = (item: POLineItem) => {
-      const parts: string[] = []
-      if (parseInt(item.adultPax) > 0) parts.push(`${item.adultPax} Adult`)
-      if (parseInt(item.childPax) > 0) parts.push(`${item.childPax} Child`)
-      if (parseInt(item.seniorPax) > 0) parts.push(`${item.seniorPax} Senior`)
-      if (parseInt(item.infantPax) > 0) parts.push(`${item.infantPax} Infant`)
-      return parts.join(', ') || '—'
-    }
-    const rowTotal = (item: POLineItem) => {
-      const pax = paxTotal(item) || 1
-      return (parseFloat(item.supplierNett) || 0) * pax
-    }
-
-    const renderPODocument = (items: POLineItem[], groupIndex: number, isLast: boolean) => {
-      const first = items[0]
-      const groupTotal = items.reduce((sum, item) => sum + rowTotal(item), 0)
-
-      return (
-        <section key={groupIndex} className={`po-preview print-document${!isLast ? ' po-page-break' : ''}`}>
-          <header className="po-header">
-            <img src={logo} alt="Lion and Lamb Travel logo" />
-            <div>
-              <strong>LION AND LAMB TRAVEL</strong>
-              <span>BLK #7-17 OLONGAPO CITY PUBLIC MARKET</span>
-              <span>Olongapo City, Philippines 2200</span>
-              <span>travel_lionlamb@yahoo.com</span>
-              <span>DOT No: R03 - TTA 013652023</span>
-            </div>
-            <img src={agencySeal} alt="DOT accreditation seal" />
-          </header>
-
-          <h1>Purchase Order</h1>
-
-          <section className="po-meta-grid">
-            <article>
-              <span>Date</span>
-              <strong>{formatProjectDate(new Date().toISOString())}</strong>
-            </article>
-            <article>
-              <span>Invoice</span>
-              <strong>{selectedBooking.quotationNo || selectedBooking.id}</strong>
-            </article>
-            <article>
-              <span>P.O. No.</span>
-              <strong>{poNumber}-{groupIndex + 1}</strong>
-            </article>
-          </section>
-
-          <section className="po-party-grid">
-            <div>
-              <span>Vendor:</span>
-              <strong>{first.vendor || 'To be assigned'}</strong>
-              <small>Agent: {first.agent || 'N/A'}</small>
-              <small>Contact No.: {first.contactNo || 'N/A'}</small>
-            </div>
-            <div>
-              <span>Client Details:</span>
-              <strong>{selectedBooking.clientName || '—'}</strong>
-              <small>No. of pax: {selectedBooking.pax || '—'}</small>
-              <small>Contact No.: {selectedBooking.contactNumber || 'N/A'}</small>
-            </div>
-          </section>
-
-          <table className="po-table po-service-table">
-            <thead>
-              <tr>
-                <th>Payment Method</th>
-                <th>Type of Service</th>
-                <th>Travel Date</th>
-                <th>Option Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>{first.paymentMethod || 'N/A'}</td>
-                <td>{first.serviceItem || '—'}</td>
-                <td>{travelDateStr}</td>
-                <td>{optionDateStr}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <table className="po-table particulars">
-            <thead>
-              <tr>
-                <th>Qty</th>
-                <th># of Pax</th>
-                <th>Particular</th>
-                <th>Description</th>
-                <th>Unit Price</th>
-                <th>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item, rowIndex) => {
-                const pax = paxTotal(item) || 1
-                const nett = parseFloat(item.supplierNett) || 0
-                const amount = nett * pax
-                return (
-                  <tr key={rowIndex}>
-                    <td>{pax}</td>
-                    <td>{pax}</td>
-                    <td>{item.serviceItem || '—'}</td>
-                    <td>{item.description || '—'}</td>
-                    <td>{formatPHP(nett)}</td>
-                    <td>{formatPHP(amount)}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-
-          <section className="po-total">
-            <span>Total Amount:</span>
-            <strong>{formatPHP(groupTotal)}</strong>
-          </section>
-
-          <section className="po-notes-grid">
-            <div>
-              <span>Hotel:</span>
-              <strong>{selectedBooking.accommodation || 'N/A'}</strong>
-            </div>
-            <div>
-              <span>Flight Details:</span>
-              <strong>{selectedBooking.flightDetails || 'N/A'}</strong>
-            </div>
-            <div>
-              <span>Special Instructions:</span>
-              <strong>{selectedBooking.specialInstructions || selectedBooking.notes || 'N/A'}</strong>
-            </div>
-          </section>
-
-        </section>
       )
     }
 
@@ -4823,25 +5327,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </div>
         </nav>
 
-        {poItems.length === 0 ? (
-          <section className="po-preview print-document">
-            <header className="po-header">
-              <img src={logo} alt="Lion and Lamb Travel logo" />
-              <div>
-                <strong>LION AND LAMB TRAVEL</strong>
-                <span>BLK #7-17 OLONGAPO CITY PUBLIC MARKET</span>
-                <span>Olongapo City, Philippines 2200</span>
-                <span>travel_lionlamb@yahoo.com</span>
-                <span>DOT No: R03 - TTA 013652023</span>
-              </div>
-              <img src={agencySeal} alt="DOT accreditation seal" />
-            </header>
-            <h1>Purchase Order</h1>
-            <p className="po-empty-row">No PO items yet — add supplier line items in the Purchase Order tab.</p>
-          </section>
-        ) : (
-          poGroups.map((group, index) => renderPODocument(group, index, index === poGroups.length - 1))
-        )}
+        {renderPurchaseOrderDoc(selectedBooking)}
+        {renderProjectCurrencyPicker()}
       </main>
     )
   }
@@ -4862,41 +5349,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         </main>
       )
     }
-
-    const inclusions = getLines(selectedBooking.inclusions, [
-      'Travel arrangement based on confirmed package',
-      'Accommodation / service details as stated above',
-      'Assistance from Lion and Lamb Travel',
-    ])
-    const exclusions = getLines(selectedBooking.exclusions, [
-      'Meals not stated',
-      'Optional tours or personal expenses',
-      'Other incidental charges not stated',
-    ])
-    // Use structured voucher rows if available, otherwise fall back to itinerary textarea
-    const itineraryRows: { date: string; itinerary: string; hotel: string }[] = (() => {
-      if (selectedBooking.voucherRowsJson) {
-        try {
-          const parsed = JSON.parse(selectedBooking.voucherRowsJson)
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed.map((r) => ({
-            date: r.date ? formatProjectDate(r.date) : '',
-            itinerary: r.itinerary || '',
-            hotel: r.hotel || '',
-          }))
-        } catch { /* fall through */ }
-      }
-      const lines = getLines(selectedBooking.itinerary, [
-        selectedBooking.itemDescription || `Arrival and start of ${selectedBooking.packageName}`,
-        'Free own leisure. Final reminders and departure arrangements.',
-      ])
-      return lines.map((line, index) => ({
-        date: index === 0
-          ? selectedBooking.travelStart ? formatProjectDate(selectedBooking.travelStart) : `Day ${index + 1}`
-          : index === lines.length - 1 && selectedBooking.travelEnd ? formatProjectDate(selectedBooking.travelEnd) : `Day ${index + 1}`,
-        itinerary: line,
-        hotel: selectedBooking.hotelAddress || selectedBooking.accommodation || selectedBooking.destination || 'Accommodation to be advised',
-      }))
-    })()
 
     return (
       <main className="preview-screen">
@@ -4947,122 +5399,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </div>
         </nav>
 
-        <section className="voucher-preview print-document">
-          <header className="voucher-header">
-            <img src={logo} alt="Lion and Lamb Travel logo" />
-            <div>
-              <strong>LION AND LAMB TRAVEL</strong>
-              <span>BLK C #7-17 OLONGAPO CITY PUBLIC MARKET</span>
-              <span>Olongapo City, Philippines 2200</span>
-              <span>travel_lionlamb@yahoo.com</span>
-              <span>DOT No: R03 - TTA 013652023</span>
-            </div>
-            <img src={agencySeal} alt="DOT accreditation seal" />
-          </header>
-
-          <h1>Service Voucher</h1>
-
-          <section className="voucher-meta">
-            <div>
-              <span>Date</span>
-              <strong>{formatProjectDate(new Date().toISOString())}</strong>
-            </div>
-            <div>
-              <span>Invoice</span>
-              <strong>{selectedBooking.quotationNo || selectedBooking.id}</strong>
-            </div>
-          </section>
-
-          <section className="voucher-party-grid">
-            <div>
-              <span>Package:</span>
-              <strong>{selectedBooking.packageName}</strong>
-              <small>
-                Tour Date:{' '}
-                {selectedBooking.travelStart
-                  ? `${formatProjectDate(selectedBooking.travelStart)}${
-                      selectedBooking.travelEnd
-                        ? ` - ${formatProjectDate(selectedBooking.travelEnd)}`
-                        : ''
-                    }`
-                  : 'TBA'}
-              </small>
-              <small>Flight Details: {selectedBooking.flightDetails || 'TBA'}</small>
-              <small>
-                Emergency Contact #: {selectedBooking.emergencyContact || 'TBA'}
-              </small>
-            </div>
-            <div>
-              <span>Client Details:</span>
-              <strong>Name: {selectedBooking.clientName}</strong>
-              <small>Guest Contact Number: {selectedBooking.contactNumber || 'TBA'}</small>
-              <small>
-                Accommodation:{' '}
-                {selectedBooking.accommodation || selectedBooking.packageName || 'TBA'}
-              </small>
-            </div>
-          </section>
-
-          <table className="voucher-table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Itinerary</th>
-                <th>Hotel</th>
-              </tr>
-            </thead>
-            <tbody>
-              {itineraryRows.map((row) => (
-                <tr key={row.date}>
-                  <td>{row.date}</td>
-                  <td style={{ whiteSpace: 'pre-wrap' }}>{row.itinerary}</td>
-                  <td>{row.hotel}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <section className="voucher-lists document-checklists">
-            <div className="included-list">
-              <h2>Package Inclusions</h2>
-              <ul>
-                {inclusions.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </div>
-            <div className="excluded-list">
-              <h2>Package Exclusions</h2>
-              <ul>
-                {exclusions.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          </section>
-
-          <section className="voucher-reminders">
-            <p>Itinerary may change depending on local weather condition or other unavoidable circumstances.</p>
-            <p>For any flight schedule change or flight delays, please inform us immediately.</p>
-            <p>Please be informed that whole period quarantine is needed and full charge for any cancellation, amendment, no show, or early check-out may apply.</p>
-            <p>Any unused portion for land arrangement is non-refundable.</p>
-            <p>All rights reserved by Lion and Lamb Travel if any changes occur without prior notice.</p>
-            {selectedBooking.specialInstructions && (
-              <p>{selectedBooking.specialInstructions}</p>
-            )}
-          </section>
-
-          <section className="voucher-disclaimer">
-            <strong>Disclaimer and Confidentiality Notice</strong>
-            <p>
-              Lion and Lamb Travel arranges travel services through independent
-              vendors such as airlines, accommodation, transportation, tours, and
-              related services. Confirmation vouchers are non-refundable,
-              non-transferable, and subject to supplier rules and availability.
-            </p>
-          </section>
-
-        </section>
+        {renderVoucherDoc(selectedBooking)}
+        {renderProjectCurrencyPicker()}
       </main>
     )
   }
@@ -5083,43 +5421,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         </main>
       )
     }
-
-    const brkItems = readBreakdownItems(selectedBooking)
-
-    // Parse pax-tier column labels (default matches the Data Gathering form's
-    // fixed Adult / Child / Senior / Infant categories)
-    let colLabels = ['ADULT', 'CHILD', 'SENIOR', 'INFANT']
-    try {
-      const parsed = JSON.parse(selectedBooking.breakdownColLabels)
-      if (Array.isArray(parsed) && parsed.length === 4) colLabels = parsed
-    } catch {}
-
-    // Parse pax counts per column for the TOTAL row
-    // Auto-detect from label if it starts with a number (e.g. "2 PAX" → 2)
-    let colPaxStored = ['', '', '', '']
-    try {
-      const parsed = JSON.parse(selectedBooking.breakdownPaxTiers)
-      if (Array.isArray(parsed) && parsed.length === 4) colPaxStored = parsed
-    } catch {}
-    const colPax = colLabels.map((label, i) => {
-      const match = label.match(/^(\d+)/)
-      return match ? match[1] : colPaxStored[i]
-    })
-
-    const paxPriceFields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
-
-    // Subtotals per column (sum of all price cells in that column)
-    const subtotals = paxPriceFields.map((field) =>
-      brkItems
-        .filter((item) => !item.isPackageRow)
-        .reduce((sum, item) => sum + parseAmount(item[field] as string), 0)
-    )
-
-    // Totals per column (subtotal × pax count for that column)
-    const totals = subtotals.map((sub, i) => {
-      const pax = parseQuantity(colPax[i])
-      return sub * pax
-    })
 
     return (
       <main className="preview-screen">
@@ -5170,86 +5471,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </div>
         </nav>
 
-        <section className="breakdown-preview print-document">
-          {/* Header row */}
-          <table className="breakdown-quotation-table">
-            <thead>
-              <tr className="bq-title-row">
-                <th colSpan={2}>QUOTATION: {selectedBooking.quotationNo || selectedBooking.id}</th>
-                <th colSpan={4} className="bq-amount-header">AMOUNT</th>
-              </tr>
-              <tr className="bq-info-row">
-                <td className="bq-label">NAME:</td>
-                <td className="bq-value">
-                  {selectedBooking.packageName}
-                </td>
-                <td rowSpan={3} colSpan={4} className="bq-amount-cell"></td>
-              </tr>
-              <tr className="bq-info-row">
-                <td className="bq-label">DATE OF TRAVEL:</td>
-                <td className="bq-value">
-                  {selectedBooking.travelStart
-                    ? `${formatProjectDate(selectedBooking.travelStart)}${selectedBooking.travelEnd ? ` - ${formatProjectDate(selectedBooking.travelEnd)}` : ''}`
-                    : 'TBA'}
-                </td>
-              </tr>
-              <tr className="bq-info-row">
-                <td className="bq-label">NO OF PAX:</td>
-                <td className="bq-value">{formatPaxBreakdownLabel(readPaxBreakdown(readBreakdownItems(selectedBooking).find(i => i.isPackageRow)?.paxBreakdown)) || selectedBooking.pax || '—'}</td>
-              </tr>
-              <tr className="bq-col-header">
-                <th>SERVICE</th>
-                <th>DETAILS</th>
-                {colLabels.map((label, i) => (
-                  <th key={i} className={i === 3 ? 'bq-infant-col' : ''}>{label}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {brkItems.filter(item => !item.isPackageRow).map((item, index) => (
-                <tr key={index} className="bq-data-row">
-                  <td className="bq-service">{item.description.toUpperCase()}</td>
-                  <td className="bq-details">{item.details || ''}</td>
-                  {paxPriceFields.map((field, ci) => {
-                    const val = parseAmount(item[field] as string)
-                    return (
-                      <td key={ci} className={`bq-price${val > 0 ? ' bq-has-value' : ''}${ci === 3 ? ' bq-infant-col' : ''}`}>
-                        {val > 0 ? `₱${val.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
-              {/* SUBTOTAL row */}
-              <tr className="bq-subtotal-row">
-                <td colSpan={2}>SUBTOTAL:</td>
-                {subtotals.map((val, i) => (
-                  <td key={i} className={`bq-price${val > 0 ? ' bq-has-value' : ''}${i === 3 ? ' bq-infant-col' : ''}`}>
-                    {val > 0 ? `₱${val.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'}
-                  </td>
-                ))}
-              </tr>
-              {/* NO. OF PAX row */}
-              <tr className="bq-pax-row">
-                <td colSpan={2}>NO. OF PAX</td>
-                {colPax.map((pax, i) => (
-                  <td key={i} className={`bq-price${pax ? ' bq-has-value' : ''}${i === 3 ? ' bq-infant-col' : ''}`}>
-                    {pax || ''}
-                  </td>
-                ))}
-              </tr>
-              {/* TOTAL row */}
-              <tr className="bq-total-row">
-                <td colSpan={2}>TOTAL:</td>
-                {totals.map((val, i) => (
-                  <td key={i} className={`bq-price${val > 0 ? ' bq-has-value' : ''}${i === 3 ? ' bq-infant-col' : ''}`}>
-                    {val > 0 ? `₱${val.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'}
-                  </td>
-                ))}
-              </tr>
-            </tbody>
-          </table>
-        </section>
+        {renderBreakdownDoc(selectedBooking)}
+        {renderProjectCurrencyPicker()}
       </main>
     )
   }
