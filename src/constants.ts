@@ -27,6 +27,7 @@ export const emptyBookingForm: BookingFormData = {
   invoiceLineItemsJson: '',
   invoicePackage: '',
   quotationPaxRates: '',
+  quotationPaxAddons: '',
   invoiceAddons: '',
   breakdownLineItemsJson: '',
   breakdownPaxTiers: '',

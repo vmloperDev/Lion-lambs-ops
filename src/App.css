@@ -1902,6 +1902,48 @@ input, select, textarea { font: inherit; }
   gap: 12px;
   backdrop-filter: blur(6px);
 }
+.currency-picker-close-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.currency-picker-close-btn:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+.currency-picker-reopen-btn {
+  position: fixed;
+  left: 22px;
+  bottom: 22px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--teal);
+  font-weight: 800;
+  font-size: 0.85rem;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.08);
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+.currency-picker-reopen-btn:hover {
+  border-color: var(--teal);
+  transform: translateY(-1px);
+}
 .currency-picker-head {
   display: flex;
   align-items: center;
@@ -2003,6 +2045,33 @@ input, select, textarea { font: inherit; }
   font-style: italic;
 }
 
+.currency-picker-rate-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 11px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.currency-picker-rate-input-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.currency-picker-rate-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--teal-dark);
+  padding: 3px 0;
+}
+.currency-picker-rate-input:focus { outline: none; }
+
 .currency-picker-acr-note {
   margin: 0;
   font-size: 0.74rem;
@@ -2013,6 +2082,7 @@ input, select, textarea { font: inherit; }
 }
 @media (max-width: 720px) {
   .currency-picker-card { left: 12px; right: 12px; bottom: 12px; width: auto; }
+  .currency-picker-reopen-btn { left: 12px; bottom: 12px; }
 }
 
 .missing-detail {
@@ -4111,6 +4181,28 @@ input, select, textarea { font: inherit; }
   .invoice-package-row { grid-template-columns: 1fr; }
   .invoice-addons-row { grid-template-columns: 1fr; }
   .invoice-addons-row.header { display: none; }
+}
+
+.pax-addons-row {
+  grid-template-columns: 110px 2fr 1fr 32px;
+}
+.pax-addon-type-select {
+  border: 1px solid var(--border-mid);
+  border-radius: var(--r-xs);
+  padding: 6px 9px;
+  font-size: 0.8rem;
+  background: var(--surface);
+  color: var(--ink);
+  width: 100%;
+  box-sizing: border-box;
+}
+.pax-addon-type-select:focus {
+  outline: none;
+  border-color: var(--teal);
+  box-shadow: 0 0 0 2px var(--teal-glow);
+}
+@media (max-width: 720px) {
+  .pax-addons-row { grid-template-columns: 1fr; }
 }
 
 /* ── Purchase Order Line Items Editor ─────────────────────────────── */

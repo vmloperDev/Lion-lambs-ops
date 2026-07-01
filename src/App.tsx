@@ -248,42 +248,7 @@ function App() {
     'THB','MYR','IDR','VND','INR','AED','SAR','QAR','KWD','BHD','OMR',
     'NZD','NOK','SEK','DKK','ZAR','MXN','BRL','TWD',
   ]
-  const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({})
-  const [ratesLoadedAt, setRatesLoadedAt] = useState<Date | null>(null)
-  const [ratesLoading, setRatesLoading] = useState(false)
-  const [ratesClock, setRatesClock] = useState(0) // ticks every second on data-form
-
-  // Fetch rates from open.er-api.com (free, no key, supports PHP as base)
-  useEffect(() => {
-    let cancelled = false
-    async function fetchRates() {
-      setRatesLoading(true)
-      try {
-        const res = await fetch('https://open.er-api.com/v6/latest/PHP')
-        if (!res.ok) throw new Error('rate fetch failed')
-        const data = await res.json()
-        if (!cancelled && data.result === 'success') {
-          setExchangeRates(data.rates) // already includes PHP: 1
-          setRatesLoadedAt(new Date())
-        }
-      } catch {
-        // silently fall back — rates stay empty, UI shows n/a
-      } finally {
-        if (!cancelled) setRatesLoading(false)
-      }
-    }
-    fetchRates()
-    // Refresh every 10 minutes
-    const interval = setInterval(fetchRates, 10 * 60 * 1000)
-    return () => { cancelled = true; clearInterval(interval) }
-  }, [])
-
-  // Tick ratesClock every second so the "X seconds ago" freshness counter is live
-  useEffect(() => {
-    if (screen !== 'data-form') return
-    const t = setInterval(() => setRatesClock((n) => n + 1), 1000)
-    return () => clearInterval(t)
-  }, [screen])
+  const [exchangeRates] = useState<Record<string, number>>({})
 
   const currentCurrency = bookingForm.currency || 'PHP'
   const rateFromPHP = exchangeRates[currentCurrency] ?? null // null = not loaded yet
@@ -299,26 +264,24 @@ function App() {
     return formatAmount(String(amount), currentCurrency)
   }
 
-  // Convert a chosen-currency amount TO PHP for reference display
-  function toPhpEquivalent(amount: number, currency: string): string {
+  // Convert a chosen-currency amount TO PHP for reference display, using
+  // the manually entered rate (PHP value of 1 unit of `currency`).
+  function toPhpEquivalent(amount: number, currency: string, rate?: string): string {
     if (!currency || currency === 'PHP') return ''
-    const rate = exchangeRates[currency] ?? null
-    if (rate === null || rate === 0) return ''
-    const php = amount / rate
+    const r = parseFloat(rate || '')
+    if (!r || r <= 0) return ''
+    const php = amount * r
     return `≈ PHP ${php.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
   // Convert a document total (already in the booking's chosen currency)
   // to PHP using the manually entered Airline Conversion Rate (ACR) —
-  // distinct from the live exchange rate, since agencies often ticket
-  // at a fixed rate set by the airline rather than the market rate.
-  // ACR — the document total automatically converted to PHP using the
-  // live exchange rate (PHP base). Only shown when the booking's
-  // currency isn't already PHP.
-  function acrPhpTotal(amount: number, currency: string): string | null {
+  // a fixed rate the agency sets by hand (e.g. ticketing at a rate the
+  // airline quoted), rather than a market/live exchange rate.
+  function acrPhpTotal(amount: number, currency: string, acr?: string): string | null {
     if (!currency || currency === 'PHP') return null
-    const rate = exchangeRates[currency] ?? null // 1 PHP = rate units of currency
+    const rate = parseFloat(acr || '')
     if (!rate || rate <= 0) return null
-    const php = amount / rate
+    const php = amount * rate
     return `PHP ${php.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
 
@@ -359,6 +322,15 @@ function App() {
     setDocumentCurrencyDraft(b?.currency || 'PHP')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBookingId])
+  // Draft manual conversion rate (PHP value of 1 unit of the chosen
+  // currency) for the same read-only "Document currency" picker — set by
+  // hand instead of pulled from a live feed, e.g. "65" for 1 USD = ₱65.
+  const [documentAcrDraft, setDocumentAcrDraft] = useState('')
+  useEffect(() => {
+    const b = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
+    setDocumentAcrDraft(b?.acr || '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBookingId])
   const [searchTerm, setSearchTerm] = useState('')
   const [docsSearchTerm, setDocsSearchTerm] = useState('')
   const [activeDocTab, setActiveDocTab] = useState<'quotation' | 'breakdown' | 'invoice' | 'purchase-order' | 'voucher' | null>(null)
@@ -369,6 +341,10 @@ function App() {
   // independently of which form tab they're editing.
   const [showLivePreview, setShowLivePreview] = useState(false)
   const [livePreviewDoc, setLivePreviewDoc] = useState<'quotation' | 'invoice' | 'purchase-order' | 'voucher' | 'breakdown'>('quotation')
+  // The floating "Document currency" card while filling the Data Gathering
+  // form can be closed with an X and re-opened via a small pill button that
+  // takes its place, so it doesn't sit on top of the form the whole time.
+  const [showCurrencyWidget, setShowCurrencyWidget] = useState(true)
   const passwordStrength = getPasswordStrength(password)
 
   // Options lists
@@ -1709,6 +1685,34 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     })
   }
 
+  // Pushes a manually-typed conversion rate (ACR) straight onto a saved
+  // booking (local state + Firestore), the same way applyCurrencyToBookingId
+  // does for currency. `nextAcr` is the PHP value of 1 unit of the
+  // booking's chosen currency, entered by hand — e.g. "65" for USD.
+  function applyAcrToBookingId(bookingId: string, nextAcr: string) {
+    if (!bookingId) return
+    const targetBooking = (lastSavedBookingRef.current?.id === bookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === bookingId)
+    if (!targetBooking) return
+
+    setBookings((currentBookings) =>
+      currentBookings.map((booking) => booking.id === bookingId ? { ...booking, acr: nextAcr } : booking)
+    )
+    if (lastSavedBookingRef.current?.id === bookingId) {
+      lastSavedBookingRef.current = { ...lastSavedBookingRef.current, acr: nextAcr }
+    }
+
+    if (!authUser) {
+      setDataError('Log in again before updating cloud records.')
+      return
+    }
+    void setDoc(doc(db, getBookingOwnerPath(targetBooking, authUser.uid), bookingId), {
+      acr: nextAcr,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true }).catch(() => {
+      setDataError('Rate updated locally, but cloud update failed.')
+    })
+  }
+
   // Used by the picker on the data-form screen, which edits currency via
   // the live bookingForm state rather than a saved-booking id directly.
   function applyCurrencyToDocuments() {
@@ -1726,8 +1730,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
     const savedCurrency = savedBooking.currency || 'PHP'
     const draftCurrency = documentCurrencyDraft || 'PHP'
-    const liveRate = exchangeRates[draftCurrency] ?? null
-    const phpPerUnit = liveRate && liveRate > 0 ? 1 / liveRate : null
     const hasPendingCurrencyChange = draftCurrency !== savedCurrency
 
     return (
@@ -1765,21 +1767,20 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         {draftCurrency === 'PHP' ? (
           <p className="currency-picker-rate currency-picker-rate-base">Base currency — quotation &amp; invoice amounts print as-is.</p>
         ) : (
-          <div className="currency-picker-rate">
-            {ratesLoading && !phpPerUnit ? (
-              <span className="currency-picker-rate-loading">Fetching live rate…</span>
-            ) : phpPerUnit ? (
-              <>
-                <span className="currency-picker-rate-eq">1 {draftCurrency} ≈ <strong>₱{phpPerUnit.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</strong></span>
-                <span className="currency-picker-rate-tag">Live rate</span>
-              </>
-            ) : (
-              <span className="currency-picker-rate-loading">Live rate unavailable</span>
-            )}
-          </div>
+          <label className="currency-picker-rate-input-wrap">
+            <span className="currency-picker-rate-input-label">1 {draftCurrency} = ₱</span>
+            <input
+              type="number" min="0" step="0.01"
+              className="currency-picker-rate-input"
+              value={documentAcrDraft}
+              placeholder="0.00"
+              onChange={(e) => setDocumentAcrDraft(e.target.value)}
+              onBlur={(e) => applyAcrToBookingId(selectedBookingId, e.target.value)}
+            />
+          </label>
         )}
         {draftCurrency !== 'PHP' && (
-          <p className="currency-picker-acr-note">The Quotation &amp; Invoice will show an "ACR" line with the total automatically converted to PHP at this rate.</p>
+          <p className="currency-picker-acr-note">The Quotation &amp; Invoice will show an "ACR" line with the total converted to PHP at this rate.</p>
         )}
       </div>
     )
@@ -2171,7 +2172,34 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
     const hasNewQuoteData = !!(quotePkg.name || quotePkg.price)
 
-    const lineItems = hasPaxRates
+    // Pax-type addons — merged by name across all pax types into one line
+    // item each (e.g. a "Hotel" addon added under both Adult and Infant
+    // becomes a single "Hotel" row with the combined amount), with no
+    // pax-type label since it applies to the booking as a whole.
+    type PaxAddon = { id: string; paxType: string; name: string; price: string }
+    let quotePaxAddons: PaxAddon[] = []
+    try {
+      const a = JSON.parse(selectedBooking.quotationPaxAddons || '')
+      if (Array.isArray(a)) quotePaxAddons = a
+    } catch {}
+    const addonTotalsByName = new Map<string, number>()
+    quotePaxAddons.forEach((a) => {
+      const name = (a.name || '').trim()
+      if (!name) return
+      addonTotalsByName.set(name, (addonTotalsByName.get(name) || 0) + (parseFloat(a.price) || 0))
+    })
+    const addonLineItems = Array.from(addonTotalsByName.entries()).map(([name, total]) => ({
+      description: name,
+      quantity: 1,
+      unitPrice: total,
+      nettCost: 0,
+      total,
+      nettTotal: 0,
+      profit: total,
+    }))
+
+    const lineItems = [
+      ...(hasPaxRates
       ? quotePaxRates
           .map((r, i) => ({ label: paxLabels[i], count: parseFloat(r.count) || 0, rate: parseFloat(r.rate) || 0 }))
           .filter((r) => r.count > 0 && r.rate > 0)
@@ -2196,7 +2224,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             profit: parseQuantity(quotePkg.qty || '1') * parseAmount(quotePkg.price),
           },
         ]
-      : getBookingLineItems(selectedBooking)
+      : getBookingLineItems(selectedBooking)),
+      ...addonLineItems,
+    ]
 
     const quoteTotal = sumLineItems(lineItems, 'total')
 
@@ -2285,10 +2315,10 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <span>TOTAL</span>
             <strong>{convertAndFormat(quoteTotal, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
           </div>
-          {acrPhpTotal(quoteTotal, selectedBooking.currency) && (
+          {acrPhpTotal(quoteTotal, selectedBooking.currency, selectedBooking.acr) && (
             <div className="invoice-total-row">
               <span>ACR (Converted to PHP)</span>
-              <strong>{acrPhpTotal(quoteTotal, selectedBooking.currency)}</strong>
+              <strong>{acrPhpTotal(quoteTotal, selectedBooking.currency, selectedBooking.acr)}</strong>
             </div>
           )}
         </section>
@@ -2393,10 +2423,10 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <span>TOTAL</span>
               <strong>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
             </div>
-            {acrPhpTotal(totalPrice, selectedBooking.currency) && (
+            {acrPhpTotal(totalPrice, selectedBooking.currency, selectedBooking.acr) && (
               <div className="invoice-total-row acr-row">
                 <span>ACR (Converted to PHP)</span>
-                <strong>{acrPhpTotal(totalPrice, selectedBooking.currency)}</strong>
+                <strong>{acrPhpTotal(totalPrice, selectedBooking.currency, selectedBooking.acr)}</strong>
               </div>
             )}
             <div className="invoice-total-row">
@@ -3424,67 +3454,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               </label>
             </div>
 
-            {/* Package pricing — single row, drives both quotation and invoice. */}
-            {(() => {
-              type PackageRow = { name: string; qty: string; price: string }
-              let pkg: PackageRow = { name: '', qty: '1', price: '' }
-              try { const p = JSON.parse(bookingForm.invoicePackage); if (p && typeof p === 'object') pkg = { name: p.name || '', qty: p.qty || '1', price: p.price || '' } } catch {}
-              const setPkg = (next: PackageRow) => {
-                setDataError('')
-                setDataMessage('')
-                setBookingForm((prev) => {
-                  const updated = { ...prev, invoicePackage: JSON.stringify(next) }
-                  try {
-                    const invItems: InvoiceLineItem[] = readInvoiceItems(prev)
-                    const brkItems: BreakdownLineItem[] = readBreakdownItems(prev)
-                    const nextInv = invItems.map(item => item.isPackageRow ? {
-                      ...item,
-                      description: next.name || item.description,
-                      quantity: next.qty || '1',
-                      unitPrice: next.price,
-                    } : item)
-                    const nextBrk = brkItems.map(item => item.isPackageRow ? {
-                      ...item,
-                      description: next.name || item.description,
-                      quantity: next.qty || '1',
-                      unitPrice: next.price,
-                    } : item)
-                    updated.invoiceLineItemsJson = JSON.stringify(nextInv)
-                    updated.breakdownLineItemsJson = JSON.stringify(nextBrk)
-                  } catch (e) {}
-                  return updated
-                })
-              }
-
-              return (
-                <div className="invoice-package-editor">
-                  <p className="field-help">Package pricing — shown on both the quotation and the invoice. Addons are added separately on the Invoice tab and only appear there.</p>
-                  <div className="invoice-package-row">
-                    <label>
-                      <span className="field-label"><span>Qty</span><span className="required-marker">Required</span></span>
-                      <input
-                        required={activeDocTab === 'quotation'}
-                        type="number" min="0"
-                        value={pkg.qty}
-                        onChange={(e) => setPkg({ ...pkg, qty: e.target.value })}
-                        placeholder="1"
-                      />
-                    </label>
-                    <label>
-                      <span className="field-label"><span>Client price</span><span className="required-marker">Required</span></span>
-                      <input
-                        required={activeDocTab === 'quotation'}
-                        type="number" min="0"
-                        value={pkg.price}
-                        onChange={(e) => setPkg({ ...pkg, price: e.target.value })}
-                        placeholder="0.00"
-                      />
-                    </label>
-                  </div>
-                </div>
-              )
-            })()}
-
             {/* Pax-tier rate pricing — optional. When filled in, the computed
                 total (count × rate per pax type) drives the package price
                 above and the quotation document shows a per-pax breakdown
@@ -3492,18 +3461,89 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             {(() => {
               type PaxRate = { count: string; rate: string }
               type PackageRow = { name: string; qty: string; price: string }
+              type PaxAddon = { id: string; paxType: string; name: string; price: string }
               const fixedLabels = ['Adult', 'Child', 'Senior', 'Infant']
               let paxRates: PaxRate[] = fixedLabels.map(() => ({ count: '', rate: '' }))
               try {
                 const p = JSON.parse(bookingForm.quotationPaxRates)
                 if (Array.isArray(p) && p.length === 4) paxRates = p
               } catch {}
+              let paxAddons: PaxAddon[] = []
+              try {
+                const a = JSON.parse(bookingForm.quotationPaxAddons)
+                if (Array.isArray(a)) paxAddons = a
+              } catch {}
+              // Older saved addons may not have an id yet — backfill on read.
+              paxAddons = paxAddons.map((r) => r.id ? r : { ...r, id: createLineItemId() })
+
+              const slugify = (s: string) => (s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-+|-+$)/g, '') || 'addon')
+
+              // Merges addons with the same name across pax types into a
+              // single row (summed), then pushes that merged set onto the
+              // Invoice addons, P.O. supplier line items, and Breakdown line
+              // items — using a stable id per addon name so re-syncing
+              // updates the same row instead of duplicating it, and leaving
+              // any other manually-added rows on those documents untouched.
+              const syncPaxAddons = (nextAddons: PaxAddon[], prev: typeof bookingForm) => {
+                const totalsByName = new Map<string, number>()
+                nextAddons.forEach((a) => {
+                  const name = (a.name || '').trim()
+                  if (!name) return
+                  totalsByName.set(name, (totalsByName.get(name) || 0) + (parseFloat(a.price) || 0))
+                })
+                const merged = Array.from(totalsByName.entries()).map(([name, total]) => ({ id: `paxaddon-${slugify(name)}`, name, total }))
+
+                type InvAddonRow = { id: string; name: string; qty: string; price: string; nett: string; showInDocument?: boolean }
+                let curInvAddons: InvAddonRow[] = []
+                try { const a = JSON.parse(prev.invoiceAddons); if (Array.isArray(a)) curInvAddons = a } catch {}
+                const keptInvAddons = curInvAddons.filter((r) => !(r.id || '').startsWith('paxaddon-'))
+                const mergedInvAddons = merged.map((m) => {
+                  const existing = curInvAddons.find((r) => r.id === m.id)
+                  return { id: m.id, name: m.name, qty: '1', price: String(m.total), nett: existing?.nett || '', showInDocument: existing?.showInDocument !== false }
+                })
+                const nextInvoiceAddons = [...keptInvAddons, ...mergedInvAddons]
+
+                let curPO: POLineItem[] = []
+                try { const p = JSON.parse(prev.poLineItemsJson || '[]'); if (Array.isArray(p)) curPO = p } catch {}
+                const keptPO = curPO.filter((r) => !(r.id || '').startsWith('paxaddon-'))
+                const mergedPO = merged.map((m) => {
+                  const existing = curPO.find((r) => r.id === m.id)
+                  return {
+                    id: m.id,
+                    vendor: existing?.vendor || '', contactNo: existing?.contactNo || '', paymentMethod: existing?.paymentMethod || '', agent: existing?.agent || '',
+                    serviceItem: m.name, description: existing?.description || '',
+                    adultPax: '1', childPax: '0', seniorPax: '0', infantPax: '0',
+                    supplierNett: existing?.supplierNett || '', showInDocument: existing?.showInDocument ?? false,
+                  } as POLineItem
+                })
+                const nextPO = [...keptPO, ...mergedPO]
+
+                let curBrk: BreakdownLineItem[] = []
+                try { curBrk = readBreakdownItems(prev) } catch {}
+                const keptBrk = curBrk.filter((r) => !(r.id || '').startsWith('paxaddon-'))
+                const mergedBrk = merged.map((m) => {
+                  const existing = curBrk.find((r) => r.id === m.id)
+                  return {
+                    id: m.id, description: m.name, details: existing?.details || '', vendor: existing?.vendor || '',
+                    quantity: '1', unitPrice: String(m.total), nettCost: existing?.nettCost || '0',
+                    sendToInvoice: true, sendToPO: true,
+                  } as BreakdownLineItem
+                })
+                const nextBrk = [...keptBrk, ...mergedBrk]
+
+                return {
+                  invoiceAddons: JSON.stringify(nextInvoiceAddons),
+                  poLineItemsJson: JSON.stringify(nextPO),
+                  breakdownLineItemsJson: JSON.stringify(nextBrk),
+                }
+              }
 
               const setPaxRates = (next: PaxRate[]) => {
                 setDataError('')
                 setDataMessage('')
                 setBookingForm((prev) => {
-                  const ratesTotal = next.reduce((sum, r) => sum + (parseFloat(r.count) || 0) * (parseFloat(r.rate) || 0), 0)
+                  const addonsTotal = paxAddons.reduce((sum, a) => sum + (parseFloat(a.price) || 0), 0)
+                  const ratesTotal = next.reduce((sum, r) => sum + (parseFloat(r.count) || 0) * (parseFloat(r.rate) || 0), 0) + addonsTotal
                   const paxCountTotal = next.reduce((sum, r) => sum + (parseFloat(r.count) || 0), 0)
                   const updated = { ...prev, quotationPaxRates: JSON.stringify(next) }
 
@@ -3552,12 +3592,50 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 setPaxRates(next)
               }
 
+              const setPaxAddons = (nextAddons: PaxAddon[]) => {
+                setDataError('')
+                setDataMessage('')
+                setBookingForm((prev) => {
+                  const ratesTotal = paxRates.reduce((sum, r) => sum + (parseFloat(r.count) || 0) * (parseFloat(r.rate) || 0), 0)
+                  const addonsTotal = nextAddons.reduce((sum, a) => sum + (parseFloat(a.price) || 0), 0)
+                  const total = ratesTotal + addonsTotal
+                  const paxCountTotal = paxRates.reduce((sum, r) => sum + (parseFloat(r.count) || 0), 0)
+
+                  let curPkg: PackageRow = { name: '', qty: '1', price: '' }
+                  try { const p = JSON.parse(prev.invoicePackage); if (p && typeof p === 'object') curPkg = p } catch {}
+                  const nextPkg: PackageRow = total > 0
+                    ? { ...curPkg, qty: '1', price: String(total) }
+                    : paxCountTotal > 0
+                    ? { ...curPkg, qty: String(paxCountTotal) }
+                    : curPkg
+
+                  const synced = syncPaxAddons(nextAddons, prev)
+                  return {
+                    ...prev,
+                    quotationPaxAddons: JSON.stringify(nextAddons),
+                    invoicePackage: JSON.stringify(nextPkg),
+                    ...synced,
+                  }
+                })
+              }
+
+              const addAddon = () => {
+                setPaxAddons([...paxAddons, { id: createLineItemId(), paxType: 'Adult', name: '', price: '' }])
+              }
+              const updateAddon = (i: number, field: keyof PaxAddon, val: string) => {
+                setPaxAddons(paxAddons.map((r, idx) => idx === i ? { ...r, [field]: val } : r))
+              }
+              const removeAddon = (i: number) => {
+                setPaxAddons(paxAddons.filter((_, idx) => idx !== i))
+              }
+
               const paxTotal = paxRates.reduce((sum, r) => sum + (parseFloat(r.count) || 0) * (parseFloat(r.rate) || 0), 0)
-              const hasAnyPaxRate = paxRates.some((r) => r.count || r.rate)
+                + paxAddons.reduce((sum, a) => sum + (parseFloat(a.price) || 0), 0)
+              const hasAnyPaxRate = paxRates.some((r) => r.count || r.rate) || paxAddons.length > 0
 
               return (
-                <div className="invoice-package-editor" style={{ marginTop: '18px' }}>
-                  <p className="field-help">Optional — break the package price down by pax type. Enter how many Adult/Child/Senior/Infant and the rate for each; the package price above and the quotation total will be calculated automatically.</p>
+                <div className="invoice-package-editor">
+                  <p className="field-help">Enter how many Adult/Child/Senior/Infant and the rate for each — the package price and quotation total are calculated automatically.</p>
                   <div className="breakdown-tier-grid">
                     {fixedLabels.map((label, i) => (
                       <div key={i} className="breakdown-tier-col">
@@ -3581,12 +3659,125 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                       </div>
                     ))}
                   </div>
+
+                  {/* Addons — optional extras tied to a specific pax type.
+                      Addons sharing the same name across pax types merge
+                      into a single line item (summed) on the Invoice,
+                      Purchase Order, and Breakdown documents. */}
+                  <div className="invoice-addons-heading" style={{ marginTop: '16px' }}>
+                    <p className="field-help" style={{ margin: 0 }}>Optional — addons tied to a pax type (e.g. a hotel upgrade for Adults only). Same-named addons across pax types combine into one line on the other documents.</p>
+                    <button type="button" className="invoice-addon-add-btn" onClick={addAddon}>
+                      <Plus size={14} /> Add addon
+                    </button>
+                  </div>
+
+                  {paxAddons.length > 0 && (
+                    <div className="invoice-addons-table pax-addons-table">
+                      <div className="invoice-addons-row pax-addons-row header">
+                        <span>Pax type</span>
+                        <span>Addon name</span>
+                        <span>Price</span>
+                        <span></span>
+                      </div>
+                      {paxAddons.map((row, i) => (
+                        <div className="invoice-addons-row pax-addons-row" key={row.id}>
+                          <select
+                            className="pax-addon-type-select"
+                            value={row.paxType}
+                            onChange={(e) => updateAddon(i, 'paxType', e.target.value)}
+                          >
+                            {fixedLabels.map((label) => <option key={label} value={label}>{label}</option>)}
+                          </select>
+                          <div className="po-service-dropdown-wrap">
+                            <button
+                              type="button"
+                              ref={(el) => { addonDropdownTriggerRefs.current[row.id] = el }}
+                              className="po-service-dropdown-trigger"
+                              onClick={() => setOpenAddonNameDropdownId(openAddonNameDropdownId === row.id ? null : row.id)}
+                            >
+                              <span>{row.name || 'Select…'}</span>
+                              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                            </button>
+                            {openAddonNameDropdownId === row.id && (
+                              <FloatingDropdownMenu
+                                anchorRef={{ current: addonDropdownTriggerRefs.current[row.id] ?? null }}
+                                onClose={() => { setOpenAddonNameDropdownId(null); setAddingCustomAddonName(false); setCustomAddonNameDraft('') }}
+                              >
+                                <ul className="po-service-dropdown-list">
+                                  {serviceItemOptions.map(opt => (
+                                    <li key={opt} className={`po-service-dropdown-item${row.name === opt ? ' selected' : ''}`}>
+                                      <button
+                                        type="button"
+                                        className="po-service-dropdown-select"
+                                        onClick={() => { updateAddon(i, 'name', opt); setOpenAddonNameDropdownId(null) }}
+                                      >{opt}</button>
+                                      <button
+                                        type="button"
+                                        className="po-service-dropdown-delete"
+                                        title="Remove option"
+                                        onClick={() => {
+                                          const next = serviceItemOptions.filter(o => o !== opt)
+                                          setServiceItemOptions(next)
+                                          if (row.name === opt) updateAddon(i, 'name', next[0] || '')
+                                        }}
+                                      ><X size={11} /></button>
+                                    </li>
+                                  ))}
+                                </ul>
+                                <div className="po-service-dropdown-add">
+                                  {addingCustomAddonName ? (
+                                    <div className="po-service-dropdown-custom-row">
+                                      <input
+                                        autoFocus
+                                        value={customAddonNameDraft}
+                                        onChange={e => setCustomAddonNameDraft(e.target.value)}
+                                        onKeyDown={e => {
+                                          if (e.key === 'Enter' && customAddonNameDraft.trim()) {
+                                            const val = customAddonNameDraft.trim()
+                                            if (!serviceItemOptions.includes(val)) setServiceItemOptions(prev => [...prev, val])
+                                            updateAddon(i, 'name', val)
+                                            setCustomAddonNameDraft('')
+                                            setAddingCustomAddonName(false)
+                                            setOpenAddonNameDropdownId(null)
+                                          }
+                                          if (e.key === 'Escape') { setAddingCustomAddonName(false); setCustomAddonNameDraft('') }
+                                        }}
+                                        placeholder="Type and press Enter…"
+                                        className="po-service-dropdown-custom-input"
+                                      />
+                                      <button type="button" className="po-service-dropdown-cancel" onClick={() => { setAddingCustomAddonName(false); setCustomAddonNameDraft('') }}>
+                                        <X size={11} />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button type="button" className="po-service-dropdown-add-btn" onClick={() => setAddingCustomAddonName(true)}>
+                                      <Plus size={12} /> Add custom option
+                                    </button>
+                                  )}
+                                </div>
+                              </FloatingDropdownMenu>
+                            )}
+                          </div>
+                          <input
+                            type="number" min="0"
+                            value={row.price}
+                            onChange={(e) => updateAddon(i, 'price', e.target.value)}
+                            placeholder="0.00"
+                          />
+                          <button type="button" className="remove-line-btn" onClick={() => removeAddon(i)} title="Remove addon">
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {hasAnyPaxRate && (
                     <div className="line-items-summary">
                       <article>
                         <span>Pax-tier total</span>
                         <strong>{formatWithCurrency(paxTotal)}</strong>
-                        {currentCurrency !== 'PHP' && <small className="php-equiv-total">{toPhpEquivalent(paxTotal, currentCurrency)}</small>}
+                        {currentCurrency !== 'PHP' && <small className="php-equiv-total">{toPhpEquivalent(paxTotal, currentCurrency, bookingForm.acr)}</small>}
                       </article>
                     </div>
                   )}
@@ -4464,18 +4655,36 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
         {/* Currency picker — bottom-left, while editing this booking.
             Sets which currency the Quotation & Invoice documents are
-            labeled in. Live rate is fetched with PHP as the base
-            (open.er-api.com, refreshed every 10 min); ACR is a separate,
-            manually-set airline/agency rate used to print a PHP total. */}
+            labeled in. The conversion rate (ACR) is entered by hand —
+            e.g. "65" for 1 USD — and used to print a PHP total. */}
         {(() => {
           const bookingCurrency = bookingForm.currency || 'PHP'
-          const liveRate = exchangeRates[bookingCurrency] ?? null // 1 PHP = liveRate units of bookingCurrency
-          const phpPerUnit = liveRate && liveRate > 0 ? 1 / liveRate : null
           const savedBookingForCurrency = (lastSavedBookingRef.current?.id === editingBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((b) => b.id === editingBookingId)
           const savedCurrency = savedBookingForCurrency?.currency || 'PHP'
           const hasPendingCurrencyChange = isEditingBooking && bookingCurrency !== savedCurrency
+          if (!showCurrencyWidget) {
+            return (
+              <button
+                type="button"
+                className="currency-picker-reopen-btn"
+                onClick={() => setShowCurrencyWidget(true)}
+                title="Show document currency"
+              >
+                <Coins size={16} />
+                <span>{bookingCurrency}</span>
+              </button>
+            )
+          }
           return (
             <div className="currency-picker-card">
+              <button
+                type="button"
+                className="currency-picker-close-btn"
+                onClick={() => setShowCurrencyWidget(false)}
+                title="Close"
+              >
+                <X size={14} />
+              </button>
               <div className="currency-picker-head">
                 <Coins size={16} />
                 <span>Document currency</span>
@@ -4516,21 +4725,20 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               {bookingCurrency === 'PHP' ? (
                 <p className="currency-picker-rate currency-picker-rate-base">Base currency — quotation &amp; invoice amounts print as-is.</p>
               ) : (
-                <div className="currency-picker-rate">
-                  {ratesLoading && !phpPerUnit ? (
-                    <span className="currency-picker-rate-loading">Fetching live rate…</span>
-                  ) : phpPerUnit ? (
-                    <>
-                      <span className="currency-picker-rate-eq">1 {bookingCurrency} ≈ <strong>₱{phpPerUnit.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</strong></span>
-                      <span className="currency-picker-rate-tag">Live rate</span>
-                    </>
-                  ) : (
-                    <span className="currency-picker-rate-loading">Live rate unavailable</span>
-                  )}
-                </div>
+                <label className="currency-picker-rate-input-wrap">
+                  <span className="currency-picker-rate-input-label">1 {bookingCurrency} = ₱</span>
+                  <input
+                    type="number" min="0" step="0.01"
+                    className="currency-picker-rate-input"
+                    value={bookingForm.acr}
+                    placeholder="0.00"
+                    onChange={(e) => setBookingForm((prev) => ({ ...prev, acr: e.target.value }))}
+                    onBlur={(e) => { if (isEditingBooking) applyAcrToBookingId(editingBookingId, e.target.value) }}
+                  />
+                </label>
               )}
               {bookingCurrency !== 'PHP' && (
-                <p className="currency-picker-acr-note">The Quotation &amp; Invoice will show an "ACR" line with the total automatically converted to PHP at this rate.</p>
+                <p className="currency-picker-acr-note">The Quotation &amp; Invoice will show an "ACR" line with the total converted to PHP at this rate.</p>
               )}
             </div>
           )

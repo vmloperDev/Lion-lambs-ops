@@ -92,6 +92,7 @@ export type BookingFormData = {
   invoiceLineItemsJson: string
   invoicePackage: string   // JSON: {name, qty, price}
   quotationPaxRates: string // JSON: [{count,rate}] for [Adult, Child, Senior, Infant]
+  quotationPaxAddons: string // JSON: [{id,paxType,name,price}] — optional addons tied to a pax type; merged by name onto Invoice/PO/Breakdown
   invoiceAddons: string    // JSON: [{name, qty, price, nett}]
   breakdownLineItemsJson: string
   breakdownPaxTiers: string
