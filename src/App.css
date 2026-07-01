@@ -1449,6 +1449,22 @@ input, select, textarea { font: inherit; }
 .send-to-invoice-btn.active { background: var(--teal-light); color: var(--teal); }
 .send-to-invoice-btn.active svg { color: var(--teal); }
 
+/* Pax-Tier Pricing row — compact "show to document" toggle strip */
+.pax-tier-toggle-row {
+  display: flex; gap: 6px; padding: 0 0 8px 0; flex-wrap: wrap;
+}
+.pax-tier-toggle-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface); color: var(--subtle);
+  padding: 3px 10px; font-size: .68rem; font-weight: 700;
+  cursor: pointer; transition: background var(--t), color var(--t), border-color var(--t);
+}
+.pax-tier-toggle-btn:hover:not(:disabled) { background: var(--teal-light); color: var(--teal-dark); border-color: var(--teal-light); }
+.pax-tier-toggle-btn.active { background: var(--teal-light); color: var(--teal); border-color: var(--teal); }
+.pax-tier-toggle-btn.active svg { color: var(--teal); }
+.pax-tier-toggle-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
 /* Disabled / locked input fields */
 .line-items-row input.disabled-field,
 .line-items-row select.disabled-field {

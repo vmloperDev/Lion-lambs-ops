@@ -52,6 +52,7 @@ export type BreakdownLineItem = {
   nettCost: string
   sendToInvoice: boolean
   sendToPO?: boolean
+  sendToQuotation?: boolean
   isPackageRow?: boolean
   price2Pax?: string
   price5Pax?: string
@@ -143,6 +144,13 @@ export type BookingLineItem = {
   total: number
   nettTotal: number
   profit: number
+  // When true, the printed Quotation/Invoice hides this row's Unit Price
+  // and Amount (used for the Package row once addons/other priced items
+  // are shown on the same document, so the client isn't charged twice).
+  hidePrice?: boolean
+  // When true, the printed Quotation/Invoice hides this row's Qty column
+  // (used for the Package row, since a single "1" there is meaningless).
+  hideQty?: boolean
 }
 
 export type DtrEntry = {
