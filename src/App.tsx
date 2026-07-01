@@ -1371,7 +1371,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     return readBreakdownItems(bookingForm).map((item) => ({
       ...item,
       id: item.id || createLineItemId(),
-      ...(item.isPackageRow ? { sendToInvoice: true } : {}),
     }))
   }
 
@@ -1382,7 +1381,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       const normalizedBreakdown = items.map((item) => ({
         ...item,
         id: item.id || createLineItemId(),
-        ...(item.isPackageRow ? { sendToInvoice: true } : {}),
       }))
       const manualInvoiceItems = invoiceItems.filter((item) => item.source !== 'breakdown' && !item.isPackageRow)
       const breakdownInvoiceItems: InvoiceLineItem[] = normalizedBreakdown
@@ -2253,8 +2251,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     // prints as a plain label (no Qty/Unit Price of its own), followed by
     // one UN-combined sub-row per pax type that has both a rate and a
     // headcount set — e.g. "Adult Rate" (Qty 5), "Child Rate" (Qty 1).
-    // Same source used on the Invoice, via the shared helper.
-    const pkgTierRows = buildPackageTierLines(selectedBooking)
+    // Same source used on the Invoice, via the shared helper. Only included
+    // when the Package row's own "Show to Quotation" toggle is on (defaults
+    // to on so existing bookings keep behaving the same way they always have).
+    const pkgItemForToggle = readBreakdownItems(selectedBooking).find((i) => i.isPackageRow)
+    const showPkgTierOnQuotation = !pkgItemForToggle || pkgItemForToggle.sendToQuotation !== false
+    const pkgTierRows = showPkgTierOnQuotation ? buildPackageTierLines(selectedBooking) : []
     const hasPkgTierRates = pkgTierRows.length > 0
 
     // Once addons or "Show to Quotation" breakdown rows are on the
@@ -3580,6 +3582,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   const pkgItem = currentBreakdownItems.find((item) => item.isPackageRow)
                   if (!pkgItem) return null
                   const realIndex = currentBreakdownItems.indexOf(pkgItem)
+                  // Both toggles default to ON (undefined is treated as
+                  // shown) so existing bookings keep printing the per-pax
+                  // package rates exactly as they always have, until someone
+                  // explicitly switches one off.
+                  const pkgShownInQuotation = pkgItem.sendToQuotation !== false
+                  const pkgShownInInvoice = pkgItem.sendToInvoice !== false
                   return (
                     <div className="line-item-data-row package-tier-row">
                       <div className="line-items-row pax-tier-row">
@@ -3602,6 +3610,26 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                           />
                         ))}
                         <span></span>
+                      </div>
+                      <div className="pax-tier-toggle-row">
+                        <button
+                          type="button"
+                          className={`pax-tier-toggle-btn ${pkgShownInQuotation ? 'active' : ''}`}
+                          onClick={() => changeBreakdownItemField(realIndex, 'sendToQuotation', !pkgShownInQuotation)}
+                          title="Show the package's per-person rates in the Quotation document"
+                        >
+                          {pkgShownInQuotation ? <Eye size={12} /> : <EyeOff size={12} />}
+                          <span>Quotation</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={`pax-tier-toggle-btn ${pkgShownInInvoice ? 'active' : ''}`}
+                          onClick={() => changeBreakdownItemField(realIndex, 'sendToInvoice', !pkgShownInInvoice)}
+                          title="Show the package's per-person rates in the Invoice document"
+                        >
+                          {pkgShownInInvoice ? <Eye size={12} /> : <EyeOff size={12} />}
+                          <span>Invoice</span>
+                        </button>
                       </div>
                     </div>
                   )

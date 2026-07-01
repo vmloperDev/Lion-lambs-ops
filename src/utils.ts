@@ -209,8 +209,12 @@ export function readInvoicePackageAndAddonLines(booking: BookingFormData): Booki
 
   // The Package row's per-pax-tier rates print UN-combined — "Adult Rate"
   // (Qty 5), "Child Rate" (Qty 1) — under a plain package-name header with
-  // no Qty/Unit Price of its own.
-  const pkgTierRows = buildPackageTierLines(booking)
+  // no Qty/Unit Price of its own. Only included when the Package row's own
+  // "Show to Invoice" toggle is on (defaults to on so existing bookings
+  // keep behaving the same way they always have).
+  const pkgItemForToggle = brkItemsForAddons.find((i) => i.isPackageRow)
+  const showPkgTierOnInvoice = !pkgItemForToggle || pkgItemForToggle.sendToInvoice !== false
+  const pkgTierRows = showPkgTierOnInvoice ? buildPackageTierLines(booking) : []
   const packageRows: BookingLineItem[] = pkgTierRows.length > 0
     ? [
         {
