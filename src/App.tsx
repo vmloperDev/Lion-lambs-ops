@@ -388,16 +388,7 @@ function App() {
   const [openServiceItemDropdownId, setOpenServiceItemDropdownId] = useState<string | null>(null)
   const [customServiceItemDraft, setCustomServiceItemDraft] = useState('')
   const [addingCustomServiceItem, setAddingCustomServiceItem] = useState(false)
-  // Invoice addon name dropdown — shares serviceItemOptions with the P.O.
-  // Service Item dropdown (same option list, add/remove applies to both),
-  // but keeps its own open/draft state since it's a separate table.
-  const [openAddonNameDropdownId, setOpenAddonNameDropdownId] = useState<string | null>(null)
-  const [customAddonNameDraft, setCustomAddonNameDraft] = useState('')
-  const [addingCustomAddonName, setAddingCustomAddonName] = useState(false)
-  // Trigger-button refs for the addon name dropdown, keyed by row id — used
-  // to anchor the FloatingDropdownMenu portal (renders into document.body,
-  // so it can't get clipped by any ancestor's overflow:hidden/auto).
-  const addonDropdownTriggerRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+
 
   useEffect(() => {
     return onAuthStateChanged(auth, (user: FirebaseUser | null) => {
@@ -3234,8 +3225,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const hasVoucher = Boolean(bookingForm.flightDetails || bookingForm.accommodation)
 
     const docCards = [
-      { id: 'breakdown' as const, label: 'Breakdown/Quotation', icon: <FileBarChart2 size={28} />, desc: 'Client info, package details, pricing, inclusions, internal costing, supplier nett & pax tiers', filled: hasBreakdown || hasQuotation },
-      { id: 'invoice' as const, label: 'Invoice', icon: <Receipt size={28} />, desc: 'Invoice line items, payment records & status', filled: hasInvoice },
+      { id: 'breakdown' as const, label: 'Breakdown/Quotation/Invoice', icon: <FileBarChart2 size={28} />, desc: 'Client info, package details, pricing, inclusions, internal costing, supplier nett, pax tiers & invoice/logistics fulfillment', filled: hasBreakdown || hasQuotation || hasInvoice },
       { id: 'purchase-order' as const, label: 'Purchase Order', icon: <ShoppingCart size={28} />, desc: 'Supplier PO line items & payment method', filled: hasPO },
       { id: 'voucher' as const, label: 'Service Voucher', icon: <Ticket size={28} />, desc: 'Flights, accommodation, itinerary & emergency contact', filled: hasVoucher },
     ]
@@ -3260,8 +3250,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       travel:      ['breakdown'],
       costing:     ['breakdown'],
       paxTier:     ['breakdown'],
-      logistics:   ['invoice', 'voucher'],
-      invoiceItems: ['invoice'],
+      logistics:   ['breakdown', 'voucher'],
       inclusions:  ['breakdown'],
       schedule:    ['voucher'],
       remarks:     ['purchase-order', 'voucher'],
@@ -3813,209 +3802,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <textarea rows={2} value={bookingForm.emergencyContact} onChange={(e) => updateBookingField('emergencyContact', e.target.value)} placeholder="Hotel Front Desk: (036) 288-6111" />
               </label>
             </div>
-          </section>
-          )}
-
-          {/* INVOICE · ADDONS */}
-          {showSection('invoiceItems') && (
-          <section className="form-section">
-            <div className="form-section-heading">
-              <p>Addons</p>
-              <h2>Extra items billed only on the invoice</h2>
-            </div>
-            <p className="field-help">The package itself is set on the Quotation tab and always carries over here. Addons below show up on the invoice only — never on the quotation.</p>
-
-            {/* Addons — repeatable rows. Linked 1:1 with a P.O. supplier line
-                item sharing the same id: creating/editing/removing one side
-                mirrors name, qty, and supplier nett to the other. Each side
-                keeps its own independent "Show to Document" visibility. */}
-            {(() => {
-              type AddonRow = { id: string; name: string; qty: string; price: string; nett: string; showInDocument?: boolean }
-              let addons: AddonRow[] = []
-              try { const a = JSON.parse(bookingForm.invoiceAddons); if (Array.isArray(a)) addons = a } catch {}
-              // Older saved addons may not have an id yet — backfill on read.
-              addons = addons.map((r) => r.id ? r : { ...r, id: createLineItemId() })
-
-              const updateAddon = (i: number, field: keyof AddonRow, val: string | boolean) => {
-                const id = addons[i].id
-                setDataError('')
-                setDataMessage('')
-                setBookingForm((prev) => {
-                  let curAddons: AddonRow[] = []
-                  try { const a = JSON.parse(prev.invoiceAddons); if (Array.isArray(a)) curAddons = a } catch {}
-                  const nextAddons = curAddons.map((r) => (r.id || '') === id ? { ...r, [field]: val } : r)
-                  const updated = { ...prev, invoiceAddons: JSON.stringify(nextAddons) }
-                  if (field === 'name' || field === 'qty' || field === 'nett') {
-                    let poItems: POLineItem[] = []
-                    try { const p = JSON.parse(prev.poLineItemsJson || '[]'); if (Array.isArray(p)) poItems = p } catch {}
-                    const poField = field === 'name' ? 'serviceItem' : field === 'qty' ? 'adultPax' : 'supplierNett'
-                    if (poItems.some((p) => p.id === id)) {
-                      updated.poLineItemsJson = JSON.stringify(poItems.map((p) => p.id === id ? { ...p, [poField]: val } : p))
-                    }
-                  }
-                  return updated
-                })
-              }
-              const addRow = () => {
-                const id = createLineItemId()
-                setDataError('')
-                setDataMessage('')
-                setBookingForm((prev) => {
-                  let curAddons: AddonRow[] = []
-                  try { const a = JSON.parse(prev.invoiceAddons); if (Array.isArray(a)) curAddons = a } catch {}
-                  let poItems: POLineItem[] = []
-                  try { const p = JSON.parse(prev.poLineItemsJson || '[]'); if (Array.isArray(p)) poItems = p } catch {}
-                  const nextAddons = [...curAddons, { id, name: '', qty: '1', price: '', nett: '', showInDocument: true }]
-                  const nextPO = [...poItems, {
-                    id, vendor: '', contactNo: '', paymentMethod: '', agent: '', serviceItem: '', description: '',
-                    adultPax: '1', childPax: '0', seniorPax: '0', infantPax: '0', supplierNett: '', showInDocument: false,
-                  }]
-                  return { ...prev, invoiceAddons: JSON.stringify(nextAddons), poLineItemsJson: JSON.stringify(nextPO) }
-                })
-              }
-              const removeRow = (i: number) => {
-                const id = addons[i].id
-                setDataError('')
-                setDataMessage('')
-                setBookingForm((prev) => {
-                  let curAddons: AddonRow[] = []
-                  try { const a = JSON.parse(prev.invoiceAddons); if (Array.isArray(a)) curAddons = a } catch {}
-                  let poItems: POLineItem[] = []
-                  try { const p = JSON.parse(prev.poLineItemsJson || '[]'); if (Array.isArray(p)) poItems = p } catch {}
-                  return {
-                    ...prev,
-                    invoiceAddons: JSON.stringify(curAddons.filter((r) => (r.id || '') !== id)),
-                    poLineItemsJson: JSON.stringify(poItems.filter((p) => p.id !== id)),
-                  }
-                })
-              }
-
-              return (
-                <div className="invoice-addons-editor">
-                  <div className="invoice-addons-heading">
-                    <p className="field-help" style={{ margin: 0 }}>Optional extras with their own client price. Each addon also creates a matching Purchase Order line item (name &amp; qty stay in sync — set the supplier nett there) — toggle "Show to Document" to control whether it appears on the printed invoice.</p>
-                    <button type="button" className="invoice-addon-add-btn" onClick={addRow}>
-                      <Plus size={14} /> Add addon
-                    </button>
-                  </div>
-
-                  {addons.length === 0 ? (
-                    <p className="invoice-addons-empty">No addons yet.</p>
-                  ) : (
-                    <div className="invoice-addons-table">
-                      <div className="invoice-addons-row header">
-                        <span>Addon name</span>
-                        <span>Qty</span>
-                        <span>Client price</span>
-                        <span>Show to Document</span>
-                        <span></span>
-                      </div>
-                      {addons.map((row, i) => {
-                        const shown = row.showInDocument !== false
-                        return (
-                        <div className="invoice-addons-row" key={row.id}>
-                          <div className="po-service-dropdown-wrap">
-                            <button
-                              type="button"
-                              ref={(el) => { addonDropdownTriggerRefs.current[row.id] = el }}
-                              className="po-service-dropdown-trigger"
-                              onClick={() => setOpenAddonNameDropdownId(openAddonNameDropdownId === row.id ? null : row.id)}
-                            >
-                              <span>{row.name || 'Select…'}</span>
-                              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                            </button>
-                            {openAddonNameDropdownId === row.id && (
-                              <FloatingDropdownMenu
-                                anchorRef={{ current: addonDropdownTriggerRefs.current[row.id] ?? null }}
-                                onClose={() => { setOpenAddonNameDropdownId(null); setAddingCustomAddonName(false); setCustomAddonNameDraft('') }}
-                              >
-                                <ul className="po-service-dropdown-list">
-                                  {serviceItemOptions.map(opt => (
-                                    <li key={opt} className={`po-service-dropdown-item${row.name === opt ? ' selected' : ''}`}>
-                                      <button
-                                        type="button"
-                                        className="po-service-dropdown-select"
-                                        onClick={() => { updateAddon(i, 'name', opt); setOpenAddonNameDropdownId(null) }}
-                                      >{opt}</button>
-                                      <button
-                                        type="button"
-                                        className="po-service-dropdown-delete"
-                                        title="Remove option"
-                                        onClick={() => {
-                                          const next = serviceItemOptions.filter(o => o !== opt)
-                                          setServiceItemOptions(next)
-                                          if (row.name === opt) updateAddon(i, 'name', next[0] || '')
-                                        }}
-                                      ><X size={11} /></button>
-                                    </li>
-                                  ))}
-                                </ul>
-                                <div className="po-service-dropdown-add">
-                                  {addingCustomAddonName ? (
-                                    <div className="po-service-dropdown-custom-row">
-                                      <input
-                                        autoFocus
-                                        value={customAddonNameDraft}
-                                        onChange={e => setCustomAddonNameDraft(e.target.value)}
-                                        onKeyDown={e => {
-                                          if (e.key === 'Enter' && customAddonNameDraft.trim()) {
-                                            const val = customAddonNameDraft.trim()
-                                            if (!serviceItemOptions.includes(val)) setServiceItemOptions(prev => [...prev, val])
-                                            updateAddon(i, 'name', val)
-                                            setCustomAddonNameDraft('')
-                                            setAddingCustomAddonName(false)
-                                            setOpenAddonNameDropdownId(null)
-                                          }
-                                          if (e.key === 'Escape') { setAddingCustomAddonName(false); setCustomAddonNameDraft('') }
-                                        }}
-                                        placeholder="Type and press Enter…"
-                                        className="po-service-dropdown-custom-input"
-                                      />
-                                      <button type="button" className="po-service-dropdown-cancel" onClick={() => { setAddingCustomAddonName(false); setCustomAddonNameDraft('') }}>
-                                        <X size={11} />
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <button type="button" className="po-service-dropdown-add-btn" onClick={() => setAddingCustomAddonName(true)}>
-                                      <Plus size={12} /> Add custom option
-                                    </button>
-                                  )}
-                                </div>
-                              </FloatingDropdownMenu>
-                            )}
-                          </div>
-                          <input
-                            type="number" min="0"
-                            value={row.qty}
-                            onChange={(e) => updateAddon(i, 'qty', e.target.value)}
-                            placeholder="1"
-                          />
-                          <input
-                            type="number" min="0"
-                            value={row.price}
-                            onChange={(e) => updateAddon(i, 'price', e.target.value)}
-                            placeholder="0.00"
-                          />
-                          <button
-                            type="button"
-                            className={`send-to-invoice-btn ${shown ? 'active' : ''}`}
-                            onClick={() => updateAddon(i, 'showInDocument', !shown)}
-                            title="Show this addon in the Invoice document"
-                          >
-                            {shown ? <Eye size={14} /> : <EyeOff size={14} />}
-                            <span>{shown ? 'Showing' : 'Hidden'}</span>
-                          </button>
-                          <button type="button" className="remove-line-btn" onClick={() => removeRow(i)} title="Remove addon">
-                            <X size={14} />
-                          </button>
-                        </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )
-            })()}
           </section>
           )}
 
