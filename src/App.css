@@ -2397,6 +2397,15 @@ input, select, textarea { font: inherit; }
 .bq-subtotal-row .bq-price, .bq-pax-row .bq-price, .bq-total-row .bq-price { text-align: right; }
 .bq-total-row { border-top: 2px solid #1f2937; }
 .bq-total-row .bq-has-value { color: #d94235; }
+.bq-package-row td { background: #fdf3d8; border-top: 2px solid #d4900a; border-bottom: 2px solid #d4900a; }
+.bq-package-row .bq-service { color: #a86e06; position: relative; padding-left: 76px; }
+.bq-package-row .bq-service::before {
+  content: 'PACKAGE';
+  position: absolute; left: 8px; top: 50%; transform: translateY(-50%);
+  font-size: 0.6rem; font-weight: 900; letter-spacing: 0.06em;
+  color: #061c30; background: #d4900a; padding: 2px 6px; border-radius: 999px;
+  white-space: nowrap;
+}
 
 /* ── Breakdown tier config panel ── */
 .breakdown-tier-config { margin-bottom: 1rem; padding: 0.75rem 1rem; background: var(--surface-raised, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 0.5rem; }
@@ -2406,12 +2415,52 @@ input, select, textarea { font: inherit; }
 .tier-pax-input { font-size: 0.78rem; text-align: center; }
 
 /* ── Pax-tier row in data gathering form ── */
+/* Each row in this panel gets its own visible boxed card — overriding the
+   generic .line-item-data-row { display: contents } used elsewhere, which
+   would otherwise make a box-style background/border invisible here. */
+.breakdown-tier-prices-panel .line-item-data-row {
+  display: block;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.breakdown-tier-prices-panel .line-items-row.pax-tier-row { border-bottom: 1px solid var(--border); padding: 8px 10px; }
+.breakdown-tier-prices-panel .pax-tier-toggle-row { padding: 6px 10px 8px; }
 .line-items-row.pax-tier-row { display: grid; grid-template-columns: 160px 1fr repeat(4, 100px) 32px; gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .pax-tier-mirror-hint { font-size: 0.6rem; text-transform: uppercase; font-weight: 700; color: var(--text-secondary); opacity: 0.6; white-space: nowrap; }
 .line-items-row.pax-tier-row.header { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); padding-bottom: 6px; }
 .pax-tier-service-label { font-size: 0.82rem; font-weight: 700; color: var(--text-primary); padding: 0 4px; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.package-tier-row { background: var(--surface-hover, rgba(37, 99, 235, 0.06)); border-radius: 8px; margin-bottom: 4px; }
-.package-tier-row .line-items-row.pax-tier-row { border-bottom: none; padding: 8px 6px; }
+
+/* The Package row's box gets a gold highlight so it visually stands out
+   from the plain boxed service rows below it. */
+.breakdown-tier-prices-panel .line-item-data-row.package-tier-row {
+  background: var(--gold-light);
+  border: 1px solid var(--gold-mid);
+  border-left: 4px solid var(--gold);
+  box-shadow: var(--sh-xs);
+}
+.package-tier-row .line-items-row.pax-tier-row { border-bottom: 1px solid var(--gold-mid); }
+.package-tier-row .pax-tier-service-label {
+  color: var(--gold-dark);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.package-tier-row .pax-tier-service-label::before {
+  content: 'PACKAGE';
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  color: var(--navy, #061c30);
+  background: var(--gold);
+  padding: 2px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 
 /* ── 05b clearer labels ── */
 .breakdown-tier-config-header { margin-bottom: 0.75rem; }

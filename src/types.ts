@@ -53,6 +53,7 @@ export type BreakdownLineItem = {
   sendToInvoice: boolean
   sendToPO?: boolean
   sendToQuotation?: boolean
+  sendToBreakdown?: boolean
   isPackageRow?: boolean
   price2Pax?: string
   price5Pax?: string

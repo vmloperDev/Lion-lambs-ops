@@ -209,12 +209,9 @@ export function readInvoicePackageAndAddonLines(booking: BookingFormData): Booki
 
   // The Package row's per-pax-tier rates print UN-combined — "Adult Rate"
   // (Qty 5), "Child Rate" (Qty 1) — under a plain package-name header with
-  // no Qty/Unit Price of its own. Only included when the Package row's own
-  // "Show to Invoice" toggle is on (defaults to on so existing bookings
-  // keep behaving the same way they always have).
-  const pkgItemForToggle = brkItemsForAddons.find((i) => i.isPackageRow)
-  const showPkgTierOnInvoice = !pkgItemForToggle || pkgItemForToggle.sendToInvoice !== false
-  const pkgTierRows = showPkgTierOnInvoice ? buildPackageTierLines(booking) : []
+  // no Qty/Unit Price of its own. The package always shows on the Invoice —
+  // there's no "Show to Invoice" toggle for it anymore.
+  const pkgTierRows = buildPackageTierLines(booking)
   const packageRows: BookingLineItem[] = pkgTierRows.length > 0
     ? [
         {
@@ -272,6 +269,31 @@ export function buildPackageTierLines(booking: BookingFormData): BookingLineItem
       quantity: t.count, unitPrice: t.price, nettCost: 0,
       total: t.count * t.price, nettTotal: 0, profit: t.count * t.price,
     }))
+}
+
+// Whether a Pax-Tier Pricing row has a per-person rate entered in ANY of
+// the four Adult/Child/Senior/Infant price columns.
+export function breakdownItemHasRate(item: BreakdownLineItem): boolean {
+  const fields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
+  return fields.some((field) => parseAmount(item[field] as string) > 0)
+}
+
+// Rows that already have at least one pax-tier rate filled in float to the
+// top, ahead of still-blank rows — a stable sort, so rows keep their
+// relative order within each of those two groups. Used by the Pax-Tier
+// Pricing editor and by the printed Breakdown/Quotation documents so the
+// row order (and therefore what a reader sees first) matches everywhere;
+// the totals themselves are unaffected since those are summed regardless
+// of row order.
+export function sortBreakdownItemsByRate<T extends BreakdownLineItem>(items: T[]): T[] {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const aHas = breakdownItemHasRate(a.item) ? 0 : 1
+      const bHas = breakdownItemHasRate(b.item) ? 0 : 1
+      return aHas !== bHas ? aHas - bHas : a.index - b.index
+    })
+    .map((entry) => entry.item)
 }
 
 export function readBreakdownItems(booking: BookingFormData): BreakdownLineItem[] {

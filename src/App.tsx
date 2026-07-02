@@ -94,7 +94,7 @@ import {
   parseAmount, parseQuantity, formatAmount, computePaymentStatus, formatProjectDate,
   readPaxBreakdown, sumPaxBreakdown, formatPaxBreakdownLabel,
   createLineItemId, getLines,
-  readInvoiceItems, readBreakdownItems,
+  readInvoiceItems, readBreakdownItems, sortBreakdownItemsByRate,
   getBreakdownColPax, getBreakdownTotal, getBreakdownPaxTotal,
   buildCombinedTierLine, buildPackageTierLines,
   mapInvoiceItemsToBookingLines, mapBreakdownItemsToBookingLines,
@@ -2242,21 +2242,19 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     // Amount still matches the internal Breakdown sheet exactly. This is the
     // same combining logic used on the Invoice, via the shared helper.
     const breakdownColPax = getBreakdownColPax(selectedBooking)
-    const breakdownQuoteLineItems: BookingLineItem[] = readBreakdownItems(selectedBooking)
-      .filter((item) => !item.isPackageRow && item.sendToQuotation)
-      .map((item) => buildCombinedTierLine(item.description, item, breakdownColPax, quotePaxTotal))
+    const breakdownQuoteLineItems: BookingLineItem[] = sortBreakdownItemsByRate(
+      readBreakdownItems(selectedBooking).filter((item) => !item.isPackageRow && item.sendToQuotation)
+    ).map((item) => buildCombinedTierLine(item.description, item, breakdownColPax, quotePaxTotal))
 
     // The Package row (first row of Pax-Tier Pricing) carries its own
     // per-pax-type rate instead of a single flat price. On the document it
     // prints as a plain label (no Qty/Unit Price of its own), followed by
     // one UN-combined sub-row per pax type that has both a rate and a
     // headcount set — e.g. "Adult Rate" (Qty 5), "Child Rate" (Qty 1).
-    // Same source used on the Invoice, via the shared helper. Only included
-    // when the Package row's own "Show to Quotation" toggle is on (defaults
-    // to on so existing bookings keep behaving the same way they always have).
-    const pkgItemForToggle = readBreakdownItems(selectedBooking).find((i) => i.isPackageRow)
-    const showPkgTierOnQuotation = !pkgItemForToggle || pkgItemForToggle.sendToQuotation !== false
-    const pkgTierRows = showPkgTierOnQuotation ? buildPackageTierLines(selectedBooking) : []
+    // Same source used on the Invoice, via the shared helper. The package
+    // always shows on the Quotation — there's no "Show to Quotation" toggle
+    // for it anymore.
+    const pkgTierRows = buildPackageTierLines(selectedBooking)
     const hasPkgTierRates = pkgTierRows.length > 0
 
     // Once addons or "Show to Quotation" breakdown rows are on the
@@ -2939,10 +2937,11 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
     const paxPriceFields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
 
+    const pkgShownInBreakdownDoc = brkItems.find((item) => item.isPackageRow)?.sendToBreakdown === true
+    const subtotalItems = brkItems.filter((item) => !item.isPackageRow || pkgShownInBreakdownDoc)
+
     const subtotals = paxPriceFields.map((field) =>
-      brkItems
-        .filter((item) => !item.isPackageRow)
-        .reduce((sum, item) => sum + parseAmount(item[field] as string), 0)
+      subtotalItems.reduce((sum, item) => sum + parseAmount(item[field] as string), 0)
     )
 
     const totals = subtotals.map((sub, i) => {
@@ -2986,7 +2985,25 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </tr>
           </thead>
           <tbody>
-            {brkItems.filter(item => !item.isPackageRow).map((item, index) => (
+            {(() => {
+              const pkgItem = brkItems.find((item) => item.isPackageRow)
+              if (!pkgItem || !pkgShownInBreakdownDoc) return null
+              return (
+                <tr className="bq-data-row bq-package-row">
+                  <td className="bq-service">{(pkgItem.description || selectedBooking.packageName || 'Package').toUpperCase()}</td>
+                  <td className="bq-details">{pkgItem.details || ''}</td>
+                  {paxPriceFields.map((field, ci) => {
+                    const val = parseAmount(pkgItem[field] as string)
+                    return (
+                      <td key={ci} className={`bq-price${val > 0 ? ' bq-has-value' : ''}${ci === 3 ? ' bq-infant-col' : ''}`}>
+                        {val > 0 ? `₱${val.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                      </td>
+                    )
+                  })}
+                </tr>
+              )
+            })()}
+            {sortBreakdownItemsByRate(brkItems.filter(item => !item.isPackageRow)).map((item, index) => (
               <tr key={index} className="bq-data-row">
                 <td className="bq-service">{item.description.toUpperCase()}</td>
                 <td className="bq-details">{item.details || ''}</td>
@@ -3582,12 +3599,13 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   const pkgItem = currentBreakdownItems.find((item) => item.isPackageRow)
                   if (!pkgItem) return null
                   const realIndex = currentBreakdownItems.indexOf(pkgItem)
-                  // Both toggles default to ON (undefined is treated as
-                  // shown) so existing bookings keep printing the per-pax
-                  // package rates exactly as they always have, until someone
-                  // explicitly switches one off.
-                  const pkgShownInQuotation = pkgItem.sendToQuotation !== false
-                  const pkgShownInInvoice = pkgItem.sendToInvoice !== false
+                  // The package always shows on the Quotation and Invoice —
+                  // there's no toggle for those anymore. Breakdown defaults
+                  // to OFF (undefined is treated as hidden), since the
+                  // package row never used to appear on the Breakdown
+                  // document at all — it only shows there once this toggle
+                  // is switched on.
+                  const pkgShownInBreakdown = pkgItem.sendToBreakdown === true
                   return (
                     <div className="line-item-data-row package-tier-row">
                       <div className="line-items-row pax-tier-row">
@@ -3614,28 +3632,19 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                       <div className="pax-tier-toggle-row">
                         <button
                           type="button"
-                          className={`pax-tier-toggle-btn ${pkgShownInQuotation ? 'active' : ''}`}
-                          onClick={() => changeBreakdownItemField(realIndex, 'sendToQuotation', !pkgShownInQuotation)}
-                          title="Show the package's per-person rates in the Quotation document"
+                          className={`pax-tier-toggle-btn ${pkgShownInBreakdown ? 'active' : ''}`}
+                          onClick={() => changeBreakdownItemField(realIndex, 'sendToBreakdown', !pkgShownInBreakdown)}
+                          title="Show the package as a normal row on the Breakdown document"
                         >
-                          {pkgShownInQuotation ? <Eye size={12} /> : <EyeOff size={12} />}
-                          <span>Quotation</span>
-                        </button>
-                        <button
-                          type="button"
-                          className={`pax-tier-toggle-btn ${pkgShownInInvoice ? 'active' : ''}`}
-                          onClick={() => changeBreakdownItemField(realIndex, 'sendToInvoice', !pkgShownInInvoice)}
-                          title="Show the package's per-person rates in the Invoice document"
-                        >
-                          {pkgShownInInvoice ? <Eye size={12} /> : <EyeOff size={12} />}
-                          <span>Invoice</span>
+                          {pkgShownInBreakdown ? <Eye size={12} /> : <EyeOff size={12} />}
+                          <span>Breakdown</span>
                         </button>
                       </div>
                     </div>
                   )
                 })()}
 
-                {currentBreakdownItems.filter(item => !item.isPackageRow).map((item, index) => {
+                {sortBreakdownItemsByRate(currentBreakdownItems.filter(item => !item.isPackageRow)).map((item, index) => {
                   const realIndex = currentBreakdownItems.indexOf(item)
                   const sharedId = item.mirrorId ? item.mirrorId.replace(/^item-/, '') : item.id
                   const linkedAddon = currentInvoiceAddonsForToggles.find((a) => a.id === sharedId)
