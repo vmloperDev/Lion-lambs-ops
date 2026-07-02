@@ -67,9 +67,6 @@ import {
   Receipt,
   ShoppingCart,
   Ticket,
-  BadgeCheck,
-  Lock,
-  Coins,
 } from 'lucide-react'
 import { auth, db } from './firebase'
 import agencySeal from './assets/brand/agency-seal.png'
@@ -91,7 +88,7 @@ import {
   getDisplayName, getPasswordStrength,
   normalizeBooking, getStoredBookings,
   getUserBookingsCollectionPath, getBookingOwnerPath,
-  parseAmount, parseQuantity, formatAmount, computePaymentStatus, formatProjectDate,
+  parseAmount, parseQuantity, formatAmount, computePaymentStatus, formatProjectDate, toDateInputValue,
   readPaxBreakdown, sumPaxBreakdown, formatPaxBreakdownLabel,
   createLineItemId, getLines,
   readInvoiceItems, readBreakdownItems, sortBreakdownItemsByRate,
@@ -238,7 +235,7 @@ function App() {
   const [isJpgExporting, setIsJpgExporting] = useState(false)
   const [bookings, setBookings] = useState<BookingRecord[]>(getStoredBookings)
   const [bookingForm, setBookingForm] = useState<BookingFormData>(emptyBookingForm)
-  const [bookingCreatedAt, setBookingCreatedAt] = useState(() => new Date().toISOString().slice(0, 10))
+  const [bookingCreatedAt, setBookingCreatedAt] = useState(() => '')
   // Holds the exact booking object built at save-time so templates always
   // reflect the latest saved data regardless of Firestore snapshot timing.
   const lastSavedBookingRef = useRef<BookingRecord | null>(null)
@@ -300,10 +297,10 @@ function App() {
     amount: '',
     method: '',
     reference: '',
-    date: new Date().toISOString().slice(0, 10),
+    date: toDateInputValue(),
   })
   const [isFullyPaidModalOpen, setIsFullyPaidModalOpen] = useState(false)
-  const [fullyPaidDateInput, setFullyPaidDateInput] = useState(new Date().toISOString().slice(0, 10))
+  const [fullyPaidDateInput, setFullyPaidDateInput] = useState(toDateInputValue())
   const [activeBookingFilter, setActiveBookingFilter] = useState<BookingListFilter>('All')
   const [activeYear, setActiveYear] = useState(() => new Date().getFullYear())
   const [expandedMonth, setExpandedMonth] = useState<string | null>(() => {
@@ -312,27 +309,6 @@ function App() {
   })
   const [selectedBookingId, setSelectedBookingId] = useState('')
   const [editingBookingId, setEditingBookingId] = useState('')
-
-  // Draft currency for the "Document currency" picker shown on read-only
-  // project screens (booking detail, document folder, previews, invoice
-  // editor) — separate from bookingForm.currency, which only exists while
-  // actively editing a booking on the data-form screen. Resets to the
-  // saved booking's currency each time a different project is opened.
-  const [documentCurrencyDraft, setDocumentCurrencyDraft] = useState('PHP')
-  useEffect(() => {
-    const b = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
-    setDocumentCurrencyDraft(b?.currency || 'PHP')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedBookingId])
-  // Draft manual conversion rate (PHP value of 1 unit of the chosen
-  // currency) for the same read-only "Document currency" picker — set by
-  // hand instead of pulled from a live feed, e.g. "65" for 1 USD = ₱65.
-  const [documentAcrDraft, setDocumentAcrDraft] = useState('')
-  useEffect(() => {
-    const b = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
-    setDocumentAcrDraft(b?.acr || '')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedBookingId])
   const [searchTerm, setSearchTerm] = useState('')
   const [docsSearchTerm, setDocsSearchTerm] = useState('')
   const [activeDocTab, setActiveDocTab] = useState<'quotation' | 'breakdown' | 'invoice' | 'purchase-order' | 'voucher' | null>(null)
@@ -346,7 +322,6 @@ function App() {
   // The floating "Document currency" card while filling the Data Gathering
   // form can be closed with an X and re-opened via a small pill button that
   // takes its place, so it doesn't sit on top of the form the whole time.
-  const [showCurrencyWidget, setShowCurrencyWidget] = useState(true)
   const passwordStrength = getPasswordStrength(password)
 
   // Options lists
@@ -377,18 +352,6 @@ function App() {
   const breakdownDropdownTriggerRefs = useRef<Record<number, HTMLButtonElement | null>>({})
   const [customBreakdownRowIndex, setCustomBreakdownRowIndex] = useState(-1)
   const [customBreakdownDraft, setCustomBreakdownDraft] = useState('')
-
-  const DEFAULT_SERVICE_ITEM_OPTIONS = [
-    'Group Package', 'Airfare', 'Land Arrangement', 'Hotel',
-    'Airport Transfer (Outbound)', 'Airport Transfer (Manila/Clark)',
-    'Optional Tour', 'PH Tax', 'Add On Luggage - One Way',
-    'Add On Luggage - Roundtrip', 'Fuel Surcharge', 'Travel Insurance', 'Tipping',
-  ]
-  const [serviceItemOptions, setServiceItemOptions] = useState<string[]>(DEFAULT_SERVICE_ITEM_OPTIONS)
-  const [openServiceItemDropdownId, setOpenServiceItemDropdownId] = useState<string | null>(null)
-  const [customServiceItemDraft, setCustomServiceItemDraft] = useState('')
-  const [addingCustomServiceItem, setAddingCustomServiceItem] = useState(false)
-
 
   useEffect(() => {
     return onAuthStateChanged(auth, (user: FirebaseUser | null) => {
@@ -510,7 +473,7 @@ function App() {
   const bookingsFlownKey = bookings.map(b => b.id + b.status + b.travelEnd).join(',')
   useEffect(() => {
     if (!authUser || bookings.length === 0) return
-    const today = new Date().toISOString().slice(0, 10)
+    const today = toDateInputValue()
     const toFlown = bookings.filter(b =>
       b.status !== 'Flown' &&
       b.travelEnd &&
@@ -668,7 +631,7 @@ Character Description — this is critical:
 
 Scope: Answer EVERYTHING — travel, trivia, life advice, coding, history, pop culture, emotional support. Nothing is off-limits. You are not a narrow tool.
 
-Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 messages for context. Read the sender labels like [Name] to know who's talking.`
+Today's date: ${toDateInputValue()}. You have the last 20 messages for context. Read the sender labels like [Name] to know who's talking.`
   }
 
   // Turns a slice of chat history + the current question into Gemini "contents".
@@ -1024,20 +987,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
   }, [bookingForm.invoiceAddons, bookingForm.poLineItemsJson, bookingForm.breakdownLineItemsJson])
 
 
-  useEffect(() => {
-    if (!openServiceItemDropdownId) return
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement
-      if (!target.closest('.po-service-dropdown-wrap')) {
-        setOpenServiceItemDropdownId(null)
-        setAddingCustomServiceItem(false)
-        setCustomServiceItemDraft('')
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [openServiceItemDropdownId])
-
   // (Addon name dropdown outside-click handling now lives inside
   // FloatingDropdownMenu itself, since the menu is portaled to document.body.)
 
@@ -1184,9 +1133,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     freshForm.invoiceLineItemsJson = JSON.stringify(initialInvoice)
     freshForm.breakdownLineItemsJson = JSON.stringify(initialBreakdown)
     
-    setBookingCreatedAt(new Date().toISOString().slice(0, 10))
+    setBookingCreatedAt('')
     setBookingForm(freshForm)
-    setActiveDocTab(null)
+    setActiveDocTab('breakdown')
     setScreen('data-form')
   }
 
@@ -1235,8 +1184,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
     setBookingCreatedAt(
       selectedBooking.createdAt
-        ? new Date(selectedBooking.createdAt).toISOString().slice(0, 10)
-        : new Date().toISOString().slice(0, 10)
+        ? toDateInputValue(selectedBooking.createdAt)
+        : ''
     )
     // Existing projects saved before the breakdown→quotation sync existed
     // may have correct data in the breakdown's locked package row but a
@@ -1256,7 +1205,45 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     } catch (e) {}
 
     setBookingForm(normalized)
-    setActiveDocTab(null)
+    setActiveDocTab('breakdown')
+    setScreen('data-form')
+  }
+
+  // Seeds a fresh draft from an existing booking's data — same client,
+  // package, pricing, itinerary, etc. — so the person only has to correct
+  // whatever's different instead of retyping the whole thing. Saves as a
+  // brand-new project (editingBookingId stays empty) and is flagged
+  // isDuplicate so the dashboard can show a DUPLICATED tag on it.
+  function handleDuplicateBooking() {
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
+    if (!selectedBooking) {
+      setScreen('home')
+      return
+    }
+    setEditingBookingId('')
+    const normalized = normalizeBooking(selectedBooking)
+
+    const duplicated = {
+      ...normalized,
+      quotationNo: `QT-${new Date().getFullYear()}-${String(bookings.length + 1).padStart(4, '0')}`,
+      status: 'Pending' as const,
+      // Payment/fulfillment info belongs to the original booking, not the
+      // copy — start those fresh on the duplicate.
+      invoiceAmountPaid: '',
+      invoicePaymentDate: '',
+      invoicePaymentStatus: 'Unpaid',
+      invoiceFullyPaidDate: '',
+      invoiceReference: '',
+      paymentRecords: '',
+      isDuplicate: true,
+    }
+
+    // Date created is left empty (same as a brand-new inquiry) so it's
+    // required to be filled in on purpose rather than silently inheriting
+    // the original project's date.
+    setBookingCreatedAt('')
+    setBookingForm(duplicated)
+    setActiveDocTab('breakdown')
     setScreen('data-form')
   }
 
@@ -1516,12 +1503,33 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     removeMirroredAddonAndPO(item?.mirrorId)
   }
 
+  // Mirror a breakdown row's Vendor / Contact No. / Agent / Payment method
+  // to its linked Purchase Order supplier item (matched by the shared id
+  // encoded in mirrorId), so filling these in on the Breakdown tab's
+  // Pax-Tier Pricing row also fills them on the actual P.O. document.
+  function syncMirrorPOField(mirrorId: string | undefined, field: 'vendor' | 'contactNo' | 'agent' | 'paymentMethod', value: string) {
+    if (!mirrorId) return
+    const sharedId = mirrorId.replace(/^item-/, '')
+    setBookingForm((prev) => {
+      let poItems: POLineItem[] = []
+      try { const p = JSON.parse(prev.poLineItemsJson || '[]'); if (Array.isArray(p)) poItems = p } catch {}
+      const idx = poItems.findIndex((p) => p.id === sharedId)
+      if (idx === -1) return prev
+      const nextPO = poItems.map((p, i) => (i === idx ? { ...p, [field]: value } : p))
+      return { ...prev, poLineItemsJson: JSON.stringify(nextPO) }
+    })
+  }
+
   function changeBreakdownItemField(index: number, field: keyof BreakdownLineItem, value: any) {
     const brkCurrent = getBreakdownItemsList()
     const item = brkCurrent[index]
     brkCurrent[index] = { ...item, [field]: value }
     saveBreakdownItemsList(brkCurrent)
     if (field === 'description') syncMirrorName(item?.mirrorId, value)
+    if (field === 'vendor') syncMirrorPOField(item?.mirrorId, 'vendor', value)
+    if (field === 'contactNumber') syncMirrorPOField(item?.mirrorId, 'contactNo', value)
+    if (field === 'agent') syncMirrorPOField(item?.mirrorId, 'agent', value)
+    if (field === 'paymentMethod') syncMirrorPOField(item?.mirrorId, 'paymentMethod', value)
   }
 
   // Flips the "Show to Document" flag on the Invoice addon or P.O. line item
@@ -1636,7 +1644,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       setDataMessage(isEditing ? 'Booking changes saved successfully.' : 'Inquiry saved successfully.')
       setSelectedBookingId(booking.id)
       if (isEditing) {
-        setActiveDocTab(null)
+        setEditingBookingId('')
+        setScreen('booking-detail')
       } else {
         setEditingBookingId('')
         setScreen('home')
@@ -1646,7 +1655,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       setDataMessage('')
       setSelectedBookingId(booking.id)
       if (isEditing) {
-        setActiveDocTab(null)
+        setEditingBookingId('')
+        setScreen('booking-detail')
       } else {
         setEditingBookingId('')
         setScreen('home')
@@ -1757,73 +1767,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     applyCurrencyToBookingId(editingBookingId, bookingForm.currency || 'PHP')
   }
 
-  // The same "Document currency" card, reused on every read-only project
-  // screen (booking detail, document folder, all previews, invoice editor)
-  // so it's available wherever a project is open — not just while editing
-  // the booking form. Edits go through documentCurrencyDraft and apply
-  // straight to the saved booking via applyCurrencyToBookingId.
-  function renderProjectCurrencyPicker() {
-    const savedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
-    if (!savedBooking) return null
-
-    const savedCurrency = savedBooking.currency || 'PHP'
-    const draftCurrency = documentCurrencyDraft || 'PHP'
-    const hasPendingCurrencyChange = draftCurrency !== savedCurrency
-
-    return (
-      <div className="currency-picker-card">
-        <div className="currency-picker-head">
-          <Coins size={16} />
-          <span>Document currency</span>
-        </div>
-        <select
-          className="currency-picker-select"
-          value={draftCurrency}
-          onChange={(e) => {
-            setDataError('')
-            setDataMessage('')
-            setDocumentCurrencyDraft(e.target.value)
-          }}
-        >
-          {SUPPORTED_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
-
-        <button
-          type="button"
-          className="currency-picker-apply-btn"
-          onClick={() => applyCurrencyToBookingId(selectedBookingId, draftCurrency)}
-          disabled={!hasPendingCurrencyChange}
-        >
-          Apply to Document
-        </button>
-        <p className={hasPendingCurrencyChange ? 'currency-picker-apply-hint currency-picker-apply-hint-pending' : 'currency-picker-apply-hint'}>
-          {hasPendingCurrencyChange
-            ? `Not applied yet — Quotation & Invoice still show ${savedCurrency}.`
-            : `Applied — Quotation & Invoice are set to ${draftCurrency}.`}
-        </p>
-
-        {draftCurrency === 'PHP' ? (
-          <p className="currency-picker-rate currency-picker-rate-base">Base currency — quotation &amp; invoice amounts print as-is.</p>
-        ) : (
-          <label className="currency-picker-rate-input-wrap">
-            <span className="currency-picker-rate-input-label">1 {draftCurrency} = ₱</span>
-            <input
-              type="number" min="0" step="0.01"
-              className="currency-picker-rate-input"
-              value={documentAcrDraft}
-              placeholder="0.00"
-              onChange={(e) => setDocumentAcrDraft(e.target.value)}
-              onBlur={(e) => applyAcrToBookingId(selectedBookingId, e.target.value)}
-            />
-          </label>
-        )}
-        {draftCurrency !== 'PHP' && (
-          <p className="currency-picker-acr-note">The Quotation &amp; Invoice will show an "ACR" line with the total converted to PHP at this rate.</p>
-        )}
-      </div>
-    )
-  }
-
   function openQuotationPreview() { setScreen('quotation-preview') }
   
   function openInvoiceEditor() {
@@ -1879,7 +1822,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       invoicePaymentStatus: newStatus,
       invoiceFullyPaidDate: newStatus === 'Paid' ? (f.invoiceFullyPaidDate || paymentEntry.date || f.invoicePaymentDate) : '',
     }))
-    setPaymentEntry({ amount: '', method: '', reference: '', date: new Date().toISOString().slice(0, 10) })
+    setPaymentEntry({ amount: '', method: '', reference: '', date: toDateInputValue() })
   }
 
   function getInvoiceEditorTotal(): number {
@@ -1909,14 +1852,14 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const totalPrice = getInvoiceEditorTotal()
     const currentPaid = parseAmount(invoiceForm.invoiceAmountPaid)
     if (nextStatus === 'Paid' && currentPaid < totalPrice) {
-      setFullyPaidDateInput(new Date().toISOString().slice(0, 10))
+      setFullyPaidDateInput(toDateInputValue())
       setIsFullyPaidModalOpen(true)
       return
     }
     setInvoiceForm((f) => ({
       ...f,
       invoicePaymentStatus: nextStatus,
-      invoiceFullyPaidDate: nextStatus === 'Paid' ? (f.invoiceFullyPaidDate || new Date().toISOString().slice(0, 10)) : '',
+      invoiceFullyPaidDate: nextStatus === 'Paid' ? (f.invoiceFullyPaidDate || toDateInputValue()) : '',
     }))
   }
 
@@ -2351,39 +2294,54 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </article>
         </section>
 
-        <table className="quote-table">
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th>Qty</th>
-              <th>Unit Price</th>
-              <th>Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lineItems.map((item, index) => (
-              <tr key={`${item.description}-${index}`}>
-                <td className="item-col">{item.description}</td>
-                <td>{item.hideQty ? '' : item.quantity}</td>
-                <td>{item.hidePrice ? '—' : convertAndFormat(item.unitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
-                <td>{item.hidePrice ? '—' : convertAndFormat(item.total, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+        <div className="invoice-body-grid quote-body-grid">
+          <table className="invoice-table quote-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Qty</th>
+                <th>Unit Price</th>
+                <th>Amount</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {lineItems.map((item, index) => (
+                <tr key={`${item.description}-${index}`}>
+                  <td className="item-col">{item.description}</td>
+                  <td>{item.hideQty ? '' : item.quantity}</td>
+                  <td>{item.hidePrice ? '—' : convertAndFormat(item.unitPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                  <td>{item.hidePrice ? '—' : convertAndFormat(item.total, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
 
-        <section className="invoice-total-panel quote-total-panel">
-          <div className="invoice-total-row total-row">
-            <span>TOTAL</span>
-            <strong>{convertAndFormat(quoteTotal, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
-          </div>
-          {acrPhpTotal(quoteTotal, selectedBooking.currency, selectedBooking.acr) && (
-            <div className="invoice-total-row">
-              <span>ACR (Converted to PHP)</span>
-              <strong>{acrPhpTotal(quoteTotal, selectedBooking.currency, selectedBooking.acr)}</strong>
+          <section className="invoice-total-panel">
+            <div className="invoice-total-row total-row">
+              <span>TOTAL</span>
+              <strong>{convertAndFormat(quoteTotal, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
             </div>
-          )}
-        </section>
+            {(() => {
+              const currency = selectedBooking.currency || 'PHP'
+              const rate = parseFloat(selectedBooking.acr || '')
+              if (currency === 'PHP' || !rate || rate <= 0) return null
+              const formattedRate = rate.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+              const pesoValue = (quoteTotal * rate).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+              return (
+                <>
+                  <div className="invoice-total-row acr-row">
+                    <span>ACR</span>
+                    <strong>{`1 ${currency} = ₱${formattedRate}`}</strong>
+                  </div>
+                  <div className="invoice-total-row acr-row">
+                    <span>Peso Value</span>
+                    <strong>{`₱${pesoValue}`}</strong>
+                  </div>
+                </>
+              )
+            })()}
+          </section>
+        </div>
 
         <section className="quote-notes">
           <p>Notes: No booking has been made yet.</p>
@@ -2484,10 +2442,16 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               <strong>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
             </div>
             {acrPhpTotal(totalPrice, selectedBooking.currency, selectedBooking.acr) && (
-              <div className="invoice-total-row acr-row">
-                <span>ACR (Converted to PHP)</span>
-                <strong>{acrPhpTotal(totalPrice, selectedBooking.currency, selectedBooking.acr)}</strong>
-              </div>
+              <>
+                <div className="invoice-total-row acr-row">
+                  <span>ACR</span>
+                  <strong>{`1 ${selectedBooking.currency} = ₱${parseFloat(selectedBooking.acr || '').toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</strong>
+                </div>
+                <div className="invoice-total-row acr-row">
+                  <span>Peso Value</span>
+                  <strong>{acrPhpTotal(totalPrice, selectedBooking.currency, selectedBooking.acr)?.replace('PHP ', '₱')}</strong>
+                </div>
+              </>
             )}
             <div className="invoice-total-row">
               <span>PAID</span>
@@ -2745,7 +2709,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <img src={agencySeal} alt="DOT accreditation seal" />
           </header>
           <h1>Purchase Order</h1>
-          <p className="po-empty-row">No PO items yet — add supplier line items in the Purchase Order tab.</p>
+          <p className="po-empty-row">No PO items yet — add a service item in the Breakdown/Quotation/Invoice/Purchase Order tab.</p>
         </section>
       )
     }
@@ -2939,6 +2903,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       const pax = parseQuantity(colPax[i])
       return sub * pax
     })
+    const grandTotal = totals.reduce((sum, val) => sum + val, 0)
 
     return (
       <section className="breakdown-preview print-document">
@@ -3031,6 +2996,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   {val > 0 ? `₱${val.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'}
                 </td>
               ))}
+            </tr>
+            <tr className="bq-grandtotal-row">
+              <td colSpan={2}>GRAND TOTAL:</td>
+              <td colSpan={4} className="bq-price bq-has-value">
+                {`₱${grandTotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              </td>
             </tr>
           </tbody>
         </table>
@@ -3208,13 +3179,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const quotationPkgPriceFilled = (() => {
       try { const p = JSON.parse(bookingForm.invoicePackage); return Boolean(p && typeof p === 'object' && String(p.price ?? '').trim()) } catch { return false }
     })()
-    // Core required fields now live on the Breakdown tab (client info + package
-    // details were moved there). These gate whether the other documents unlock.
-    const hasCoreInfo = Boolean(
-      bookingForm.clientName &&
-      bookingForm.travelStart &&
-      bookingForm.travelEnd
-    )
     const hasQuotation = Boolean(
       bookingForm.packageName &&
       quotationPkgPriceFilled
@@ -3224,15 +3188,17 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
     const hasPO = (() => { try { const p = JSON.parse(bookingForm.poLineItemsJson || '[]'); return Array.isArray(p) && p.length > 0 } catch { return false } })()
     const hasVoucher = Boolean(bookingForm.flightDetails || bookingForm.accommodation)
 
-    const docCards = [
-      { id: 'breakdown' as const, label: 'Breakdown/Quotation/Invoice', icon: <FileBarChart2 size={28} />, desc: 'Client info, package details, pricing, inclusions, internal costing, supplier nett, pax tiers & invoice/logistics fulfillment', filled: hasBreakdown || hasQuotation || hasInvoice },
-      { id: 'purchase-order' as const, label: 'Purchase Order', icon: <ShoppingCart size={28} />, desc: 'Supplier PO line items & payment method', filled: hasPO },
-      { id: 'voucher' as const, label: 'Service Voucher', icon: <Ticket size={28} />, desc: 'Flights, accommodation, itinerary & emergency contact', filled: hasVoucher },
-    ]
+    const masterFormCard = {
+      id: 'breakdown' as const,
+      label: 'Breakdown / Quotation / Invoice / Purchase Order / Service Voucher',
+      icon: <FileBarChart2 size={28} />,
+      desc: 'Client info, package details, pricing, inclusions, internal costing, supplier nett, pax tiers, invoice fulfillment, purchase order details, day-by-day schedule, logistics, and internal operations notes — everything for this booking in one place.',
+      filled: hasBreakdown || hasQuotation || hasInvoice || hasPO || hasVoucher,
+    }
 
     // The live preview shows every printable document type on its own,
     // including Quotation — even though its editing fields now live inside
-    // the merged Breakdown/Quotation editing card above.
+    // the single master data-gathering form above.
     const livePreviewCards = [
       { id: 'breakdown' as const, label: 'Breakdown', icon: <FileBarChart2 size={28} /> },
       { id: 'quotation' as const, label: 'Quotation', icon: <FileText size={28} /> },
@@ -3241,25 +3207,13 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
       { id: 'voucher' as const, label: 'Service Voucher', icon: <Ticket size={28} /> },
     ]
 
-
-    // Which form sections are relevant to which document tab. Sections shared
-    // across multiple docs (e.g. Client, Travel) are edited once and reflected
-    // everywhere since they all read/write the same booking record fields.
-    const SECTION_VISIBILITY: Record<string, Array<typeof activeDocTab>> = {
-      client:      ['breakdown'],
-      travel:      ['breakdown'],
-      costing:     ['breakdown'],
-      paxTier:     ['breakdown'],
-      logistics:   ['breakdown', 'voucher'],
-      inclusions:  ['breakdown'],
-      schedule:    ['voucher'],
-      remarks:     ['purchase-order', 'voucher'],
-      po:          ['purchase-order'],
-    }
-    const showSection = (key: keyof typeof SECTION_VISIBILITY) =>
-      SECTION_VISIBILITY[key].includes(activeDocTab)
-
-    const handleBackToPicker = () => setActiveDocTab(null)
+    // There is now a single master data-gathering form — every section is
+    // always shown, whether the person clicked "New Inquiry" or "Edit
+    // booking info". Sections used to be split across separate document
+    // tabs (Breakdown, Purchase Order, Service Voucher); showSection is
+    // kept as a no-op passthrough so the section JSX below didn't need to
+    // be reshuffled.
+    const showSection = (_key: string) => true
 
     const sharedBookingStrip = (
       <div className="doc-booking-strip">
@@ -3269,18 +3223,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           {bookingForm.packageName && <span>· {bookingForm.packageName}</span>}
           {bookingForm.destination && <span>· {bookingForm.destination}</span>}
           {bookingForm.travelStart && <span>· {bookingForm.travelStart}</span>}
-        </div>
-        <div className="doc-booking-strip-actions">
-          <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', fontSize: '0.72rem', gap: '3px', opacity: 0.75 }}>
-            Date created
-            <input
-              type="date"
-              value={bookingCreatedAt}
-              onChange={(e) => setBookingCreatedAt(e.target.value)}
-              max={new Date().toISOString().slice(0, 10)}
-              style={{ font: 'inherit', fontSize: '0.82rem' }}
-            />
-          </label>
         </div>
       </div>
     )
@@ -3314,76 +3256,13 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </div>
         </nav>
 
-        {/* ── DOCUMENT PICKER ── */}
-        {activeDocTab === null && (
-          <div className="doc-picker-screen">
-            <div className="doc-picker-header">
-              <div>
-                <p>{isEditingBooking ? 'Edit Booking' : 'New Inquiry'}</p>
-                <h1>{isEditingBooking ? 'Which document do you want to work on?' : 'Start with your Breakdown'}</h1>
-                <span>{isEditingBooking
-                  ? 'Pick a document to fill in or update. All changes save to the same booking record.'
-                  : 'Fill in the client name and travel dates to unlock the other documents.'
-                }</span>
-              </div>
-            </div>
-
-            {isEditingBooking && sharedBookingStrip}
-
-            {dataError && <p className="data-alert error" style={{margin: '0 24px'}}>{dataError}</p>}
-            {dataMessage && <p className="data-alert info" style={{margin: '0 24px'}}>{dataMessage}</p>}
-
-            <div className="doc-picker-grid">
-              {docCards.map((card, index) => {
-                const locked = !hasCoreInfo && card.id !== 'breakdown' && !card.filled
-                return (
-                  <button
-                    key={card.id}
-                    type="button"
-                    className={`doc-picker-card ${card.filled ? 'doc-picker-card--filled' : ''} ${locked ? 'doc-picker-card--locked' : ''}`}
-                    onClick={() => {
-                      if (locked) return
-                      setActiveDocTab(card.id)
-                      setDataError('')
-                      setDataMessage('')
-                    }}
-                    disabled={locked}
-                    title={locked ? 'Complete the client name and travel dates (in Breakdown) to unlock this' : undefined}
-                  >
-                    <div className="doc-picker-card-icon">
-                      <span className="doc-picker-card-step">Step {index + 1}</span>
-                      {card.icon}
-                      {card.filled && <span className="doc-picker-card-check"><BadgeCheck size={16} /></span>}
-                    </div>
-                    <div className="doc-picker-card-body">
-                      <strong>{card.label}</strong>
-                      <span>{card.desc}</span>
-                    </div>
-                    <div className="doc-picker-card-footer">
-                      {locked
-                        ? <span className="doc-picker-card-status doc-picker-card-status--locked"><Lock size={11} /> Locked</span>
-                        : card.filled
-                          ? <span className="doc-picker-card-status doc-picker-card-status--filled">✓ Filled</span>
-                          : <span className="doc-picker-card-status doc-picker-card-status--empty">Not started</span>
-                      }
-                      {!locked && <ArrowRight size={15} className="doc-picker-card-arrow" />}
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* ── DOCUMENT FORM ── */}
-        {activeDocTab !== null && (
-          <>
+        {/* ── MASTER DATA-GATHERING FORM ── everything for this booking
+            lives in one form now; there is no longer a picker to choose
+            between separate documents. */}
+        <>
             <div className="doc-form-subnav">
-              <button type="button" className="doc-back-btn" onClick={handleBackToPicker}>
-                <CornerUpLeft size={15} /> Back to documents
-              </button>
               <span className="doc-form-subnav-title">
-                {docCards.find(c => c.id === activeDocTab)?.icon} {docCards.find(c => c.id === activeDocTab)?.label}
+                {masterFormCard.icon} {masterFormCard.label}
               </span>
               <div className="live-preview-controls">
                 {showLivePreview && (
@@ -3417,6 +3296,25 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <form className="data-form" onSubmit={handleSaveBooking}>
               {dataError && <p className="data-alert error">{dataError}</p>}
               {dataMessage && <p className="data-alert info">{dataMessage}</p>}
+
+              <section className="form-section date-created-section">
+                <div className="form-section-heading">
+                  <p>When was this created</p>
+                  <h2>Date created</h2>
+                </div>
+                <div className="field-grid three">
+                  <label>
+                    <span className="field-label"><span>Date created</span><span className="required-marker">Required</span></span>
+                    <input
+                      required
+                      type="date"
+                      value={bookingCreatedAt}
+                      onChange={(e) => setBookingCreatedAt(e.target.value)}
+                      max={toDateInputValue()}
+                    />
+                  </label>
+                </div>
+              </section>
 
               <section className="ai-autofill-panel">
                 {!aiPasteOpen ? (
@@ -3461,6 +3359,13 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <div className="form-section-heading">
               <p>Client</p>
               <h2>Client info</h2>
+              <div className="doc-affects">
+                <span className="doc-affects-label">Appears on</span>
+                <span className="doc-tag doc-tag-quotation">Quotation</span>
+                <span className="doc-tag doc-tag-invoice">Invoice</span>
+                <span className="doc-tag doc-tag-po">Purchase Order</span>
+                <span className="doc-tag doc-tag-voucher">Voucher</span>
+              </div>
             </div>
             <div className="field-grid three">
               <label>
@@ -3485,6 +3390,14 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <div className="form-section-heading">
               <p>Trip</p>
               <h2>Package details</h2>
+              <div className="doc-affects">
+                <span className="doc-affects-label">Appears on</span>
+                <span className="doc-tag doc-tag-breakdown">Breakdown</span>
+                <span className="doc-tag doc-tag-quotation">Quotation</span>
+                <span className="doc-tag doc-tag-invoice">Invoice</span>
+                <span className="doc-tag doc-tag-po">Purchase Order</span>
+                <span className="doc-tag doc-tag-voucher">Voucher</span>
+              </div>
             </div>
             <div className="field-grid three">
               <label>
@@ -3515,12 +3428,95 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </section>
           )}
 
+          {/* CURRENCY */}
+          {showSection('currency') && (() => {
+            const bookingCurrency = bookingForm.currency || 'PHP'
+            const savedBookingForCurrency = (lastSavedBookingRef.current?.id === editingBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((b) => b.id === editingBookingId)
+            const savedCurrency = savedBookingForCurrency?.currency || 'PHP'
+            const hasPendingCurrencyChange = isEditingBooking && bookingCurrency !== savedCurrency
+            return (
+              <section className="form-section">
+                <div className="form-section-heading">
+                  <p>Currency</p>
+                  <h2>Document currency &amp; conversion rate</h2>
+                  <div className="doc-affects">
+                    <span className="doc-affects-label">Appears on</span>
+                    <span className="doc-tag doc-tag-quotation">Quotation</span>
+                    <span className="doc-tag doc-tag-invoice">Invoice</span>
+                  </div>
+                </div>
+                <div className="field-grid three">
+                  <label>
+                    Document currency
+                    <select
+                      value={bookingCurrency}
+                      onChange={(e) => {
+                        const next = e.target.value
+                        setDataError('')
+                        setDataMessage('')
+                        setBookingForm((prev) => ({ ...prev, currency: next, ...(next === 'PHP' ? { acr: '' } : {}) }))
+                      }}
+                    >
+                      {SUPPORTED_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </label>
+                  {bookingCurrency !== 'PHP' && (
+                    <label>
+                      {`1 ${bookingCurrency} = ₱`}
+                      <input
+                        type="number" min="0" step="0.01"
+                        value={bookingForm.acr}
+                        placeholder="0.00"
+                        onChange={(e) => setBookingForm((prev) => ({ ...prev, acr: e.target.value }))}
+                        onBlur={(e) => { if (isEditingBooking) applyAcrToBookingId(editingBookingId, e.target.value) }}
+                      />
+                    </label>
+                  )}
+                  {isEditingBooking && (
+                    <label className="currency-inline-apply-wrap">
+                      <span>&nbsp;</span>
+                      <button
+                        type="button"
+                        className="currency-picker-apply-btn"
+                        onClick={applyCurrencyToDocuments}
+                        disabled={!hasPendingCurrencyChange}
+                      >
+                        Apply to Document
+                      </button>
+                    </label>
+                  )}
+                </div>
+                {bookingCurrency === 'PHP' ? (
+                  <p className="field-help">Base currency — quotation &amp; invoice amounts print as-is.</p>
+                ) : (
+                  <p className="field-help">The Quotation &amp; Invoice will show an "ACR" line with the total converted to PHP at this rate.</p>
+                )}
+                {isEditingBooking ? (
+                  <p className={hasPendingCurrencyChange ? 'currency-picker-apply-hint currency-picker-apply-hint-pending' : 'currency-picker-apply-hint'}>
+                    {hasPendingCurrencyChange
+                      ? `Not applied yet — Quotation & Invoice still show ${savedCurrency}.`
+                      : `Applied — Quotation & Invoice are set to ${bookingCurrency}.`}
+                  </p>
+                ) : (
+                  <p className="currency-picker-apply-hint">Save this booking first — then you can apply a currency to its Quotation &amp; Invoice.</p>
+                )}
+              </section>
+            )
+          })()}
+
           {/* PAX-TIER PRICING */}
           {showSection('paxTier') && (
           <section className="form-section">
             <div className="form-section-heading">
               <p>Pax-Tier Pricing</p>
               <h2>Price per person by group size</h2>
+              <div className="doc-affects">
+                <span className="doc-affects-label">Appears on</span>
+                <span className="doc-tag doc-tag-breakdown">Breakdown</span>
+                <span className="doc-tag doc-tag-quotation">Quotation</span>
+                <span className="doc-tag doc-tag-invoice">Invoice</span>
+                <span className="doc-tag doc-tag-po">Purchase Order</span>
+              </div>
             </div>
 
             {/* Step 1 — Column setup */}
@@ -3569,16 +3565,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               </div>
 
               <div className="line-items-table">
-                <div className="line-items-row pax-tier-row header">
-                  <span>Service</span>
-                  <span>Details (optional)</span>
-                  <span>Price per person<br/>(Adult)</span>
-                  <span>Price per person<br/>(Child)</span>
-                  <span>Price per person<br/>(Senior)</span>
-                  <span>Price per person<br/>(Infant)</span>
-                  <span></span>
-                </div>
-
                 {/* Package row — always first. Its name comes from the
                     Package name field on the Trip section above; the rate
                     entered here per pax type is what prints on the
@@ -3598,23 +3584,31 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   return (
                     <div className="line-item-data-row package-tier-row">
                       <div className="line-items-row pax-tier-row">
-                        <div className="pax-tier-service-label" title="Set on the Trip section above">
-                          {bookingForm.packageName || 'Package'}
+                        <div className="pax-tier-field">
+                          <span className="pax-tier-field-label">Service</span>
+                          <div className="pax-tier-service-label" title="Set on the Trip section above">
+                            {bookingForm.packageName || 'Package'}
+                          </div>
                         </div>
-                        <input
-                          type="text"
-                          value={pkgItem.details || ''}
-                          onChange={(e) => changeBreakdownItemField(realIndex, 'details', e.target.value)}
-                          placeholder="e.g. CRK - MPH"
-                        />
-                        {(['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant'] as const).map((field) => (
+                        <label className="pax-tier-field">
+                          <span className="pax-tier-field-label">Details (optional)</span>
                           <input
-                            key={field}
                             type="text"
-                            value={(pkgItem[field] as string) || ''}
-                            onChange={(e) => changeBreakdownItemField(realIndex, field, e.target.value)}
-                            placeholder="0.00"
+                            value={pkgItem.details || ''}
+                            onChange={(e) => changeBreakdownItemField(realIndex, 'details', e.target.value)}
+                            placeholder="e.g. CRK - MPH"
                           />
+                        </label>
+                        {(['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant'] as const).map((field, fi) => (
+                          <label className="pax-tier-field" key={field}>
+                            <span className="pax-tier-field-label">{['Adult', 'Child', 'Senior', 'Infant'][fi]}</span>
+                            <input
+                              type="text"
+                              value={(pkgItem[field] as string) || ''}
+                              onChange={(e) => changeBreakdownItemField(realIndex, field, e.target.value)}
+                              placeholder="0.00"
+                            />
+                          </label>
                         ))}
                         <span></span>
                       </div>
@@ -3644,7 +3638,9 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   return (
                     <div key={index} className="line-item-data-row">
                       <div className="line-items-row pax-tier-row">
-                        <div className="po-service-dropdown-wrap">
+                        <div className="pax-tier-field">
+                          <span className="pax-tier-field-label">Service</span>
+                          <div className="po-service-dropdown-wrap">
                             <button
                               type="button"
                               ref={(el) => { breakdownDropdownTriggerRefs.current[realIndex] = el }}
@@ -3708,20 +3704,26 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                               </FloatingDropdownMenu>
                             )}
                           </div>
-                        <input
-                          type="text"
-                          value={item.details || ''}
-                          onChange={(e) => changeBreakdownItemField(realIndex, 'details', e.target.value)}
-                          placeholder="e.g. CRK - MPH"
-                        />
-                        {(['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant'] as const).map((field) => (
+                        </div>
+                        <label className="pax-tier-field">
+                          <span className="pax-tier-field-label">Details (optional)</span>
                           <input
-                            key={field}
                             type="text"
-                            value={(item[field] as string) || ''}
-                            onChange={(e) => changeBreakdownItemField(realIndex, field, e.target.value)}
-                            placeholder="0.00"
+                            value={item.details || ''}
+                            onChange={(e) => changeBreakdownItemField(realIndex, 'details', e.target.value)}
+                            placeholder="e.g. CRK - MPH"
                           />
+                        </label>
+                        {(['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant'] as const).map((field, fi) => (
+                          <label className="pax-tier-field" key={field}>
+                            <span className="pax-tier-field-label">{['Adult', 'Child', 'Senior', 'Infant'][fi]}</span>
+                            <input
+                              type="text"
+                              value={(item[field] as string) || ''}
+                              onChange={(e) => changeBreakdownItemField(realIndex, field, e.target.value)}
+                              placeholder="0.00"
+                            />
+                          </label>
                         ))}
                         <button
                           type="button"
@@ -3732,6 +3734,49 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                             <X size={14} />
                           </button>
                       </div>
+                      {item.mirrorId && (
+                        <div className="pax-tier-supplier-row">
+                          <span className="pax-tier-supplier-label">Supplier details (for Purchase Order)</span>
+                          <div className="field-grid four">
+                            <label>
+                              Vendor
+                              <input
+                                type="text"
+                                value={item.vendor || linkedPO?.vendor || ''}
+                                onChange={(e) => changeBreakdownItemField(realIndex, 'vendor', e.target.value)}
+                                placeholder="e.g. Cebu Pacific"
+                              />
+                            </label>
+                            <label>
+                              Contact No.
+                              <input
+                                type="text"
+                                value={item.contactNumber || linkedPO?.contactNo || ''}
+                                onChange={(e) => changeBreakdownItemField(realIndex, 'contactNumber', e.target.value)}
+                                placeholder="09xxxxxxxxx"
+                              />
+                            </label>
+                            <label>
+                              Agent
+                              <input
+                                type="text"
+                                value={item.agent || linkedPO?.agent || ''}
+                                onChange={(e) => changeBreakdownItemField(realIndex, 'agent', e.target.value)}
+                                placeholder="e.g. Juan Dela Cruz"
+                              />
+                            </label>
+                            <label>
+                              Payment Method
+                              <input
+                                type="text"
+                                value={item.paymentMethod || linkedPO?.paymentMethod || ''}
+                                onChange={(e) => changeBreakdownItemField(realIndex, 'paymentMethod', e.target.value)}
+                                placeholder="Bank Transfer, GCash, Cash"
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      )}
                       <div className="pax-tier-toggle-row">
                         <button
                           type="button"
@@ -3769,7 +3814,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
 
                 {currentBreakdownItems.filter(i => !i.isPackageRow).length === 0 && (
                   <div style={{padding:'1.25rem', textAlign:'center', color:'var(--text-secondary)', fontSize:'0.85rem', fontStyle:'italic'}}>
-                    No services yet — add an addon in the Invoice tab, a line item in the Purchase Order tab, or use "Add item" above to add one manually.
+                    No services yet — add an addon in the Invoice section, or use "Add item" above to add one manually.
                   </div>
                 )}
               </div>
@@ -3783,6 +3828,12 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <div className="form-section-heading">
               <p>Logistics</p>
               <h2>Fulfillment context</h2>
+              <div className="doc-affects">
+                <span className="doc-affects-label">Appears on</span>
+                <span className="doc-tag doc-tag-invoice">Invoice</span>
+                <span className="doc-tag doc-tag-po">Purchase Order</span>
+                <span className="doc-tag doc-tag-voucher">Voucher</span>
+              </div>
             </div>
             <div className="field-grid two">
               <label className="textarea-field">
@@ -3811,6 +3862,11 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <div className="form-section-heading">
               <p>Inclusions &amp; Exclusions</p>
               <h2>Manual entry</h2>
+              <div className="doc-affects">
+                <span className="doc-affects-label">Appears on</span>
+                <span className="doc-tag doc-tag-quotation">Quotation</span>
+                <span className="doc-tag doc-tag-voucher">Voucher</span>
+              </div>
             </div>
             <div className="field-grid two">
               <label className="textarea-field">
@@ -3832,7 +3888,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 />
               </label>
             </div>
-            <p className="field-help">One item per line. These show exactly as typed on the quotation, invoice, and voucher.</p>
+            <p className="field-help">One item per line. These show exactly as typed on the quotation and voucher.</p>
           </section>
           )}
 
@@ -3842,6 +3898,10 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <div className="form-section-heading">
               <p>Day-by-Day Schedule</p>
               <h2>Itinerary &amp; hotel per day</h2>
+              <div className="doc-affects">
+                <span className="doc-affects-label">Appears on</span>
+                <span className="doc-tag doc-tag-voucher">Voucher</span>
+              </div>
             </div>
             {(() => {
               const rows: { date: string; itinerary: string; hotel: string }[] = (() => {
@@ -3851,7 +3911,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
               const addRow = () => {
                 const prev = rows[rows.length - 1]
                 const nextDate = prev?.date
-                  ? (() => { const d = new Date(prev.date + 'T00:00:00'); d.setDate(d.getDate() + 1); return d.toISOString().slice(0,10) })()
+                  ? (() => { const d = new Date(prev.date + 'T00:00:00'); d.setDate(d.getDate() + 1); return toDateInputValue(d) })()
                   : (bookingForm.travelStart || '')
                 save([...rows, { date: nextDate, itinerary: '', hotel: prev?.hotel || bookingForm.accommodation || '' }])
               }
@@ -3900,6 +3960,11 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             <div className="form-section-heading">
               <p>Remarks</p>
               <h2>Internal operations notes</h2>
+              <div className="doc-affects">
+                <span className="doc-affects-label">Appears on</span>
+                <span className="doc-tag doc-tag-po">Purchase Order</span>
+                <span className="doc-tag doc-tag-voucher">Voucher</span>
+              </div>
             </div>
             <div className="field-grid two">
               <label className="textarea-field">
@@ -3914,305 +3979,13 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
           </section>
           )}
 
-          {/* PURCHASE ORDER LINE ITEMS — linked 1:1 with an Invoice addon
-              sharing the same id; see the Addons block above for the mirror
-              logic on that side. Each side keeps its own "Show to Document"
-              toggle. */}
-          {showSection('po') && (() => {
-            type AddonRow = { id: string; name: string; qty: string; price: string; nett: string; showInDocument?: boolean }
-            const createPOItem = (): POLineItem => ({
-              id: `poi-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
-              vendor: '',
-              contactNo: '',
-              paymentMethod: '',
-              agent: '',
-              serviceItem: '',
-              description: '',
-              adultPax: '1',
-              childPax: '0',
-              seniorPax: '0',
-              infantPax: '0',
-              supplierNett: '',
-              showInDocument: true,
-            })
-            let poItems: POLineItem[] = []
-            try { const p = JSON.parse(bookingForm.poLineItemsJson); if (Array.isArray(p)) poItems = p } catch {}
-            const addPOItem = () => {
-              const newItem = createPOItem()
-              setDataError('')
-              setDataMessage('')
-              setBookingForm((prev) => {
-                let curPO: POLineItem[] = []
-                try { const p = JSON.parse(prev.poLineItemsJson); if (Array.isArray(p)) curPO = p } catch {}
-                let addons: AddonRow[] = []
-                try { const a = JSON.parse(prev.invoiceAddons); if (Array.isArray(a)) addons = a } catch {}
-                const nextAddons = [...addons, { id: newItem.id, name: '', qty: '1', price: '', nett: '', showInDocument: false }]
-                return {
-                  ...prev,
-                  poLineItemsJson: JSON.stringify([...curPO, newItem]),
-                  invoiceAddons: JSON.stringify(nextAddons),
-                }
-              })
-            }
-            const removePOItem = (id: string) => {
-              setDataError('')
-              setDataMessage('')
-              setBookingForm((prev) => {
-                let curPO: POLineItem[] = []
-                try { const p = JSON.parse(prev.poLineItemsJson); if (Array.isArray(p)) curPO = p } catch {}
-                let addons: AddonRow[] = []
-                try { const a = JSON.parse(prev.invoiceAddons); if (Array.isArray(a)) addons = a } catch {}
-                return {
-                  ...prev,
-                  poLineItemsJson: JSON.stringify(curPO.filter((i) => i.id !== id)),
-                  invoiceAddons: JSON.stringify(addons.filter((r) => (r.id || '') !== id)),
-                }
-              })
-            }
-            const updatePOItem = (id: string, field: keyof POLineItem, val: string | boolean) => {
-              setDataError('')
-              setDataMessage('')
-              setBookingForm((prev) => {
-                let curPO: POLineItem[] = []
-                try { const p = JSON.parse(prev.poLineItemsJson); if (Array.isArray(p)) curPO = p } catch {}
-                let nextPO = curPO.map((i) => i.id === id ? { ...i, [field]: val } : i)
-                if (field === 'agent') {
-                  const changedItem = nextPO.find((i) => i.id === id)
-                  const vendorKey = (changedItem?.vendor || '').trim().toLowerCase()
-                  if (vendorKey) {
-                    nextPO = nextPO.map((i) =>
-                      i.id !== id && (i.vendor || '').trim().toLowerCase() === vendorKey
-                        ? { ...i, agent: val as string }
-                        : i
-                    )
-                  }
-                }
-                if (field === 'vendor') {
-                  const vendorKey = (val as string || '').trim().toLowerCase()
-                  if (vendorKey) {
-                    const existingAgent = nextPO.find((i) => i.id !== id && (i.vendor || '').trim().toLowerCase() === vendorKey && (i.agent || '').trim())?.agent
-                    if (existingAgent) {
-                      nextPO = nextPO.map((i) => i.id === id ? { ...i, agent: existingAgent } : i)
-                    }
-                  }
-                }
-                const updated = { ...prev, poLineItemsJson: JSON.stringify(nextPO) }
-                if (field === 'serviceItem' || field === 'adultPax' || field === 'supplierNett') {
-                  let addons: AddonRow[] = []
-                  try { const a = JSON.parse(prev.invoiceAddons); if (Array.isArray(a)) addons = a } catch {}
-                  const addonField = field === 'serviceItem' ? 'name' : field === 'adultPax' ? 'qty' : 'nett'
-                  if (addons.some((r) => (r.id || '') === id)) {
-                    updated.invoiceAddons = JSON.stringify(addons.map((r) => (r.id || '') === id ? { ...r, [addonField]: val } : r))
-                  }
-                }
-                return updated
-              })
-            }
-            const totalPax = (item: POLineItem) =>
-              (parseInt(item.adultPax) || 0) + (parseInt(item.childPax) || 0) + (parseInt(item.seniorPax) || 0) + (parseInt(item.infantPax) || 0)
-            const rowTotal = (item: POLineItem) => {
-              const pax = totalPax(item) || 1
-              return (parseFloat(item.supplierNett) || 0) * pax
-            }
-            const grandTotal = poItems.reduce((sum, item) => sum + rowTotal(item), 0)
-
-            return (
-              <section className="form-section po-items-section">
-                <div className="form-section-heading">
-                  <p>Purchase Order</p>
-                  <h2>Supplier line items</h2>
-                </div>
-                <p className="field-help">Add each supplier item below. PAX breakdown multiplies the supplier nett to get the row total. Items added here also create a matching Invoice addon (name, qty &amp; nett stay in sync). Toggle "Show to Document" to include or hide a row on the actual P.O. document.</p>
-
-                {poItems.length === 0 ? (
-                  <p className="invoice-addons-empty">No items yet. Click &ldquo;+ Add Item&rdquo; to start.</p>
-                ) : (
-                  <div className="po-line-items-editor">
-                    {poItems.map((item, idx) => {
-                      const shown = item.showInDocument !== false
-                      return (
-                      <div key={item.id} className="po-line-item-card">
-                        <div className="po-line-item-card-header">
-                          <span className="po-line-item-number">Item {idx + 1}</span>
-                          <div className="po-line-item-card-actions">
-                            <button
-                              type="button"
-                              className={`send-to-invoice-btn ${shown ? 'active' : ''}`}
-                              onClick={() => updatePOItem(item.id, 'showInDocument', !shown)}
-                              title="Show this item in the Purchase Order document"
-                            >
-                              {shown ? <Eye size={14} /> : <EyeOff size={14} />}
-                              <span>{shown ? 'Showing' : 'Hidden'}</span>
-                            </button>
-                            <button
-                              type="button"
-                              className="remove-line-btn"
-                              onClick={() => removePOItem(item.id)}
-                              title="Remove item"
-                            >
-                              <X size={14} /> Remove
-                            </button>
-                          </div>
-                        </div>
-                        <div className="field-grid four">
-                          <label>
-                            Vendor
-                            <input value={item.vendor} onChange={e => updatePOItem(item.id, 'vendor', e.target.value)} placeholder="e.g. Cebu Pacific" />
-                          </label>
-                          <label>
-                            Contact No.
-                            <input value={item.contactNo} onChange={e => updatePOItem(item.id, 'contactNo', e.target.value)} placeholder="09xxxxxxxxx" />
-                          </label>
-                          <label>
-                            Payment Method
-                            <input value={item.paymentMethod} onChange={e => updatePOItem(item.id, 'paymentMethod', e.target.value)} placeholder="Bank Transfer, GCash, Cash" />
-                          </label>
-                          <label>
-                            Agent
-                            <input value={item.agent || ''} onChange={e => updatePOItem(item.id, 'agent', e.target.value)} placeholder="e.g. Juan Dela Cruz" />
-                          </label>
-                          <label>
-                            Service Item
-                            <div className="po-service-dropdown-wrap">
-                              <button
-                                type="button"
-                                className="po-service-dropdown-trigger"
-                                onClick={() => setOpenServiceItemDropdownId(openServiceItemDropdownId === item.id ? null : item.id)}
-                              >
-                                <span>{item.serviceItem || 'Select…'}</span>
-                                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                              </button>
-                              {openServiceItemDropdownId === item.id && (
-                                <div className="po-service-dropdown-panel">
-                                  <ul className="po-service-dropdown-list">
-                                    {serviceItemOptions.map(opt => (
-                                      <li key={opt} className={`po-service-dropdown-item${item.serviceItem === opt ? ' selected' : ''}`}>
-                                        <button
-                                          type="button"
-                                          className="po-service-dropdown-select"
-                                          onClick={() => { updatePOItem(item.id, 'serviceItem', opt); setOpenServiceItemDropdownId(null) }}
-                                        >{opt}</button>
-                                        <button
-                                          type="button"
-                                          className="po-service-dropdown-delete"
-                                          title="Remove option"
-                                          onClick={() => {
-                                            const next = serviceItemOptions.filter(o => o !== opt)
-                                            setServiceItemOptions(next)
-                                            if (item.serviceItem === opt) updatePOItem(item.id, 'serviceItem', next[0] || '')
-                                          }}
-                                        ><X size={11} /></button>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                  <div className="po-service-dropdown-add">
-                                    {addingCustomServiceItem ? (
-                                      <div className="po-service-dropdown-custom-row">
-                                        <input
-                                          autoFocus
-                                          value={customServiceItemDraft}
-                                          onChange={e => setCustomServiceItemDraft(e.target.value)}
-                                          onKeyDown={e => {
-                                            if (e.key === 'Enter' && customServiceItemDraft.trim()) {
-                                              const val = customServiceItemDraft.trim()
-                                              if (!serviceItemOptions.includes(val)) setServiceItemOptions(prev => [...prev, val])
-                                              updatePOItem(item.id, 'serviceItem', val)
-                                              setCustomServiceItemDraft('')
-                                              setAddingCustomServiceItem(false)
-                                              setOpenServiceItemDropdownId(null)
-                                            }
-                                            if (e.key === 'Escape') { setAddingCustomServiceItem(false); setCustomServiceItemDraft('') }
-                                          }}
-                                          placeholder="Type and press Enter…"
-                                          className="po-service-dropdown-custom-input"
-                                        />
-                                        <button type="button" className="po-service-dropdown-cancel" onClick={() => { setAddingCustomServiceItem(false); setCustomServiceItemDraft('') }}>
-                                          <X size={11} />
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <button type="button" className="po-service-dropdown-add-btn" onClick={() => setAddingCustomServiceItem(true)}>
-                                        <Plus size={12} /> Add custom option
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </label>
-                          <label className="field-grid-span2">
-                            Description
-                            <input value={item.description} onChange={e => updatePOItem(item.id, 'description', e.target.value)} placeholder="Flight details, hotel name, tour specifics…" />
-                          </label>
-                        </div>
-
-                        <div className="po-pax-nett-row">
-                          <div className="po-pax-group">
-                            <span className="po-pax-label">PAX</span>
-                            <label>
-                              Adult
-                              <input
-                                type="number" min="0"
-                                value={item.adultPax}
-                                onChange={e => updatePOItem(item.id, 'adultPax', e.target.value)}
-                                placeholder="0"
-                              />
-                            </label>
-                            <label>
-                              Child
-                              <input type="number" min="0" value={item.childPax} onChange={e => updatePOItem(item.id, 'childPax', e.target.value)} placeholder="0" />
-                            </label>
-                            <label>
-                              Senior
-                              <input type="number" min="0" value={item.seniorPax} onChange={e => updatePOItem(item.id, 'seniorPax', e.target.value)} placeholder="0" />
-                            </label>
-                            <label>
-                              Infant
-                              <input type="number" min="0" value={item.infantPax} onChange={e => updatePOItem(item.id, 'infantPax', e.target.value)} placeholder="0" />
-                            </label>
-                            <div className="po-pax-total">
-                              <span>Total Pax</span>
-                              <strong>{totalPax(item)}</strong>
-                            </div>
-                          </div>
-                          <div className="po-nett-group">
-                            <label>
-                              Supplier Nett (per pax)
-                              <input
-                                type="number" min="0" step="0.01"
-                                value={item.supplierNett}
-                                onChange={e => updatePOItem(item.id, 'supplierNett', e.target.value)}
-                                placeholder="0.00"
-                              />
-                            </label>
-                            <div className="po-row-total">
-                              <span>Row Total</span>
-                              <strong>₱ {rowTotal(item).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      )
-                    })}
-
-                    <div className="po-grand-total">
-                      <span>Grand Total</span>
-                      <strong>₱ {grandTotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-                    </div>
-                  </div>
-                )}
-
-                <button type="button" className="invoice-addon-add-btn" style={{ marginTop: '1rem' }} onClick={addPOItem}>
-                  <Plus size={14} /> Add Item
-                </button>
-              </section>
-            )
-          })()}
-
-
               <footer className="form-actions-bar">
-                <button type="button" className="cancel-form-btn" onClick={handleBackToPicker}>
-                  ← Back to documents
+                <button
+                  type="button"
+                  className="cancel-form-btn"
+                  onClick={() => { setEditingBookingId(''); setScreen(isEditingBooking ? 'booking-detail' : 'home') }}
+                >
+                  ← Cancel
                 </button>
                 <button type="submit" className="save-booking-btn">
                   <Save size={18} />
@@ -4235,7 +4008,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             )}
             </div>
           </>
-        )}
 
                 {/* PAX MODAL */}
         {paxModalIndex >= 0 && (() => {
@@ -4264,97 +4036,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                   ))}
                 </div>
               </div>
-            </div>
-          )
-        })()}
-
-        {/* Currency picker — bottom-left, while editing this booking.
-            Sets which currency the Quotation & Invoice documents are
-            labeled in. The conversion rate (ACR) is entered by hand —
-            e.g. "65" for 1 USD — and used to print a PHP total. */}
-        {(() => {
-          const bookingCurrency = bookingForm.currency || 'PHP'
-          const savedBookingForCurrency = (lastSavedBookingRef.current?.id === editingBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((b) => b.id === editingBookingId)
-          const savedCurrency = savedBookingForCurrency?.currency || 'PHP'
-          const hasPendingCurrencyChange = isEditingBooking && bookingCurrency !== savedCurrency
-          if (!showCurrencyWidget) {
-            return (
-              <button
-                type="button"
-                className="currency-picker-reopen-btn"
-                onClick={() => setShowCurrencyWidget(true)}
-                title="Show document currency"
-              >
-                <Coins size={16} />
-                <span>{bookingCurrency}</span>
-              </button>
-            )
-          }
-          return (
-            <div className="currency-picker-card">
-              <button
-                type="button"
-                className="currency-picker-close-btn"
-                onClick={() => setShowCurrencyWidget(false)}
-                title="Close"
-              >
-                <X size={14} />
-              </button>
-              <div className="currency-picker-head">
-                <Coins size={16} />
-                <span>Document currency</span>
-              </div>
-              <select
-                className="currency-picker-select"
-                value={bookingCurrency}
-                onChange={(e) => {
-                  const next = e.target.value
-                  setDataError('')
-                  setDataMessage('')
-                  setBookingForm((prev) => ({ ...prev, currency: next, ...(next === 'PHP' ? { acr: '' } : {}) }))
-                }}
-              >
-                {SUPPORTED_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-
-              {isEditingBooking ? (
-                <>
-                  <button
-                    type="button"
-                    className="currency-picker-apply-btn"
-                    onClick={applyCurrencyToDocuments}
-                    disabled={!hasPendingCurrencyChange}
-                  >
-                    Apply to Document
-                  </button>
-                  <p className={hasPendingCurrencyChange ? 'currency-picker-apply-hint currency-picker-apply-hint-pending' : 'currency-picker-apply-hint'}>
-                    {hasPendingCurrencyChange
-                      ? `Not applied yet — Quotation & Invoice still show ${savedCurrency}.`
-                      : `Applied — Quotation & Invoice are set to ${bookingCurrency}.`}
-                  </p>
-                </>
-              ) : (
-                <p className="currency-picker-apply-hint">Save this booking first — then you can apply a currency to its Quotation &amp; Invoice.</p>
-              )}
-
-              {bookingCurrency === 'PHP' ? (
-                <p className="currency-picker-rate currency-picker-rate-base">Base currency — quotation &amp; invoice amounts print as-is.</p>
-              ) : (
-                <label className="currency-picker-rate-input-wrap">
-                  <span className="currency-picker-rate-input-label">1 {bookingCurrency} = ₱</span>
-                  <input
-                    type="number" min="0" step="0.01"
-                    className="currency-picker-rate-input"
-                    value={bookingForm.acr}
-                    placeholder="0.00"
-                    onChange={(e) => setBookingForm((prev) => ({ ...prev, acr: e.target.value }))}
-                    onBlur={(e) => { if (isEditingBooking) applyAcrToBookingId(editingBookingId, e.target.value) }}
-                  />
-                </label>
-              )}
-              {bookingCurrency !== 'PHP' && (
-                <p className="currency-picker-acr-note">The Quotation &amp; Invoice will show an "ACR" line with the total converted to PHP at this rate.</p>
-              )}
             </div>
           )
         })()}
@@ -4463,8 +4144,8 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 <strong>
                   <input
                     type="date"
-                    defaultValue={selectedBooking.createdAt ? new Date(selectedBooking.createdAt).toISOString().slice(0, 10) : ''}
-                    max={new Date().toISOString().slice(0, 10)}
+                    defaultValue={selectedBooking.createdAt ? toDateInputValue(selectedBooking.createdAt) : ''}
+                    max={toDateInputValue()}
                     onChange={(e) => updateSelectedBookingCreatedAt(e.target.value)}
                     style={{ font: 'inherit', border: 'none', background: 'transparent', color: 'inherit', padding: 0, cursor: 'pointer', width: '100%' }}
                   />
@@ -4524,6 +4205,14 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                 </span>
                 <ArrowRight size={17} />
               </button>
+              <button type="button" onClick={handleDuplicateBooking}>
+                <Copy size={19} />
+                <span>
+                  <strong>Duplicate project</strong>
+                  <small>Start a new inquiry pre-filled with this project's details.</small>
+                </span>
+                <ArrowRight size={17} />
+              </button>
               <button type="button" onClick={openInvoiceEditor}>
                 <FileText size={19} />
                 <span>
@@ -4543,7 +4232,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </div>
           </aside>
         </div>
-        {renderProjectCurrencyPicker()}
       </main>
     )
   }
@@ -4700,7 +4388,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </p>
           </section>
         </section>
-        {renderProjectCurrencyPicker()}
       </main>
     )
   }
@@ -4772,7 +4459,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         </nav>
 
         {renderQuotationDoc(selectedBooking)}
-        {renderProjectCurrencyPicker()}
       </main>
     )
   }
@@ -5000,7 +4686,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
             </div>
           </div>
         )}
-        {renderProjectCurrencyPicker()}
       </main>
     )
   }
@@ -5079,7 +4764,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         </nav>
 
         {renderInvoiceDoc(selectedBooking)}
-        {renderProjectCurrencyPicker()}
       </main>
     )
   }
@@ -5151,7 +4835,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         </nav>
 
         {renderPurchaseOrderDoc(selectedBooking)}
-        {renderProjectCurrencyPicker()}
       </main>
     )
   }
@@ -5223,7 +4906,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         </nav>
 
         {renderVoucherDoc(selectedBooking)}
-        {renderProjectCurrencyPicker()}
       </main>
     )
   }
@@ -5295,7 +4977,6 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
         </nav>
 
         {renderBreakdownDoc(selectedBooking)}
-        {renderProjectCurrencyPicker()}
       </main>
     )
   }
@@ -6266,6 +5947,7 @@ Today's date: ${new Date().toISOString().slice(0, 10)}. You have the last 20 mes
                               <strong style={{ fontSize: '1.05rem', fontWeight: 800 }}>{booking.clientName}</strong>
                               <span style={{ fontSize: '0.8rem', opacity: 0.75 }}>{booking.packageName}</span>
                             </div>
+                            {booking.isDuplicate && <span className="duplicated-tag">DUPLICATED</span>}
                           </div>
                           <div className="project-meta">
                             <span className="status-pill">{booking.status}</span>

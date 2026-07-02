@@ -1124,6 +1124,12 @@ input, select, textarea { font: inherit; }
   background: var(--teal-light); color: var(--teal-dark);
   font-weight: 800; font-size: .73rem; border: 1px solid var(--teal-mid);
 }
+.duplicated-tag {
+  flex: 0 0 auto;
+  padding: 3px 9px; border-radius: 999px;
+  background: #fff4e0; color: #96650c; border: 1px solid #f0cf8f;
+  font-weight: 900; font-size: .66rem; letter-spacing: .03em;
+}
 
 /* ================================================================
    DATA GATHERING FORM  — BIG REDESIGN
@@ -1221,6 +1227,33 @@ input, select, textarea { font: inherit; }
   font-size: 1rem; font-weight: 800;
   color: var(--navy);
 }
+
+/* "Appears on" doc tags — shown per section so it's clear which printed
+   document(s) that section's fields end up on. */
+.doc-affects {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+.doc-affects-label {
+  font-size: .64rem; font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase; letter-spacing: .07em;
+  white-space: nowrap;
+  margin-right: 2px;
+}
+.doc-tag {
+  font-size: .66rem; font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.doc-tag-breakdown  { color: var(--teal-dark); background: var(--teal-light); border-color: var(--teal-mid); }
+.doc-tag-quotation  { color: var(--gold-dark); background: var(--gold-light); border-color: var(--gold-mid); }
+.doc-tag-invoice    { color: var(--green);     background: var(--green-light); border-color: var(--green-mid); }
+.doc-tag-po         { color: var(--red);       background: var(--red-light); border-color: var(--red-mid); }
+.doc-tag-voucher    { color: var(--navy-mid);  background: var(--bg-mid); border-color: var(--border-mid); }
 .internal-section .form-section-heading {
   background: var(--gold-light);
   border-bottom-color: var(--gold-mid);
@@ -2011,6 +2044,15 @@ input, select, textarea { font: inherit; }
   color: var(--text-secondary);
   cursor: default;
 }
+.currency-inline-apply-wrap {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.currency-inline-apply-wrap .currency-picker-apply-btn {
+  width: auto;
+  padding: 10px 16px;
+}
 .currency-picker-apply-hint {
   margin: -4px 0 0;
   font-size: 0.72rem;
@@ -2126,13 +2168,9 @@ input, select, textarea { font: inherit; }
 .quote-meta-grid article { display: grid; gap: 7px; }
 .quote-meta-grid span { color: #173a6a; font-size: 0.82rem; font-weight: 900; }
 .quote-meta-grid strong { color: #3c4d61; font-size: 0.9rem; overflow-wrap: anywhere; }
-.quote-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.92rem; table-layout: fixed; }
-.quote-table th { border-bottom: 2px solid #257588; color: #257588; text-align: left; }
-.quote-table th, .quote-table td { padding: 7px 8px; vertical-align: top; }
-.quote-table tbody tr:nth-child(odd) { background: #f5f7f8; }
-.quote-table th:not(:first-child):not(.desc-col), .quote-table td:not(:first-child):not(.desc-col) { text-align: right; }
-.quote-table .item-col { width: 18%; font-weight: 600; word-break: break-word; }
-.quote-table .desc-col { width: 38%; color: #3a5060; line-height: 1.5; word-break: break-word; white-space: pre-wrap; padding-left: 20px; }
+.quote-table.invoice-table { margin-top: 10px; }
+.quote-table .item-col { min-width: 140px; }
+.quote-table .desc-col { padding-left: 20px; }
 .invoice-table .quote-notes { display: grid; gap: 8px; margin-top: 18px; color: #52667f; font-size: 0.88rem; }
 .quote-notes p { margin: 0; }
 .quote-notes strong { color: #173a6a; }
@@ -2170,10 +2208,6 @@ input, select, textarea { font: inherit; }
 .invoice-table .desc-col { color: #3a4f60; line-height: 1.4; word-break: break-word; white-space: pre-wrap; padding-left: 12px; border-left: 1px solid #e6ecf1; min-width: 120px; }
 /* Totals panel - right side column */
 .invoice-total-panel { display: grid; gap: 0; border-left: 2px solid #102a43; min-width: 230px; font-size: 0.72rem; }
-.quote-total-panel { margin: 16px 0 22px auto; border-left: none; border-top: none; min-width: 240px; border: 1px solid #102a43; border-radius: 4px; overflow: hidden; box-shadow: 0 1px 3px rgba(16,42,67,0.08); }
-.quote-total-panel .invoice-total-row.total-row { border-top: none; border-bottom: none; background: #102a43; padding: 9px 14px; }
-.quote-total-panel .invoice-total-row.total-row span { color: #ffffff; opacity: 0.85; font-size: 0.68rem; }
-.quote-total-panel .invoice-total-row.total-row strong { color: #ffffff; font-size: 0.95rem; }
 .invoice-total-row { display: grid; grid-template-columns: minmax(64px,110px) 1fr; gap: 12px; align-items: baseline; padding: 8px 10px; border-bottom: 1px solid #e6ecf1; }
 .invoice-total-row span { color: #5b7590; font-weight: 800; text-transform: uppercase; font-size: 0.64rem; letter-spacing: .03em; text-align: right; }
 .invoice-total-row strong { color: #102a43; font-weight: 800; font-size: 0.98rem; text-align: left; }
@@ -2339,7 +2373,9 @@ input, select, textarea { font: inherit; }
   .create-project-btn,.save-booking-btn { width: 100%; }
   .data-form { gap: 10px; margin-top: 10px; }
   .data-form-header,.folder-header,.form-section,.detail-main,.document-panel { padding: 12px; border-radius: var(--r); }
-  .form-section-heading { padding: 10px 14px; }
+  .form-section-heading { padding: 10px 14px; flex-wrap: wrap; row-gap: 6px; }
+  .doc-affects { margin-left: 0; width: 100%; }
+  .pax-tier-supplier-row .field-grid.four { grid-template-columns: 1fr 1fr; }
   .form-section > *:not(.form-section-heading) { padding: 0 14px; }
   .form-section > *:not(.form-section-heading):last-child { padding-bottom: 14px; }
   .line-items-heading { padding: 12px; }
@@ -2397,6 +2433,10 @@ input, select, textarea { font: inherit; }
 .bq-subtotal-row .bq-price, .bq-pax-row .bq-price, .bq-total-row .bq-price { text-align: right; }
 .bq-total-row { border-top: 2px solid #1f2937; }
 .bq-total-row .bq-has-value { color: #d94235; }
+.bq-grandtotal-row td { font-weight: 900; text-transform: uppercase; background: #1f2937; color: #fff; border-color: #1f2937; }
+.bq-grandtotal-row td:first-child { text-align: left; }
+.bq-grandtotal-row .bq-price { text-align: right; font-size: 0.98rem; }
+.bq-grandtotal-row .bq-has-value { color: #ffd8d0; }
 .bq-package-row td { background: #fdf3d8; border-top: 2px solid #d4900a; border-bottom: 2px solid #d4900a; }
 .bq-package-row .bq-service { color: #a86e06; position: relative; padding-left: 76px; }
 .bq-package-row .bq-service::before {
@@ -2417,33 +2457,39 @@ input, select, textarea { font: inherit; }
 /* ── Pax-tier row in data gathering form ── */
 /* Each row in this panel gets its own visible boxed card — overriding the
    generic .line-item-data-row { display: contents } used elsewhere, which
-   would otherwise make a box-style background/border invisible here. */
+   would otherwise make a box-style background/border invisible here.
+   Every box (Package row included) gets the same thick highlighted border
+   so they read as one consistent family of cards. */
 .breakdown-tier-prices-panel .line-item-data-row {
   display: block;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 2px solid var(--teal-mid);
+  border-left: 5px solid var(--teal);
   border-radius: 10px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   overflow: hidden;
-}
-.breakdown-tier-prices-panel .line-items-row.pax-tier-row { border-bottom: 1px solid var(--border); padding: 8px 10px; }
-.breakdown-tier-prices-panel .pax-tier-toggle-row { padding: 6px 10px 8px; }
-.line-items-row.pax-tier-row { display: grid; grid-template-columns: 160px 1fr repeat(4, 100px) 32px; gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
-.pax-tier-mirror-hint { font-size: 0.6rem; text-transform: uppercase; font-weight: 700; color: var(--text-secondary); opacity: 0.6; white-space: nowrap; }
-.line-items-row.pax-tier-row.header { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); padding-bottom: 6px; }
-.pax-tier-service-label { font-size: 0.82rem; font-weight: 700; color: var(--text-primary); padding: 0 4px; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-/* The Package row's box gets a gold highlight so it visually stands out
-   from the plain boxed service rows below it. */
-.breakdown-tier-prices-panel .line-item-data-row.package-tier-row {
-  background: var(--gold-light);
-  border: 1px solid var(--gold-mid);
-  border-left: 4px solid var(--gold);
   box-shadow: var(--sh-xs);
 }
-.package-tier-row .line-items-row.pax-tier-row { border-bottom: 1px solid var(--gold-mid); }
+.breakdown-tier-prices-panel .line-items-row.pax-tier-row { border-bottom: 1px solid var(--border); padding: 10px; }
+.breakdown-tier-prices-panel .pax-tier-toggle-row { padding: 6px 10px 8px; }
+.line-items-row.pax-tier-row { display: grid; grid-template-columns: 160px 1fr repeat(4, 100px) 32px; gap: 6px; align-items: end; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.pax-tier-mirror-hint { font-size: 0.6rem; text-transform: uppercase; font-weight: 700; color: var(--text-secondary); opacity: 0.6; white-space: nowrap; }
+.pax-tier-service-label { font-size: 0.82rem; font-weight: 700; color: var(--text-primary); padding: 0 4px; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Every field in a Pax-Tier row (Service, Details, Adult/Child/Senior/Infant)
+   gets its own small caption label above it, so each row/box is
+   self-explanatory on its own without needing a separate header row. */
+.pax-tier-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.pax-tier-field-label {
+  font-size: 0.6rem; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted, var(--text-secondary));
+  white-space: nowrap;
+}
+
+/* The Package row's box now matches the plain service-row boxes below it —
+   only the small "PACKAGE" pill badge next to its name still sets it apart. */
 .package-tier-row .pax-tier-service-label {
-  color: var(--gold-dark);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2470,6 +2516,34 @@ input, select, textarea { font: inherit; }
 .breakdown-tier-prices-panel { margin-top: 1.25rem; }
 .breakdown-tier-prices-header { margin-bottom: 0.75rem; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .line-items-row.pax-tier-row span { line-height: 1.3; }
+
+/* Vendor / Contact No. / Agent / Payment method — filled in per Pax-Tier
+   Pricing row so the linked Purchase Order supplier item has what it
+   needs without a separate trip to the P.O. tab. */
+.pax-tier-supplier-row {
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--red-light);
+}
+.pax-tier-supplier-label {
+  display: block;
+  font-size: 0.62rem; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--red);
+  margin-bottom: 6px;
+}
+.pax-tier-supplier-row .field-grid.four {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.pax-tier-supplier-row label {
+  font-size: 0.68rem; font-weight: 700;
+  color: var(--text-secondary, var(--muted));
+  display: flex; flex-direction: column; gap: 3px;
+}
+.pax-tier-supplier-row input {
+  font-size: 0.8rem;
+}
 
 /* ================================================================
    TEAM CHAT

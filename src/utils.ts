@@ -85,6 +85,22 @@ export function formatProjectDate(value: string) {
   return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
+// Returns a YYYY-MM-DD string for <input type="date"> using the browser's
+// LOCAL calendar date. `new Date().toISOString().slice(0,10)` looks
+// equivalent but isn't — toISOString() converts to UTC first, so for
+// timezones ahead of UTC (e.g. Philippines, UTC+8) any time between
+// midnight and 8am local is still "yesterday" in UTC. That's why a project
+// created just after midnight on Jul 1 could get silently dated Jun 30.
+// Always build the string from local getFullYear/getMonth/getDate instead.
+export function toDateInputValue(value?: Date | string): string {
+  const date = value ? (typeof value === 'string' ? new Date(value) : value) : new Date()
+  if (Number.isNaN(date.getTime())) return ''
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 // ── Pax helpers ─────────────────────────────────────────────────────────────
 
 export function readPaxBreakdown(value?: string): PaxBreakdown {

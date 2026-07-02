@@ -46,6 +46,7 @@ export type BreakdownLineItem = {
   vendor?: string
   contactNumber?: string
   paymentMethod?: string
+  agent?: string
   quantity: string
   paxBreakdown?: string
   unitPrice: string
@@ -135,6 +136,10 @@ export type BookingRecord = BookingFormData & {
   id: string
   createdAt: string
   ownerId?: string
+  // True when this project was created via "Duplicate project" from an
+  // existing one, rather than a fresh "New Inquiry" — shown as a
+  // DUPLICATED tag on the dashboard so it's clear at a glance.
+  isDuplicate?: boolean
 }
 
 export type BookingLineItem = {
