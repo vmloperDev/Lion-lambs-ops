@@ -59,7 +59,20 @@ async function getAccessToken(email: string, privateKey: string): Promise<string
 
 // ── Tab name ──────────────────────────────────────────────────────────────────
 
-function getMonthTabName(createdAt: string): string {
+// A tab name is only ever trusted if it resolves to a year in this window.
+// This exists because of a real bug we hit: a createdAt string with a
+// truncated/zero-padded year (e.g. "0007-07-01" instead of "2007-07-01")
+// gets split into y=7, and `new Date(7, m-1, 1)` triggers JS's legacy
+// two-digit-year rule — any year 0-99 passed to the Date constructor is
+// silently reinterpreted as 1900+y, turning "0007" into 1907. That produced
+// the stray "Jul 1907"-style tabs with a single orphaned row in them.
+// Rather than trust whatever the parser lands on, we sanity-check the
+// resulting year and fall back to today's date (filing the booking into
+// the current month) if it's outside a plausible operating range.
+const MIN_SANE_YEAR = 2015
+const MAX_SANE_YEAR = 2100
+
+function getMonthTabName(createdAt: string, context?: string): string {
   let d: Date
   const n = Number(createdAt)
   if (!isNaN(n) && String(createdAt).length >= 10) {
@@ -70,7 +83,16 @@ function getMonthTabName(createdAt: string): string {
   } else {
     d = new Date(createdAt)
   }
-  if (isNaN(d.getTime())) d = new Date()
+
+  const year = d.getFullYear()
+  if (isNaN(d.getTime()) || year < MIN_SANE_YEAR || year > MAX_SANE_YEAR) {
+    console.warn(
+      `[sheets-append] Rejected suspicious createdAt "${createdAt}"${context ? ` for ${context}` : ''} ` +
+      `(resolved to year ${year}) — filing under today's month tab instead.`,
+    )
+    d = new Date()
+  }
+
   return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
 }
 
@@ -291,7 +313,7 @@ function buildRow(b: BookingPayload, fmtDate: (v: string) => string, fmt: (n: nu
 
   const row = [
     fmtDate(b.createdAt),
-    b.clientName,
+    b.clientName || '(No client name)',
     travelDate,
     b.packageName || '',
     `${cur} ${fmt(gross)}`,
@@ -521,9 +543,30 @@ async function syncTab(
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
-  const { GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY, GOOGLE_SHEET_ID } = process.env
+  const { GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY, GOOGLE_SHEET_ID, SHEETS_SYNC_SECRET } = process.env
   if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY || !GOOGLE_SHEET_ID) {
     return res.status(500).json({ error: 'Missing Google Sheets environment variables.' })
+  }
+
+  // ── Basic request auth ────────────────────────────────────────────────────
+  // Without this, this endpoint is a public URL that accepts ANY POST body —
+  // anyone who finds it could inject or delete rows in your sheet, including
+  // via `action: 'delete'` or `reconcile: true`. If SHEETS_SYNC_SECRET is set
+  // in Vercel's env vars, requests must include a matching x-sync-secret
+  // header (the app sends this automatically via VITE_SHEETS_SYNC_SECRET).
+  // NOTE: because this is a VITE_ variable it ships inside the client bundle,
+  // so it only deters casual/automated abuse of a stumbled-upon URL — it is
+  // not a substitute for real per-user auth. If you want this endpoint to
+  // only accept requests from a logged-in app user (not just "someone who
+  // has the same build"), the correct next step is verifying the user's
+  // Firebase ID token server-side instead — ask if you'd like that added.
+  // Left OFF (unenforced) if SHEETS_SYNC_SECRET isn't set, so this doesn't
+  // break your current deployment until you configure it.
+  if (SHEETS_SYNC_SECRET) {
+    const provided = req.headers['x-sync-secret']
+    if (provided !== SHEETS_SYNC_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized' })
+    }
   }
 
   const fmt = (n: number) => n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -540,7 +583,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } else {
       d = new Date(iso)
     }
-    if (isNaN(d.getTime())) return iso
+    // Same corrupted-year guard as getMonthTabName (see comment there) — if
+    // the resolved year is outside a sane window, show the raw stored value
+    // instead of a confident-looking but wrong date like "Jul 3, 1907".
+    const year = d.getFullYear()
+    if (isNaN(d.getTime()) || year < MIN_SANE_YEAR || year > MAX_SANE_YEAR) return `⚠ ${iso}`
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   }
 
@@ -567,11 +614,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ ok: true, tabs: [] })
       }
 
-      // Group by month tab
+      // Group by month tab.
+      // NOTE: bookings missing a clientName used to be silently `continue`d
+      // here — dropped from the sheet entirely with zero indication to the
+      // user that anything was skipped. A Confirmed/Flown booking with a
+      // blank client name (e.g. a project that skipped that field) would
+      // just never show up, forever, with nothing in the UI explaining why.
+      // We now sync it anyway under a placeholder name and report it back
+      // as a warning instead, so nothing goes missing silently.
       const byTab = new Map<string, BookingPayload[]>()
+      const warnings: string[] = []
       for (const b of allBookings) {
-        if (!b.clientName || !b.status) continue
-        const tab = getMonthTabName(b.createdAt || new Date().toISOString())
+        if (!b.status) continue
+        if (!b.clientName) {
+          warnings.push(`Booking ${b.bookingId || '(no id)'} has no client name — synced to Sheets as "(No client name)". Fill it in to fix the row.`)
+        }
+        const tab = getMonthTabName(b.createdAt || new Date().toISOString(), `booking ${b.bookingId || '(no id)'}`)
         if (!byTab.has(tab)) byTab.set(tab, [])
         byTab.get(tab)!.push(b)
       }
@@ -615,7 +673,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         (metaAfter.sheets || []).map(s => ({ title: s.properties.title, sheetId: s.properties.sheetId }))
       )
 
-      return res.status(200).json({ ok: true, tabs: results, healed: healedCount })
+      return res.status(200).json({ ok: true, tabs: results, healed: healedCount, warnings })
     }
 
     // ── Delete mode: { action: 'delete', bookingId, createdAt } ───────────────
@@ -626,7 +684,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { bookingId, createdAt } = req.body as { bookingId: string; createdAt?: string }
       if (!bookingId) return res.status(400).json({ error: 'Missing bookingId.' })
 
-      const primaryTab = getMonthTabName(createdAt || new Date().toISOString())
+      const primaryTab = getMonthTabName(createdAt || new Date().toISOString(), `booking ${bookingId}`)
       const tried = new Set<string>()
       let deleted = false
 
@@ -651,11 +709,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ── Single booking mode (backwards compat): { bookingId, clientName, … } ─
     const b = req.body as BookingPayload
-    if (!b.clientName || !b.status) {
-      return res.status(400).json({ error: 'Missing required booking fields.' })
+    if (!b.status) {
+      return res.status(400).json({ error: 'Missing required booking fields (status).' })
+    }
+    // Previously a blank clientName made this whole request 400 — and the
+    // client only console.warn'd that, so the booking silently never made
+    // it to the sheet with nothing visible telling the user why. We now
+    // sync it under a placeholder and report a warning instead.
+    const warnings: string[] = []
+    if (!b.clientName) {
+      warnings.push(`Booking ${b.bookingId || '(no id)'} has no client name — synced to Sheets as "(No client name)". Fill it in to fix the row.`)
     }
 
-    const tabName = getMonthTabName(b.createdAt || new Date().toISOString())
+    const tabName = getMonthTabName(b.createdAt || new Date().toISOString(), `booking ${b.bookingId || '(no id)'}`)
     await syncTab(token, GOOGLE_SHEET_ID, tabName, [b], existingSheets, fmtDate, fmt)
 
     // Re-fetch and sort after single-booking sync too
@@ -667,7 +733,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       (metaAfterSingle.sheets || []).map(s => ({ title: s.properties.title, sheetId: s.properties.sheetId }))
     )
 
-    return res.status(200).json({ ok: true, tab: tabName })
+    return res.status(200).json({ ok: true, tab: tabName, warnings })
   } catch (err) {
     console.error('[sheets-append]', err)
     return res.status(500).json({ error: String(err) })

@@ -71,10 +71,24 @@ export function parseQuantity(value?: string) {
   return Number.isFinite(quantity) && quantity > 0 ? quantity : 1
 }
 
+export function getCurrencySymbol(currency?: string): string {
+  const symbols: Record<string, string> = {
+    PHP: '₱', USD: '$', EUR: '€', GBP: '£', JPY: '¥', CNY: '¥',
+    AUD: 'A$', CAD: 'C$', CHF: 'CHF', HKD: 'HK$', SGD: 'S$', KRW: '₩',
+    THB: '฿', MYR: 'RM', IDR: 'Rp', VND: '₫', INR: '₹',
+    AED: 'AED', SAR: 'SAR', QAR: 'QAR', KWD: 'KWD', BHD: 'BHD', OMR: 'OMR',
+    NZD: 'NZ$', NOK: 'kr', SEK: 'kr', DKK: 'kr', ZAR: 'R', MXN: 'MX$',
+    BRL: 'R$', TWD: 'NT$',
+  }
+  const code = (currency || 'PHP').toUpperCase()
+  return symbols[code] || code
+}
+
 export function formatAmount(value?: string, currency = 'PHP') {
   const amount = parseAmount(value)
-  if (!Number.isFinite(amount) || amount <= 0) return `${currency} 0.00`
-  return `${currency} ${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const symbol = getCurrencySymbol(currency)
+  if (!Number.isFinite(amount) || amount <= 0) return `${symbol}0.00`
+  return `${symbol}${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export function computePaymentStatus(totalPrice: number, amountPaid: number): string {

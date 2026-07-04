@@ -1,4 +1,4 @@
-import { syncBookingToSheets, deleteBookingFromSheets, startPeriodicReSync } from './sheetsSync'
+import { syncBookingToSheets, deleteBookingFromSheets, startPeriodicReSync, resetSyncStartupWindow, setSheetsSyncIssueHandler } from './sheetsSync'
 import { extractBookingFieldsFromText, GeminiExtractError, type ExtractedBookingFields } from './geminiExtract'
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -88,7 +88,7 @@ import {
   getDisplayName, getPasswordStrength,
   normalizeBooking, getStoredBookings,
   getUserBookingsCollectionPath, getBookingOwnerPath,
-  parseAmount, parseQuantity, formatAmount, computePaymentStatus, formatProjectDate, toDateInputValue,
+  parseAmount, parseQuantity, formatAmount, getCurrencySymbol, computePaymentStatus, formatProjectDate, toDateInputValue,
   readPaxBreakdown, sumPaxBreakdown, formatPaxBreakdownLabel,
   readGroupPax, readExcludedPax, getItemPaxBreakdown,
   createLineItemId, getLines, generateQuotationNo,
@@ -214,6 +214,9 @@ function App() {
   const [authMessage, setAuthMessage] = useState('')
   const [isAuthLoading, setIsAuthLoading] = useState(true)
   const [dataError, setDataError] = useState('')
+  // Surfaces problems reported by sheetsSync.ts (failed/skipped syncs to
+  // Google Sheets) that used to only be visible as console.warn output.
+  const [sheetsSyncWarning, setSheetsSyncWarning] = useState('')
   const [dataMessage, setDataMessage] = useState('')
   const [aiPasteOpen, setAiPasteOpen] = useState(false)
   const [aiPasteText, setAiPasteText] = useState('')
@@ -379,6 +382,13 @@ function App() {
     const bookingsQuery = query(
       collectionGroup(db, 'bookings'),
     )
+    // Re-arm the startup burst-debounce every time this listener
+    // (re)subscribes — not just on first page load. Firestore fires every
+    // matching doc as an 'added' change on every fresh subscription (token
+    // refresh, tab refocus after being offline, sign-out/sign-in), and
+    // without re-arming this, only the very first burst got batched; later
+    // bursts went out as individual sequential POSTs and could trip 429s.
+    resetSyncStartupWindow()
     return onSnapshot(
       bookingsQuery,
       (snapshot) => {
@@ -434,6 +444,14 @@ function App() {
     const stop = startPeriodicReSync(() => bookingsRef.current)
     return stop
   }, [authUser])
+
+  // Surface Google Sheets sync problems (failed pushes, skipped bookings with
+  // no client name, etc.) as a dismissible banner instead of only a
+  // console.warn nobody sees. Registered once for the life of the app.
+  useEffect(() => {
+    setSheetsSyncIssueHandler((message) => setSheetsSyncWarning(message))
+    return () => setSheetsSyncIssueHandler(null)
+  }, [])
 
   useEffect(() => {
     if (isAuthLoading) return
@@ -1982,7 +2000,8 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
       : new Date().toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
     const methodPart = paymentEntry.method ? ` via ${paymentEntry.method}` : ''
     const refPart = paymentEntry.reference ? ` (Ref: ${paymentEntry.reference})` : ''
-    const record = `${dateLabel}${methodPart}${refPart} — PHP ${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+    const paymentCurrency = selectedBooking?.currency || 'PHP'
+    const record = `${dateLabel}${methodPart}${refPart} — ${getCurrencySymbol(paymentCurrency)}${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
     const prevPaid = parseAmount(invoiceForm.invoiceAmountPaid)
     const newPaid = prevPaid + amount
     const prevRecords = invoiceForm.paymentRecords.trim()
@@ -2009,8 +2028,8 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
     const lines = invoiceForm.paymentRecords.split('\n').filter(Boolean)
     const removedLine = lines[index] || ''
     lines.splice(index, 1)
-    const removedAmountMatch = removedLine.match(/PHP\s*([\d,]+(?:\.\d{1,2})?)\s*$/)
-    const removedAmount = removedAmountMatch ? parseAmount(removedAmountMatch[1]) : 0
+    const removedAmountMatch = removedLine.match(/[\d,]+(?:\.\d{1,2})?\s*$/)
+    const removedAmount = removedAmountMatch ? parseAmount(removedAmountMatch[0]) : 0
     const newPaid = Math.max(parseAmount(invoiceForm.invoiceAmountPaid) - removedAmount, 0)
     const totalPrice = getInvoiceEditorTotal()
     const newStatus = computePaymentStatus(totalPrice, newPaid)
@@ -2044,9 +2063,11 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
     const remaining = Math.max(totalPrice - currentPaid, 0)
     const dateLabel = new Date(fullyPaidDateInput + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
     const prevRecords = invoiceForm.paymentRecords.trim()
+    const selectedBookingForCurrency = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
+    const fullyPaidCurrency = selectedBookingForCurrency?.currency || 'PHP'
     let newRecords = prevRecords
     if (remaining > 0) {
-      const record = `${dateLabel} — Marked fully paid (balance settled) — PHP ${remaining.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+      const record = `${dateLabel} — Marked fully paid (balance settled) — ${getCurrencySymbol(fullyPaidCurrency)}${remaining.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
       newRecords = prevRecords ? `${prevRecords}\n${record}` : record
     }
     setInvoiceForm((f) => ({
@@ -2106,52 +2127,6 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
       setDataError('Invoice saved locally, but cloud update failed.')
       setDataMessage('')
       setScreen('invoice-preview')
-    }
-  }
-
-  async function handleRegenerateAllQuotationNumbers() {
-    if (bookings.length === 0) return
-    const confirmed = window.confirm(
-      `Give every one of the ${bookings.length} existing projects a new random quotation number? Old printed copies will show the old number — this cannot be undone.`
-    )
-    if (!confirmed) return
-    if (!authUser) {
-      setDataError('Log in again before updating cloud records.')
-      return
-    }
-
-    const usedNumbers = new Set<string>()
-    const updates = bookings.map((booking) => {
-      let nextNo = generateQuotationNo()
-      while (usedNumbers.has(nextNo)) nextNo = generateQuotationNo()
-      usedNumbers.add(nextNo)
-      return { booking, nextNo }
-    })
-
-    setBookings((currentBookings) =>
-      currentBookings.map((booking) => {
-        const match = updates.find((u) => u.booking.id === booking.id)
-        return match ? { ...booking, quotationNo: match.nextNo } : booking
-      })
-    )
-    if (lastSavedBookingRef.current) {
-      const match = updates.find((u) => u.booking.id === lastSavedBookingRef.current!.id)
-      if (match) lastSavedBookingRef.current = { ...lastSavedBookingRef.current, quotationNo: match.nextNo }
-    }
-
-    try {
-      await Promise.all(
-        updates.map(({ booking, nextNo }) =>
-          setDoc(doc(db, getBookingOwnerPath(booking, authUser.uid), booking.id), {
-            quotationNo: nextNo,
-            updatedAt: new Date().toISOString(),
-          }, { merge: true })
-        )
-      )
-      setDataError('')
-      setDataMessage(`Assigned new quotation numbers to ${updates.length} project(s).`)
-    } catch {
-      setDataError('Quotation numbers updated locally, but some cloud updates may have failed. Refresh to check.')
     }
   }
 
@@ -2714,46 +2689,46 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
               ))}
             </tbody>
           </table>
-          <table className="invoice-table invoice-summary-table">
-            <tbody>
-              <tr className="quote-total-row">
-                <td colSpan={3}>TOTAL</td>
-                <td>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
-              </tr>
-              {selectedBooking.currency && selectedBooking.currency !== 'PHP' && parseFloat(selectedBooking.acr || '') > 0 && (
-                <tr className="quote-acr-row">
-                  <td colSpan={3}>ACR</td>
-                  <td>{parseFloat(selectedBooking.acr as string).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                </tr>
-              )}
-              <tr className="quote-acr-row">
-                <td colSpan={3}>PAID</td>
-                <td>{convertAndFormat(parseAmount(selectedBooking.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</td>
-              </tr>
-              {acrPhpTotal(totalPrice, selectedBooking.currency, selectedBooking.acr) && (
+          <div className="invoice-summary-row">
+            <table className="invoice-table invoice-summary-table">
+              <tbody>
                 <tr className="quote-total-row">
-                  <td colSpan={3}>PESO VALUE</td>
-                  <td>{acrPhpTotal(totalPrice, selectedBooking.currency, selectedBooking.acr)!.replace('PHP ', '₱')}</td>
+                  <td colSpan={3}>TOTAL</td>
+                  <td>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
                 </tr>
-              )}
-              {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate && (
+                {selectedBooking.currency && selectedBooking.currency !== 'PHP' && parseFloat(selectedBooking.acr || '') > 0 && (
+                  <tr className="quote-acr-row">
+                    <td colSpan={3}>ACR (1 {selectedBooking.currency} = ₱)</td>
+                    <td>₱{parseFloat(selectedBooking.acr as string).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  </tr>
+                )}
                 <tr className="quote-acr-row">
-                  <td colSpan={3}>FULLY PAID ON</td>
-                  <td>{formatProjectDate(selectedBooking.invoiceFullyPaidDate)}</td>
+                  <td colSpan={3}>PAID</td>
+                  <td>{convertAndFormat(parseAmount(selectedBooking.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</td>
                 </tr>
-              )}
-              <tr className="quote-acr-row invoice-payment-updates-row">
-                <td colSpan={4}>
-                  <span className="payment-updates-label">Payment Updates</span>
-                  <ul>
-                    {paymentRecords.map((record) => (
-                      <li key={record}>{record}</li>
-                    ))}
-                  </ul>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                {acrPhpTotal(totalPrice, selectedBooking.currency, selectedBooking.acr) && (
+                  <tr className="quote-total-row">
+                    <td colSpan={3}>PESO VALUE</td>
+                    <td>{acrPhpTotal(totalPrice, selectedBooking.currency, selectedBooking.acr)!.replace('PHP ', '₱')}</td>
+                  </tr>
+                )}
+                {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate && (
+                  <tr className="quote-acr-row">
+                    <td colSpan={3}>FULLY PAID ON</td>
+                    <td>{formatProjectDate(selectedBooking.invoiceFullyPaidDate)}</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+            <div className="invoice-payment-updates-panel">
+              <span className="payment-updates-label">Payment Updates</span>
+              <ul>
+                {paymentRecords.map((record) => (
+                  <li key={record}>{record}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
         </div>
 
         <section className="invoice-notes">
@@ -5023,7 +4998,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
             </div>
             <div className="field-grid two">
               <label>
-                Amount received (PHP)
+                Amount received ({getCurrencySymbol(selectedBooking.currency)})
                 <input
                   type="number"
                   min="0"
@@ -6163,15 +6138,6 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
               </svg>
               Open Google Sheet
             </button>
-            <button
-              type="button"
-              className="nav-text-action"
-              onClick={handleRegenerateAllQuotationNumbers}
-              title="Give every existing project a new random quotation number"
-            >
-              <RefreshCw size={18} />
-              New Quotation Nos.
-            </button>
         </div>
       </nav>
 
@@ -6364,6 +6330,19 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
 
           {dataError && <p className="data-alert error">{dataError}</p>}
           {dataMessage && <p className="data-alert info">{dataMessage}</p>}
+          {sheetsSyncWarning && (
+            <p className="data-alert info" style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+              <span>⚠ Sheets sync: {sheetsSyncWarning}</span>
+              <button
+                type="button"
+                onClick={() => setSheetsSyncWarning('')}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', color: 'inherit', flexShrink: 0 }}
+                aria-label="Dismiss"
+              >
+                ✕
+              </button>
+            </p>
+          )}
 
           <label className="booking-search">
             <Search size={16} />

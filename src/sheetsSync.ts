@@ -19,9 +19,33 @@ import type { BookingRecord, BookingStatus } from './types'
 import { getBookingClientTotal, getBookingBreakdownNettTotal } from './utils'
 
 const TRIGGER_STATUSES = new Set<BookingStatus>(['Confirmed', 'Flown'])
+const SYNC_SECRET = import.meta.env.VITE_SHEETS_SYNC_SECRET as string | undefined
+
+function syncHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (SYNC_SECRET) headers['x-sync-secret'] = SYNC_SECRET
+  return headers
+}
 
 export function shouldSyncToSheets(status: BookingStatus): boolean {
   return TRIGGER_STATUSES.has(status)
+}
+
+// ── Surfacing sync problems to the UI ─────────────────────────────────────────
+// This module used to only console.warn on failures/skips, which meant a
+// booking could silently fail to reach the sheet with nothing in the app
+// telling the user. App.tsx registers a handler here (e.g. wired to the
+// existing `dataError`-style banner) so real problems become visible.
+type SyncIssueHandler = (message: string) => void
+let _onSyncIssue: SyncIssueHandler | null = null
+
+export function setSheetsSyncIssueHandler(handler: SyncIssueHandler | null): void {
+  _onSyncIssue = handler
+}
+
+function reportIssue(message: string): void {
+  console.warn(`[sheetsSync] ${message}`)
+  _onSyncIssue?.(message)
 }
 
 // ── Shared payload builder ────────────────────────────────────────────────────
@@ -68,6 +92,25 @@ let _startupBuffer: ReturnType<typeof toPayload>[] = []
 let _startupTimer: ReturnType<typeof setTimeout> | null = null
 let syncQueue: Promise<void> = Promise.resolve()
 
+// BUG FIX: these were only ever "true" once, on module load. The debounce
+// they guard is meant to catch the burst of `added` events Firestore fires
+// whenever a full onSnapshot listener (re)subscribes — which happens not
+// just on first page load, but also on token refresh, tab refocus after
+// being offline, or sign-out/sign-in. Without re-arming, only the very
+// first burst got batched; every later resubscribe burst (which can easily
+// be 20-30+ bookings) went out as individual sequential POSTs instead,
+// which is exactly the 429-storm this debounce exists to prevent.
+// App.tsx calls this at the start of its onSnapshot effect, every time the
+// listener (re)subscribes, so the burst-batching applies every time.
+export function resetSyncStartupWindow(): void {
+  _startupWindowOpen = true
+  _startupBuffer = []
+  if (_startupTimer !== null) {
+    clearTimeout(_startupTimer)
+    _startupTimer = null
+  }
+}
+
 // Close the startup window after STARTUP_WINDOW_MS. If we collected enough
 // bookings, flush them as one batch; otherwise drain individually as usual.
 function _scheduleStartupFlush() {
@@ -102,7 +145,7 @@ async function _postWithRetry(body: object, isBatch: boolean): Promise<void> {
     try {
       const res = await fetch('/api/sheets-append', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: syncHeaders(),
         body: JSON.stringify(body),
       })
 
@@ -115,10 +158,11 @@ async function _postWithRetry(body: object, isBatch: boolean): Promise<void> {
 
       if (!res.ok) {
         const text = await res.text()
-        console.warn('[sheetsSync] Server error:', text)
-      } else if (isBatch) {
-        const data = await res.json() as { tabs?: string[] }
-        console.log('[sheetsSync] Startup batch complete. Tabs:', data.tabs?.join(', ') ?? '—')
+        reportIssue(`A booking failed to sync to Google Sheets (server said: ${text || res.status}).`)
+      } else {
+        const data = await res.json() as { tabs?: string[]; warnings?: string[] }
+        if (isBatch) console.log('[sheetsSync] Startup batch complete. Tabs:', data.tabs?.join(', ') ?? '—')
+        data.warnings?.forEach(reportIssue)
       }
       return
     } catch (err) {
@@ -126,7 +170,7 @@ async function _postWithRetry(body: object, isBatch: boolean): Promise<void> {
       if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 5_000 * attempt))
     }
   }
-  if (lastError) console.warn('[sheetsSync] Gave up after 3 attempts:', lastError)
+  if (lastError) reportIssue(`Couldn't reach Google Sheets after 3 tries (${lastError}). It will retry automatically on the next change or the 10-minute re-sync.`)
 }
 
 export function syncBookingToSheets(booking: BookingRecord): void {
@@ -166,7 +210,7 @@ export function deleteBookingFromSheets(booking: Pick<BookingRecord, 'id' | 'cre
       try {
         const res = await fetch('/api/sheets-append', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: syncHeaders(),
           body: JSON.stringify(body),
         })
         if (res.status === 429) {
@@ -174,7 +218,7 @@ export function deleteBookingFromSheets(booking: Pick<BookingRecord, 'id' | 'cre
           continue
         }
         if (!res.ok) {
-          console.warn('[sheetsSync] Delete failed:', await res.text())
+          reportIssue(`Deleting a booking from Google Sheets failed (server said: ${await res.text()}). The next 10-minute re-sync will clean it up.`)
         } else {
           const data = await res.json() as { deleted?: boolean }
           console.log(`[sheetsSync] Delete ${data.deleted ? 'removed row for' : 'found no row for'} ${booking.id}`)
@@ -185,7 +229,7 @@ export function deleteBookingFromSheets(booking: Pick<BookingRecord, 'id' | 'cre
         if (attempt < 3) await new Promise(r => setTimeout(r, 5_000 * attempt))
       }
     }
-    if (lastError) console.warn('[sheetsSync] Delete gave up after 3 attempts:', lastError)
+    if (lastError) reportIssue(`Couldn't reach Google Sheets to delete a row after 3 tries (${lastError}). The next 10-minute re-sync will clean it up.`)
     await new Promise(r => setTimeout(r, 300))
   })
 }
@@ -210,7 +254,7 @@ export function startPeriodicReSync(
       try {
         const res = await fetch('/api/sheets-append', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: syncHeaders(),
           body: JSON.stringify({ bookings: eligible.map(toPayload), reconcile: true }),
         })
 
@@ -223,11 +267,12 @@ export function startPeriodicReSync(
 
         if (!res.ok) {
           const body = await res.text()
-          console.warn('[sheetsSync] Re-sync server error:', body)
+          reportIssue(`The 10-minute Google Sheets re-sync failed (server said: ${body}). It will try again next cycle.`)
         } else {
-          const data = await res.json() as { tabs?: string[]; healed?: number }
+          const data = await res.json() as { tabs?: string[]; healed?: number; warnings?: string[] }
           console.log('[sheetsSync] Re-sync complete. Tabs updated:', data.tabs?.join(', ') ?? '—')
           if (data.healed) console.log(`[sheetsSync] Self-heal: removed ${data.healed} orphan row(s) (deleted in sheet or app)`)
+          data.warnings?.forEach(reportIssue)
         }
         return
       } catch (err) {
@@ -235,7 +280,7 @@ export function startPeriodicReSync(
         if (attempt < 3) await new Promise(r => setTimeout(r, 10_000 * attempt))
       }
     }
-    if (lastError) console.warn('[sheetsSync] Re-sync gave up after 3 attempts:', lastError)
+    if (lastError) reportIssue(`The 10-minute Google Sheets re-sync couldn't reach the server after 3 tries (${lastError}). It will try again next cycle.`)
   }
 
   const id = window.setInterval(() => { void runReSync() }, INTERVAL_MS)
