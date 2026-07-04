@@ -21,6 +21,7 @@ export type ExtractedBookingFields = {
   paymentMethod?: string
   flightDetails?: string
   accommodation?: string
+  hotelName?: string
   hotelAddress?: string
   emergencyContact?: string
   specialInstructions?: string
@@ -31,7 +32,7 @@ const EXTRACTABLE_FIELDS: Array<keyof ExtractedBookingFields> = [
   'clientName', 'contactNumber', 'clientEmail', 'packageName', 'destination',
   'travelStart', 'travelEnd', 'pax', 'itemDescription', 'quantity', 'unitPrice',
   'sellingPrice', 'supplier', 'supplierContact', 'paymentMethod', 'flightDetails',
-  'accommodation', 'hotelAddress', 'emergencyContact', 'specialInstructions', 'notes',
+  'accommodation', 'hotelName', 'hotelAddress', 'emergencyContact', 'specialInstructions', 'notes',
 ]
 
 const GEMINI_MODEL = 'gemini-2.5-flash'

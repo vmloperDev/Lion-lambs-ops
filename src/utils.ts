@@ -29,10 +29,14 @@ export function getPasswordStrength(passwordValue: string): PasswordStrength {
 // ── Booking helpers ─────────────────────────────────────────────────────────
 
 export function normalizeBooking(booking: BookingRecord): BookingRecord {
+  // Legacy records (and anything synced before this rename) may still carry
+  // the old "Pending" status — treat it as "Quotation" going forward.
+  const rawStatus = booking.status as string
+  const migratedStatus = rawStatus === 'Pending' ? 'Quotation' : rawStatus
   return {
     ...emptyBookingForm,
     ...booking,
-    status: booking.status || 'Inquiry',
+    status: (['Quotation', 'Invoice', 'Confirmed', 'Flown'] as const).includes(migratedStatus as 'Quotation' | 'Invoice' | 'Confirmed' | 'Flown') ? (migratedStatus as BookingRecord['status']) : 'Quotation',
     id: booking.id,
     createdAt: booking.createdAt || new Date().toISOString(),
   }
@@ -85,6 +89,22 @@ export function formatProjectDate(value: string) {
   return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
+// Returns a YYYY-MM-DD string for <input type="date"> using the browser's
+// LOCAL calendar date. `new Date().toISOString().slice(0,10)` looks
+// equivalent but isn't — toISOString() converts to UTC first, so for
+// timezones ahead of UTC (e.g. Philippines, UTC+8) any time between
+// midnight and 8am local is still "yesterday" in UTC. That's why a project
+// created just after midnight on Jul 1 could get silently dated Jun 30.
+// Always build the string from local getFullYear/getMonth/getDate instead.
+export function toDateInputValue(value?: Date | string): string {
+  const date = value ? (typeof value === 'string' ? new Date(value) : value) : new Date()
+  if (Number.isNaN(date.getTime())) return ''
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 // ── Pax helpers ─────────────────────────────────────────────────────────────
 
 export function readPaxBreakdown(value?: string): PaxBreakdown {
@@ -110,10 +130,46 @@ export function formatPaxBreakdownLabel(pax: PaxBreakdown) {
   return parts.join(', ')
 }
 
+// The booking's single shared group headcount — set once, then every
+// Pax-Tier Pricing row inherits it (see getItemPaxCounts below) instead of
+// each row carrying its own separately-typed counts.
+export function readGroupPax(booking: BookingFormData): PaxBreakdown {
+  return readPaxBreakdown(booking.groupPax)
+}
+
+// Same [Adult, Child, Senior, Infant] order used everywhere else (matches
+// the price2Pax/price5Pax/priceGroup/priceInfant fields index-for-index).
+export function getGroupPaxCounts(booking: BookingFormData): string[] {
+  const pax = readGroupPax(booking)
+  return [pax.adult, pax.child, pax.senior, pax.infant]
+}
+
+export const PAX_CATEGORY_KEYS = ['adult', 'child', 'senior', 'infant'] as const
+
+// Categories a row has opted OUT of — it no longer inherits the group's
+// headcount for those, e.g. a service that doesn't apply to the child.
+export function readExcludedPax(item?: BreakdownLineItem): string[] {
+  try {
+    const parsed = JSON.parse(item?.excludedPax || '[]')
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 // ── Line item helpers ───────────────────────────────────────────────────────
 
 export function createLineItemId() {
   return `LI-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+// Random (non-sequential) quotation number — QT-<year>-<5 random digits>.
+// Doesn't count off bookings.length, so it stays unique even after
+// deletions, duplicates across devices, etc.
+export function generateQuotationNo() {
+  const year = new Date().getFullYear()
+  const randomDigits = String(Math.floor(Math.random() * 100000)).padStart(5, '0')
+  return `QT-${year}-${randomDigits}`
 }
 
 export function getLines(value: string | undefined, fallback: string[]) {
@@ -136,6 +192,225 @@ export function readInvoiceItems(booking: BookingFormData): InvoiceLineItem[] {
   return [{ description: booking.packageName || 'Basic Package', quantity: booking.quantity || '1', unitPrice: booking.unitPrice || booking.sellingPrice, nettCost: '0', isPackageRow: true }]
 }
 
+// ── Invoice "Package" + "Addons" — the dedicated, newer invoice fields ────────
+// These are edited in their own UI table (separate from the legacy
+// invoiceLineItemsJson rows) and are what the printed invoice document
+// actually renders. This is the single source of truth for them so every
+// other total (payment balance, "PAID?" logic, dashboard totals, Sheets
+// sync) reads the SAME numbers the client sees on the invoice — addons can
+// never again be visible on the document but silently excluded from totals.
+
+export type InvoicePackageRow = { name: string; qty: string; price: string }
+export type InvoiceAddonRow = { id?: string; name?: string; qty?: string; price?: string; nett?: string; showInDocument?: boolean }
+
+export function readInvoicePackage(booking: BookingFormData): InvoicePackageRow {
+  try {
+    const p = JSON.parse(booking.invoicePackage || '')
+    if (p && typeof p === 'object') return { name: p.name || '', qty: p.qty || '1', price: p.price || '' }
+  } catch {}
+  return { name: '', qty: '1', price: '' }
+}
+
+export function readInvoiceAddons(booking: BookingFormData): InvoiceAddonRow[] {
+  try {
+    const a = JSON.parse(booking.invoiceAddons || '')
+    if (Array.isArray(a)) return a
+  } catch {}
+  return []
+}
+
+// Builds the package + addon line items exactly as the printed invoice does
+// (including the showInDocument filter — an addon hidden from the document
+// is also excluded from what the client is billed for it). Returns null if
+// neither the package nor any addon has been filled in, so callers know to
+// fall back to the legacy invoiceLineItemsJson rows instead.
+export function readInvoicePackageAndAddonLines(booking: BookingFormData): BookingLineItem[] | null {
+  const invPkg = readInvoicePackage(booking)
+  const invAddons = readInvoiceAddons(booking)
+  const hasNewInvoiceData = !!(invPkg.name || invPkg.price) || invAddons.some(a => a.name || a.price)
+  if (!hasNewInvoiceData) return null
+
+  const paxTotal = getBreakdownPaxTotal(booking)
+  const brkItemsForAddons = readBreakdownItems(booking)
+
+  // Each addon prints as ONE combined line — if it mirrors a Breakdown row
+  // priced per pax tier (e.g. Adult ₱222, Child ₱3), its Qty is the sum of
+  // that row's OWN tier headcounts (e.g. 2 Adult + 3 Child = Qty 5) and its
+  // Unit Price is the total averaged back over that Qty.
+  const addonRows: BookingLineItem[] = invAddons
+    .filter(a => (a.name || a.price) && a.showInDocument !== false)
+    .map(a => {
+      const linkedBrk = brkItemsForAddons.find(b => b.mirrorId === `item-${a.id}`)
+      if (linkedBrk) {
+        return buildCombinedTierLine(a.name || linkedBrk.description || 'Addon', linkedBrk, paxTotal, booking)
+      }
+      const originalQty = parseQuantity(a.qty || '1'), price = parseAmount(a.price), n = parseAmount(a.nett)
+      const amount = originalQty * price
+      // The Breakdown's pax headcount becomes this addon's Qty (its price
+      // is treated as a per-person rate) whenever a headcount is set —
+      // total dollar amount is preserved either way.
+      const q = paxTotal > 0 ? paxTotal : originalQty
+      const u = q > 0 ? amount / q : price
+      return { description: a.name || 'Addon', quantity: q, unitPrice: u, nettCost: n, total: amount, nettTotal: q * n, profit: amount - q * n }
+    })
+
+  // Once any addon is shown on the Invoice, the Package row itself carries
+  // no client price of its own (the addons ARE the priced breakdown of the
+  // package — showing both would double-charge). With no addons shown, the
+  // Package instead prices itself off the Breakdown sheet's total — but
+  // that Breakdown total is already a TOTAL (rate × headcount for every
+  // Inclusion), not a per-person rate. Dividing it back by the pax count
+  // turns it into the Package's Unit Price (the SUBTOTAL, i.e. combined
+  // per-person rate); multiplying that by Qty (the pax count) below then
+  // reconstructs the same Breakdown total as the printed Amount — exactly
+  // like "Unit Price = Subtotal, Amount = Unit Price × Qty" on the
+  // Quotation.
+  const hasOtherItems = addonRows.length > 0
+  const breakdownTotal = getBreakdownTotal(booking)
+  const pkgQty = paxTotal > 0 ? paxTotal : parseQuantity(invPkg.qty || '1')
+  const pkgUnitPrice = hasOtherItems
+    ? 0
+    : breakdownTotal > 0
+    ? (pkgQty > 0 ? breakdownTotal / pkgQty : breakdownTotal)
+    : parseAmount(invPkg.price)
+
+  // The Package row's per-pax-tier rates print UN-combined — "Adult Rate"
+  // (Qty 5), "Child Rate" (Qty 1) — under a plain package-name header with
+  // no Qty/Unit Price of its own. The package always shows on the Invoice —
+  // there's no "Show to Invoice" toggle for it anymore.
+  const pkgTierRows = buildPackageTierLines(booking)
+  const packageRows: BookingLineItem[] = pkgTierRows.length > 0
+    ? [
+        {
+          description: invPkg.name || booking.packageName || 'Package',
+          quantity: 0, unitPrice: 0, nettCost: 0, total: 0, nettTotal: 0, profit: 0,
+          hideQty: true, hidePrice: true,
+        },
+        ...pkgTierRows,
+      ]
+    : [{
+        description: invPkg.name || booking.packageName || 'Package',
+        quantity: pkgQty,
+        unitPrice: pkgUnitPrice,
+        nettCost: 0,
+        total: hasOtherItems ? 0 : pkgQty * pkgUnitPrice,
+        nettTotal: 0,
+        profit: hasOtherItems ? 0 : pkgQty * pkgUnitPrice,
+        hidePrice: hasOtherItems,
+        hideQty: true,
+      }]
+
+  return [...packageRows, ...addonRows]
+}
+
+// Combines a Breakdown item's pricing into a SINGLE printed line — for a
+// current row (flat Unit Price), Qty is the combined pax headcount across
+// all four tiers. For an older per-tier row, Qty is the sum of headcounts
+// across whichever tiers have both a price and a headcount set (e.g. 2
+// Adult + 3 Child = Qty 5). Either way, Unit Price is the item's total
+// averaged back over that Qty, so the printed Amount still matches the
+// internal Breakdown sheet exactly.
+export function buildCombinedTierLine(description: string, item: BreakdownLineItem, fallbackQty: number, booking: BookingFormData): BookingLineItem {
+  const amount = getBreakdownItemTotal(item, booking)
+  const flatPrice = parseAmount(item.unitPrice)
+  let q: number
+  if (flatPrice > 0) {
+    q = getBreakdownItemQty(item, booking)
+  } else {
+    const colPax = getItemPaxCounts(item, booking)
+    const fields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
+    const tierRows = fields
+      .map((field, i) => ({ price: parseAmount(item[field] as string), count: parseQuantity(colPax[i] || '0') }))
+      .filter((t) => t.price > 0 && t.count > 0)
+    // This row's own effective (inherited, minus any excluded categories)
+    // headcount is the correct fallback when no tier has both a price and
+    // a count set — e.g. a rate isn't filled in yet for any tier. Only
+    // fall back to the group total (or 1) if this row has excluded every
+    // category.
+    const ownPaxTotal = sumPaxBreakdown(getItemPaxBreakdown(item, booking))
+    q = tierRows.length > 0
+      ? tierRows.reduce((sum, t) => sum + t.count, 0)
+      : (ownPaxTotal > 0 ? ownPaxTotal : (fallbackQty > 0 ? fallbackQty : 1))
+  }
+  const u = q > 0 ? amount / q : 0
+  return { description, quantity: q, unitPrice: u, nettCost: 0, total: amount, nettTotal: 0, profit: amount }
+}
+
+// The four Adult/Child/Senior/Infant per-person rates exactly as they print
+// on the Breakdown document's SUBTOTAL row: for each tier, the sum of that
+// tier's rate across every Inclusion row (Add-ons are excluded — they're
+// priced on their own line on the Quotation/Invoice, not folded into the
+// package's rate). Rows priced with a single flat Unit Price instead of
+// per-tier rates don't contribute to any one column here. This is what an
+// Inclusion's cost actually buys: it raises the overall per-person "Adult
+// Rate" / "Child Rate" etc. by its own tier price — e.g. Hotel ₱555 + Fuel
+// Surcharge ₱200 + LTT ₱150, all entered under Adult, become a combined
+// ₱905 Adult Rate. There's no separate "package" rate anymore — the
+// package's price IS this combined Inclusion total.
+export function getBreakdownTierSubtotals(booking: BookingFormData): number[] {
+  const inclusionItems = readBreakdownItems(booking).filter((item) => !item.isPackageRow && item.itemType !== 'addon')
+  const fields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
+  return fields.map((field, i) =>
+    inclusionItems.reduce((sum, item) => {
+      if (parseAmount(item.unitPrice) > 0) return sum
+      // A row that's excluded this tier (via excludedPax) shouldn't have
+      // its rate counted toward that column's subtotal, even if a price
+      // is still filled in — excluding a category is meant to zero it out
+      // everywhere it's priced, not just its headcount.
+      if (readExcludedPax(item).includes(PAX_CATEGORY_KEYS[i])) return sum
+      return sum + parseAmount(item[field] as string)
+    }, 0)
+  )
+}
+
+// The package's per-pax-tier rates — these stay UN-combined, one printed
+// line per pax type that has both a rate and a headcount set, e.g. "Adult
+// Rate" (Qty 5), "Child Rate" (Qty 1). Counts come from the booking's
+// shared group headcount; the RATE for each tier is the combined Inclusion
+// subtotal for that tier (see getBreakdownTierSubtotals) — so adding/
+// pricing an Inclusion under "Adult" automatically raises the printed
+// "Adult Rate" instead of requiring it to be re-typed by hand anywhere.
+export function buildPackageTierLines(booking: BookingFormData): BookingLineItem[] {
+  const paxLabels = ['Adult', 'Child', 'Senior', 'Infant']
+  const colPax = getGroupPaxCounts(booking)
+  const subtotals = getBreakdownTierSubtotals(booking)
+  return subtotals
+    .map((price, i) => ({ label: paxLabels[i], price, count: parseQuantity(colPax[i] || '0') }))
+    .filter((t) => t.price > 0 && t.count > 0)
+    .map((t) => ({
+      description: `${t.label} Rate`,
+      quantity: t.count, unitPrice: t.price, nettCost: 0,
+      total: t.count * t.price, nettTotal: 0, profit: t.count * t.price,
+    }))
+}
+
+// Whether a Pax-Tier Pricing row has a per-person rate entered in ANY of
+// the four Adult/Child/Senior/Infant price columns (legacy rows), or has
+// the newer flat Unit Price filled in (current rows, priced once and
+// multiplied by the combined pax headcount instead of per tier).
+export function breakdownItemHasRate(item: BreakdownLineItem): boolean {
+  const fields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
+  return fields.some((field) => parseAmount(item[field] as string) > 0) || parseAmount(item.unitPrice) > 0
+}
+
+// Rows that already have at least one pax-tier rate filled in float to the
+// top, ahead of still-blank rows — a stable sort, so rows keep their
+// relative order within each of those two groups. Used by the Pax-Tier
+// Pricing editor and by the printed Breakdown/Quotation documents so the
+// row order (and therefore what a reader sees first) matches everywhere;
+// the totals themselves are unaffected since those are summed regardless
+// of row order.
+export function sortBreakdownItemsByRate<T extends BreakdownLineItem>(items: T[]): T[] {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const aHas = breakdownItemHasRate(a.item) ? 0 : 1
+      const bHas = breakdownItemHasRate(b.item) ? 0 : 1
+      return aHas !== bHas ? aHas - bHas : a.index - b.index
+    })
+    .map((entry) => entry.item)
+}
+
 export function readBreakdownItems(booking: BookingFormData): BreakdownLineItem[] {
   try {
     if (booking.breakdownLineItemsJson) return JSON.parse(booking.breakdownLineItemsJson)
@@ -143,10 +418,88 @@ export function readBreakdownItems(booking: BookingFormData): BreakdownLineItem[
   return [{ description: 'Group Package', quantity: '1', unitPrice: booking.unitPrice || booking.sellingPrice, nettCost: booking.nettCost, sendToInvoice: false, sendToPO: false, isPackageRow: true }]
 }
 
-export function mapInvoiceItemsToBookingLines(items: InvoiceLineItem[], packageName = 'Basic Package'): BookingLineItem[] {
+// The four pax-tier group-size counts (Adult, Child, Senior, Infant) shown
+// in the Breakdown document's column headers / subtotal row. These come
+// straight from the booking's single shared group headcount.
+export function getBreakdownColPax(booking: BookingFormData): string[] {
+  return getGroupPaxCounts(booking)
+}
+
+// A Pax-Tier Pricing row's effective Adult/Child/Senior/Infant headcount —
+// inherited from the booking's single shared groupPax, with any category
+// the row has explicitly opted out of (via excludedPax) zeroed out. e.g. a
+// service that only 2 of the group's 3 people are taking just removes that
+// one category rather than needing its own count retyped. Returned in the
+// same [Adult, Child, Senior, Infant] order as the price2Pax/price5Pax/
+// priceGroup/priceInfant fields so the two arrays line up index-for-index.
+export function getItemPaxCounts(item: BreakdownLineItem | undefined, booking: BookingFormData): string[] {
+  const shared = getGroupPaxCounts(booking)
+  const excluded = readExcludedPax(item)
+  return shared.map((value, i) => (excluded.includes(PAX_CATEGORY_KEYS[i]) ? '' : value))
+}
+
+// The effective headcount for a row, as a PaxBreakdown object (used when
+// mirroring a row's pax to its linked P.O. item).
+export function getItemPaxBreakdown(item: BreakdownLineItem | undefined, booking: BookingFormData): PaxBreakdown {
+  const [adult, child, senior, infant] = getItemPaxCounts(item, booking)
+  return { adult, child, senior, infant }
+}
+
+// Total amount for a single Pax-Tier Pricing row (a "service" row, not the
+// package row). Current rows are priced per pax type — Adult/Child/Senior/
+// Infant rate × that row's OWN headcount for each tier. A row can also
+// still be priced with a single flat Unit Price × its own combined
+// headcount (older rows, or a quick flat-rate entry), which takes
+// precedence over the per-tier fields when both are present.
+export function getBreakdownItemTotal(item: BreakdownLineItem, booking: BookingFormData): number {
+  const flatPrice = parseAmount(item.unitPrice)
+  if (flatPrice > 0) {
+    return getBreakdownItemQty(item, booking) * flatPrice
+  }
+  const colPax = getItemPaxCounts(item, booking)
+  const fields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
+  return fields.reduce((sum, field, i) => sum + parseAmount(item[field] as string) * parseQuantity(colPax[i]), 0)
+}
+
+// A service row's Qty: whatever's manually typed into its own Qty field,
+// or (when left blank) that row's own effective (inherited) pax headcount.
+export function getBreakdownItemQty(item: BreakdownLineItem, booking: BookingFormData): number {
+  const rawQty = Number((item.quantity ?? '').replace(/[^\d.]/g, ''))
+  if (Number.isFinite(rawQty) && rawQty > 0) return rawQty
+  const paxTotal = sumPaxBreakdown(getItemPaxBreakdown(item, booking))
+  return paxTotal > 0 ? paxTotal : 1
+}
+
+// The Breakdown sheet's grand total (sum of every Inclusion row's pax-tier
+// total). This is what the Package's client price falls back to on the
+// Quotation/Invoice whenever no addon or other priced item is shown on
+// that document — see readInvoicePackageAndAddonLines below.
+export function getBreakdownTotal(booking: BookingFormData): number {
+  return readBreakdownItems(booking)
+    .filter((item) => !item.isPackageRow && item.itemType !== 'addon')
+    .reduce((sum, item) => sum + getBreakdownItemTotal(item, booking), 0)
+}
+
+// The booking's single shared group headcount (Adult + Child + Senior +
+// Infant), summed. This is what addon rows use as their Qty on the printed
+// Quotation/Invoice — the price entered for an addon is treated as a
+// per-person rate, multiplied out by the group size, instead of a flat
+// one-off amount.
+export function getBreakdownPaxTotal(booking: BookingFormData): number {
+  return sumPaxBreakdown(readGroupPax(booking))
+}
+
+export function mapInvoiceItemsToBookingLines(items: InvoiceLineItem[], packageName = 'Basic Package', breakdownTotal = 0): BookingLineItem[] {
+  const otherItemsPresent = items.some((it) => !it.isPackageRow)
   return items.map((it) => {
-    const q = parseQuantity(it.quantity), u = parseAmount(it.unitPrice), n = it.isPackageRow ? 0 : parseAmount(it.nettCost)
-    return { description: it.description || (it.isPackageRow ? packageName || 'Basic Package' : 'Item'), quantity: q, unitPrice: u, nettCost: n, total: q * u, nettTotal: q * n, profit: q * (u - n) }
+    const q = parseQuantity(it.quantity), n = it.isPackageRow ? 0 : parseAmount(it.nettCost)
+    let u = parseAmount(it.unitPrice)
+    let hidePrice = false
+    if (it.isPackageRow) {
+      if (otherItemsPresent) { u = 0; hidePrice = true }
+      else if (breakdownTotal > 0) { u = breakdownTotal }
+    }
+    return { description: it.description || (it.isPackageRow ? packageName || 'Basic Package' : 'Item'), quantity: q, unitPrice: u, nettCost: n, total: q * u, nettTotal: q * n, profit: q * (u - n), hidePrice }
   })
 }
 
@@ -158,8 +511,13 @@ export function mapBreakdownItemsToBookingLines(items: BreakdownLineItem[], pack
 }
 
 export function getBookingLineItems(booking: BookingFormData): BookingLineItem[] {
+  // Prefer the dedicated Package + Addons fields (what the printed invoice
+  // actually shows) — this is what fixes addons being invisible to totals.
+  const newStyleLines = readInvoicePackageAndAddonLines(booking)
+  if (newStyleLines && newStyleLines.length > 0) return newStyleLines
+
   const invoiceItems = readInvoiceItems(booking)
-  if (invoiceItems.length > 0) return mapInvoiceItemsToBookingLines(invoiceItems, booking.packageName)
+  if (invoiceItems.length > 0) return mapInvoiceItemsToBookingLines(invoiceItems, booking.packageName, getBreakdownTotal(booking))
   const quantity = parseQuantity(booking.quantity)
   const unitPrice = parseAmount(booking.unitPrice || booking.sellingPrice)
   return [{ description: readBreakdownItems(booking).find(i => i.isPackageRow)?.description || booking.packageName || 'Basic Package', quantity, unitPrice, nettCost: 0, total: quantity * unitPrice, nettTotal: 0, profit: quantity * unitPrice }]

@@ -6,11 +6,8 @@ export const dtrCollectionKey = 'dtr_entries'
 
 export const bookingListFilters: Array<{ label: string; value: BookingListFilter }> = [
   { label: 'All', value: 'All' },
-  { label: 'Inquiries', value: 'Inquiry' },
-  { label: 'Breakdown', value: 'Breakdown' },
-  { label: 'Quotations', value: 'Quotation' },
-  { label: 'P.O.', value: 'Purchase Order' },
-  { label: 'Invoices', value: 'Invoice' },
+  { label: 'Quotation', value: 'Quotation' },
+  { label: 'Invoice', value: 'Invoice' },
   { label: 'Confirmed', value: 'Confirmed' },
   { label: 'Flown', value: 'Flown' },
 ]
@@ -19,16 +16,21 @@ export const emptyBookingForm: BookingFormData = {
   clientName: '',
   contactNumber: '',
   clientEmail: '',
-  clientFacebook: '',
   currency: 'PHP',
+  acr: '',
   packageName: '',
   destination: '',
   travelStart: '',
   travelEnd: '',
   pax: '',
+  groupPax: '',
   quotationNo: '',
   lineItems: '',
   invoiceLineItemsJson: '',
+  invoicePackage: '',
+  quotationPaxRates: '',
+  quotationPaxAddons: '',
+  invoiceAddons: '',
   breakdownLineItemsJson: '',
   breakdownPaxTiers: '',
   breakdownColLabels: '',
@@ -50,6 +52,7 @@ export const emptyBookingForm: BookingFormData = {
   optionDate: '',
   flightDetails: '',
   accommodation: '',
+  hotelName: '',
   hotelAddress: '',
   emergencyContact: '',
   inclusions: '',
@@ -59,14 +62,15 @@ export const emptyBookingForm: BookingFormData = {
   specialInstructions: '',
   preparedBy: '',
   createdByName: '',
-  status: 'Inquiry',
+  status: 'Quotation',
   notes: '',
+  poLineItemsJson: '',
 }
 
 const previousProjects = [
   { id: 'QT-2026-0001', title: 'Boracay Summer Package', client: 'Juan Dela Cruz', status: 'Quotation', date: 'June 10, 2026', amount: '18000' },
-  { id: 'INV-2026-0002', title: 'Baguio Family Tour', client: 'Maria Santos', status: 'Invoice', date: 'June 9, 2026', amount: '26500' },
-  { id: 'QT-2026-0003', title: 'Japan Visa Assistance', client: 'Ramon Cruz', status: 'Draft', date: 'June 8, 2026', amount: '7500' },
+  { id: 'INV-2026-0002', title: 'Baguio Family Tour', client: 'Maria Santos', status: 'Confirmed', date: 'June 9, 2026', amount: '26500' },
+  { id: 'QT-2026-0003', title: 'Japan Visa Assistance', client: 'Ramon Cruz', status: 'Quotation', date: 'June 8, 2026', amount: '7500' },
 ]
 
 export const sampleBookings: BookingRecord[] = previousProjects.map((project) => ({
@@ -80,5 +84,5 @@ export const sampleBookings: BookingRecord[] = previousProjects.map((project) =>
   quantity: '1',
   unitPrice: project.amount,
   sellingPrice: project.amount,
-  status: project.status === 'Draft' ? 'Inquiry' : (project.status as BookingFormData['status']),
+  status: project.status as BookingFormData['status'],
 }))
