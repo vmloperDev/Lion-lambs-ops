@@ -2597,33 +2597,25 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr className="quote-total-row">
+                <td colSpan={3}>TOTAL</td>
+                <td>{convertAndFormat(quoteTotal, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+              </tr>
+              {(() => {
+                const currency = selectedBooking.currency || 'PHP'
+                const rate = parseFloat(selectedBooking.acr || '')
+                if (currency === 'PHP' || !rate || rate <= 0) return null
+                const pesoValue = (quoteTotal * rate).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                return (
+                  <tr className="quote-acr-row">
+                    <td colSpan={3}>ACR (Converted to PHP)</td>
+                    <td>{`₱${pesoValue}`}</td>
+                  </tr>
+                )
+              })()}
+            </tfoot>
           </table>
-
-          <section className="invoice-total-panel quote-total-panel">
-            <div className="invoice-total-row total-row">
-              <span>TOTAL</span>
-              <strong>{convertAndFormat(quoteTotal, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
-            </div>
-            {(() => {
-              const currency = selectedBooking.currency || 'PHP'
-              const rate = parseFloat(selectedBooking.acr || '')
-              if (currency === 'PHP' || !rate || rate <= 0) return null
-              const formattedRate = rate.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-              const pesoValue = (quoteTotal * rate).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-              return (
-                <>
-                  <div className="invoice-total-row acr-row">
-                    <span>ACR</span>
-                    <strong>{`1 ${currency} = ₱${formattedRate}`}</strong>
-                  </div>
-                  <div className="invoice-total-row acr-row">
-                    <span>Peso Value</span>
-                    <strong>{`₱${pesoValue}`}</strong>
-                  </div>
-                </>
-              )
-            })()}
-          </section>
         </div>
 
         <section className="quote-notes">
@@ -2701,8 +2693,8 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
           <span>{selectedBooking.clientName}</span>
         </section>
 
-        <div className="invoice-body-grid">
-          <table className="invoice-table">
+        <div className="invoice-body-grid invoice-body-grid-solo invoice-two-tables">
+          <table className="invoice-table invoice-items-table">
             <thead>
               <tr>
                 <th>Item</th>
@@ -2722,51 +2714,46 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
               ))}
             </tbody>
           </table>
-
-          <section className="invoice-total-panel">
-            <div className="invoice-total-row total-row">
-              <span>TOTAL</span>
-              <strong>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
-            </div>
-            {acrPhpTotal(totalPrice, selectedBooking.currency, selectedBooking.acr) && (
-              <>
-                <div className="invoice-total-row acr-row">
-                  <span>ACR</span>
-                  <strong>{`1 ${selectedBooking.currency} = ₱${parseFloat(selectedBooking.acr || '').toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</strong>
-                </div>
-                <div className="invoice-total-row acr-row">
-                  <span>Peso Value</span>
-                  <strong>{acrPhpTotal(totalPrice, selectedBooking.currency, selectedBooking.acr)?.replace('PHP ', '₱')}</strong>
-                </div>
-              </>
-            )}
-            <div className="invoice-total-row">
-              <span>PAID</span>
-              <strong>{convertAndFormat(parseAmount(selectedBooking.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
-            </div>
-            <div className="invoice-total-row">
-              <span>BALANCE</span>
-              <strong>
-                {acrPhpTotal(balance, selectedBooking.currency, selectedBooking.acr)
-                  ? acrPhpTotal(balance, selectedBooking.currency, selectedBooking.acr)!.replace('PHP ', '₱')
-                  : convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}
-              </strong>
-            </div>
-            {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate && (
-              <div className="invoice-total-row fully-paid-badge">
-                <span>FULLY PAID ON</span>
-                <strong>{formatProjectDate(selectedBooking.invoiceFullyPaidDate)}</strong>
-              </div>
-            )}
-            <div className="payment-placeholder">
-              <span>PAYMENT UPDATES</span>
-              <ul>
-                {paymentRecords.map((record) => (
-                  <li key={record}>{record}</li>
-                ))}
-              </ul>
-            </div>
-          </section>
+          <table className="invoice-table invoice-summary-table">
+            <tbody>
+              <tr className="quote-total-row">
+                <td colSpan={3}>TOTAL</td>
+                <td>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</td>
+              </tr>
+              {selectedBooking.currency && selectedBooking.currency !== 'PHP' && parseFloat(selectedBooking.acr || '') > 0 && (
+                <tr className="quote-acr-row">
+                  <td colSpan={3}>ACR</td>
+                  <td>{parseFloat(selectedBooking.acr as string).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                </tr>
+              )}
+              <tr className="quote-acr-row">
+                <td colSpan={3}>PAID</td>
+                <td>{convertAndFormat(parseAmount(selectedBooking.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</td>
+              </tr>
+              {acrPhpTotal(totalPrice, selectedBooking.currency, selectedBooking.acr) && (
+                <tr className="quote-total-row">
+                  <td colSpan={3}>PESO VALUE</td>
+                  <td>{acrPhpTotal(totalPrice, selectedBooking.currency, selectedBooking.acr)!.replace('PHP ', '₱')}</td>
+                </tr>
+              )}
+              {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate && (
+                <tr className="quote-acr-row">
+                  <td colSpan={3}>FULLY PAID ON</td>
+                  <td>{formatProjectDate(selectedBooking.invoiceFullyPaidDate)}</td>
+                </tr>
+              )}
+              <tr className="quote-acr-row invoice-payment-updates-row">
+                <td colSpan={4}>
+                  <span className="payment-updates-label">Payment Updates</span>
+                  <ul>
+                    {paymentRecords.map((record) => (
+                      <li key={record}>{record}</li>
+                    ))}
+                  </ul>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
         <section className="invoice-notes">
@@ -2806,6 +2793,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
               immigration requirements before booking.
             </p>
           </section>
+
           <div className="transaction-box">
             <strong>For faster transactions:</strong>
             <span>You may deposit your payment below:</span>
