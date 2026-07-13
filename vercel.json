@@ -1,0 +1,16 @@
+{
+  "functions": {
+    "api/cron-resync.ts": { "maxDuration": 60 },
+    "api/sheets-append.ts": { "maxDuration": 60 }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
