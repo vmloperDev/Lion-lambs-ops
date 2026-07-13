@@ -407,6 +407,20 @@ function App() {
     return `₱${php.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
 
+  // Same convention as dashboardPhpTotal, but for an arbitrary amount rather
+  // than always the booking's full client total — used by the Invoice
+  // Update screen's Total/Paid/Balance cards so they always show a peso
+  // figure (using the booking's own ACR rate) regardless of what currency
+  // the invoice itself is in.
+  function phpOrNative(amount: number, currency: string, acr?: string): string {
+    const cur = currency || 'PHP'
+    if (cur === 'PHP') return formatAmount(String(amount), 'PHP')
+    const rate = parseFloat(acr || '')
+    if (!rate || rate <= 0) return formatAmount(String(amount), cur)
+    const php = amount * rate
+    return `₱${php.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
+
   const [invoiceForm, setInvoiceForm] = useState({
     paymentMethod: '',
     paymentRecords: '',
@@ -5856,20 +5870,30 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
           <section className="invoice-edit-summary">
             <article>
               <span>Total invoice</span>
-              <strong>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+              <strong>{phpOrNative(totalPrice, selectedBooking.currency || 'PHP', selectedBooking.acr)}</strong>
+              {logPaymentInPhp && (
+                <small style={{ display: 'block', marginTop: 4, fontWeight: 700, color: 'var(--muted)' }}>
+                  {convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}
+                </small>
+              )}
             </article>
             <article>
               <span>Amount paid</span>
-              <strong>{convertAndFormat(parseAmount(invoiceForm.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+              <strong>{phpOrNative(parseAmount(invoiceForm.invoiceAmountPaid), selectedBooking.currency || 'PHP', selectedBooking.acr)}</strong>
               {logPaymentInPhp && (
                 <small style={{ display: 'block', marginTop: 4, fontWeight: 700, color: 'var(--muted)' }}>
-                  ≈ {acrPhpTotal(parseAmount(invoiceForm.invoiceAmountPaid), selectedBooking.currency, selectedBooking.acr)?.replace('PHP ', '₱')} paid
+                  {convertAndFormat(parseAmount(invoiceForm.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}
                 </small>
               )}
             </article>
             <article>
               <span>Balance</span>
-              <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+              <strong>{phpOrNative(balance, selectedBooking.currency || 'PHP', selectedBooking.acr)}</strong>
+              {logPaymentInPhp && (
+                <small style={{ display: 'block', marginTop: 4, fontWeight: 700, color: 'var(--muted)' }}>
+                  {convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}
+                </small>
+              )}
             </article>
           </section>
 
@@ -6137,20 +6161,30 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
                       <section className="invoice-edit-summary">
                         <article>
                           <span>Total invoice</span>
-                          <strong>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+                          <strong>{phpOrNative(totalPrice, selectedBooking.currency || 'PHP', selectedBooking.acr)}</strong>
+                          {logPaymentInPhp && (
+                            <small style={{ display: 'block', marginTop: 4, fontWeight: 700, color: 'var(--muted)' }}>
+                              {convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}
+                            </small>
+                          )}
                         </article>
                         <article>
                           <span>Amount paid</span>
-                          <strong>{convertAndFormat(amountPaid, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+                          <strong>{phpOrNative(amountPaid, selectedBooking.currency || 'PHP', selectedBooking.acr)}</strong>
                           {logPaymentInPhp && (
                             <small style={{ display: 'block', marginTop: 4, fontWeight: 700, color: 'var(--muted)' }}>
-                              ≈ {acrPhpTotal(amountPaid, selectedBooking.currency, selectedBooking.acr)?.replace('PHP ', '₱')} paid
+                              {convertAndFormat(amountPaid, selectedBooking.currency || 'PHP', exchangeRates)}
                             </small>
                           )}
                         </article>
                         <article>
                           <span>Balance</span>
-                          <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+                          <strong>{phpOrNative(balance, selectedBooking.currency || 'PHP', selectedBooking.acr)}</strong>
+                          {logPaymentInPhp && (
+                            <small style={{ display: 'block', marginTop: 4, fontWeight: 700, color: 'var(--muted)' }}>
+                              {convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}
+                            </small>
+                          )}
                         </article>
                       </section>
 

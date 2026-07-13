@@ -837,7 +837,7 @@ export async function syncTab(
   const formatRequests: object[] = []
 
   // ── 3a. Full rewrite — clear the whole data block, write it back fresh,
-  // sorted oldest → newest, with a totals row at the end. ───────────────────
+  // sorted newest → oldest, with a totals row at the end. ───────────────────
   if (opts.fullRewrite) {
     const sorted = [...bookings].sort((a, b) => {
       const da = new Date(a.createdAt || 0).getTime()
