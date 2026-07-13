@@ -6,17 +6,13 @@
 //    A booking that's deleted in the app is also removed from the sheet instantly
 //    (see deleteBookingFromSheets).
 //
-// 2. PERIODIC re-sync — every 10 minutes, ALL confirmed/flown bookings are sent
-//    in ONE batch POST (grouped by month tab server-side). A single request per
-//    re-sync cycle means zero concurrency, zero races, zero missing rows.
-//    This pass also SELF-HEALS: it carries `reconcile: true`, so the server
-//    removes any sheet row whose _id isn't in this complete booking list
-//    (e.g. a row deleted directly in the sheet gets re-added by the upsert
-//    logic, and a row for a booking that no longer exists in the app gets
-//    removed) and overwrites any row whose cells were hand-edited in the sheet.
+// 2. PERIODIC re-sync — moved OUT of the client and into api/cron-resync.ts,
+//    triggered on a schedule by an external scheduler (see CRON_SETUP.md).
+//    It's no longer this module's job to run it — see the big comment further
+//    down where `startPeriodicReSync` used to live for why.
 
 import type { BookingRecord, BookingStatus } from './types'
-import { getBookingClientTotal, getBookingBreakdownNettTotal } from './utils'
+import { getBookingClientTotal, getBookingReportingNettTotal, getBookingLltpAmount, bookingHasLltpInput, getBreakdownTotal, getBookingTaCommInfo } from './utils'
 
 const TRIGGER_STATUSES = new Set<BookingStatus>(['Confirmed', 'Flown'])
 const SYNC_SECRET = import.meta.env.VITE_SHEETS_SYNC_SECRET as string | undefined
@@ -36,26 +32,76 @@ export function shouldSyncToSheets(status: BookingStatus): boolean {
 // booking could silently fail to reach the sheet with nothing in the app
 // telling the user. App.tsx registers a handler here (e.g. wired to the
 // existing `dataError`-style banner) so real problems become visible.
-type SyncIssueHandler = (message: string) => void
+//
+// The handler used to be a single `(message: string) => void` — each new
+// issue overwrote the last one in the UI, so if two different things failed
+// back to back, only the second was ever seen. It's now called with the full
+// rolling list (newest first, capped) so nothing silently disappears from view.
+export type SyncIssue = { message: string; at: number; key?: string }
+type SyncIssueHandler = (issues: SyncIssue[]) => void
 let _onSyncIssue: SyncIssueHandler | null = null
+const MAX_TRACKED_ISSUES = 5
+let _recentIssues: SyncIssue[] = []
 
 export function setSheetsSyncIssueHandler(handler: SyncIssueHandler | null): void {
   _onSyncIssue = handler
+  if (handler) handler(_recentIssues)
 }
 
-function reportIssue(message: string): void {
+// `key` identifies the *kind* of failure (e.g. "delete-429"), not the exact
+// text. Repeated hits of the same kind (very common with something like a
+// Sheets 429 that keeps firing on every delete while the quota is exhausted)
+// just refresh the existing banner's message/timestamp instead of stacking a
+// new one, so the list can't fill the screen with near-duplicates. Issues
+// with no key (e.g. one-off warnings from the server) always get their own
+// entry, same as before.
+function reportIssue(message: string, key?: string): void {
   console.warn(`[sheetsSync] ${message}`)
-  _onSyncIssue?.(message)
+  const now = Date.now()
+  if (key) {
+    const existingIdx = _recentIssues.findIndex((issue) => issue.key === key)
+    if (existingIdx !== -1) {
+      const updated = { message, at: now, key }
+      _recentIssues = [updated, ..._recentIssues.filter((_, i) => i !== existingIdx)]
+      _onSyncIssue?.(_recentIssues)
+      return
+    }
+  }
+  _recentIssues = [{ message, at: now, key }, ..._recentIssues].slice(0, MAX_TRACKED_ISSUES)
+  _onSyncIssue?.(_recentIssues)
+}
+
+// ── Last successful sync ──────────────────────────────────────────────────────
+// Lets the UI show "Last synced 2 min ago" so a stuck/silent sync (e.g. every
+// attempt hitting the same error) is visible even if no error banner is up.
+type SyncSuccessHandler = (at: number) => void
+let _onSyncSuccess: SyncSuccessHandler | null = null
+
+export function setSheetsSyncSuccessHandler(handler: SyncSuccessHandler | null): void {
+  _onSyncSuccess = handler
+}
+
+function reportSuccess(): void {
+  _onSyncSuccess?.(Date.now())
 }
 
 // ── Shared payload builder ────────────────────────────────────────────────────
 
 function toPayload(booking: BookingRecord) {
   const clientTotal    = getBookingClientTotal(booking)
-  const nettTotal      = getBookingBreakdownNettTotal(booking)
-  const estProfit      = clientTotal - nettTotal
+  // The Invoice document's own total is Breakdown grand total + addons —
+  // that's correct for what the client is billed, but addons have nothing
+  // to do with the sheet's Gross/NETT/LLTP reporting (which is meant to
+  // tie out: Gross = NETT + LLTP, both breakdown-only). So the sheet's
+  // Gross column uses the Breakdown total on its own, never the addon-
+  // inflated invoice total — addons only ever show on the printed Invoice.
+  const breakdownGrossTotal = getBreakdownTotal(booking)
+  const nettTotal      = getBookingReportingNettTotal(booking)
+  const lltpAmount     = getBookingLltpAmount(booking)
+  const hasLltp        = bookingHasLltpInput(booking)
   const amountPaid     = parseFloat(booking.invoiceAmountPaid || '0')
   const invoiceBalance = Math.max(clientTotal - amountPaid, 0)
+  const taComm          = getBookingTaCommInfo(booking)
 
   return {
     bookingId:         booking.id,
@@ -65,12 +111,17 @@ function toPayload(booking: BookingRecord) {
     travelEnd:         booking.travelEnd,
     packageName:       booking.packageName,
     sellingPrice:      String(clientTotal),
+    breakdownGrossTotal: String(breakdownGrossTotal),
     nettCost:          String(nettTotal),
-    estProfit:         String(estProfit),
+    lltpAmount:        String(lltpAmount),
+    hasLltp:           String(hasLltp),
     invoiceAmountPaid: booking.invoiceAmountPaid,
     invoiceBalance:    String(invoiceBalance),
     status:            booking.status,
     currency:          booking.currency || 'PHP',
+    acr:               booking.acr || '',
+    taCommAmount:      String(taComm.amount),
+    taCommAgent:       taComm.agent,
   }
 }
 
@@ -139,6 +190,7 @@ function _scheduleStartupFlush() {
 
 async function _postWithRetry(body: object, isBatch: boolean): Promise<void> {
   let lastError = ''
+  let sawRateLimit = false
   const maxAttempts = 3
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -150,19 +202,31 @@ async function _postWithRetry(body: object, isBatch: boolean): Promise<void> {
       })
 
       if (res.status === 429) {
-        const wait = attempt * 15_000
-        console.warn(`[sheetsSync] Rate limited, retrying in ${wait / 1000}s…`)
-        await new Promise(r => setTimeout(r, wait))
-        continue
+        sawRateLimit = true
+        if (attempt < maxAttempts) {
+          const wait = attempt * 15_000
+          console.warn(`[sheetsSync] Rate limited, retrying in ${wait / 1000}s…`)
+          await new Promise(r => setTimeout(r, wait))
+          continue
+        }
+        // Last attempt also hit 429 — fall through to the reporting below
+        // instead of silently dropping this booking. This used to just
+        // exit the loop here with `lastError` still empty (that's only set
+        // in the `catch` block for network failures), so a booking that
+        // got rate-limited on every single retry vanished with no warning
+        // and no further retry — a real, hard-to-notice source of "some
+        // bookings never made it to the sheet."
+        break
       }
 
       if (!res.ok) {
         const text = await res.text()
-        reportIssue(`A booking failed to sync to Google Sheets (server said: ${text || res.status}).`)
+        reportIssue(`A booking failed to sync to Google Sheets (server said: ${text || res.status}).`, 'push-failed')
       } else {
         const data = await res.json() as { tabs?: string[]; warnings?: string[] }
         if (isBatch) console.log('[sheetsSync] Startup batch complete. Tabs:', data.tabs?.join(', ') ?? '—')
-        data.warnings?.forEach(reportIssue)
+        data.warnings?.forEach((w) => reportIssue(w))
+        reportSuccess()
       }
       return
     } catch (err) {
@@ -170,7 +234,11 @@ async function _postWithRetry(body: object, isBatch: boolean): Promise<void> {
       if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 5_000 * attempt))
     }
   }
-  if (lastError) reportIssue(`Couldn't reach Google Sheets after 3 tries (${lastError}). It will retry automatically on the next change or the 10-minute re-sync.`)
+  if (sawRateLimit) {
+    reportIssue(`A booking couldn't sync to Google Sheets — still rate-limited after 3 tries. It will retry automatically on the next change or the next scheduled re-sync.`, 'push-rate-limited')
+  } else if (lastError) {
+    reportIssue(`Couldn't reach Google Sheets after 3 tries (${lastError}). It will retry automatically on the next change or the next scheduled re-sync.`, 'push-network-fail')
+  }
 }
 
 export function syncBookingToSheets(booking: BookingRecord): void {
@@ -206,6 +274,7 @@ export function deleteBookingFromSheets(booking: Pick<BookingRecord, 'id' | 'cre
 
   syncQueue = syncQueue.then(async () => {
     let lastError = ''
+    let sawRateLimit = false
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const res = await fetch('/api/sheets-append', {
@@ -214,11 +283,21 @@ export function deleteBookingFromSheets(booking: Pick<BookingRecord, 'id' | 'cre
           body: JSON.stringify(body),
         })
         if (res.status === 429) {
-          await new Promise(r => setTimeout(r, attempt * 15_000))
-          continue
+          sawRateLimit = true
+          if (attempt < 3) {
+            await new Promise(r => setTimeout(r, attempt * 15_000))
+            continue
+          }
+          // Exhausted every attempt still rate-limited — same bug as the
+          // push path: this used to just fall out of the loop here with
+          // `lastError` still empty, so it silently gave up with no
+          // warning and no further retry. The periodic re-sync is a real
+          // fallback for this (see comment above), but the user should
+          // still be told a delete didn't go through instantly.
+          break
         }
         if (!res.ok) {
-          reportIssue(`Deleting a booking from Google Sheets failed (server said: ${await res.text()}). The next 10-minute re-sync will clean it up.`)
+          reportIssue(`Deleting a booking from Google Sheets failed (server said: ${await res.text()}). The next scheduled re-sync (every 20 minutes) will clean it up.`, 'delete-failed')
         } else {
           const data = await res.json() as { deleted?: boolean }
           console.log(`[sheetsSync] Delete ${data.deleted ? 'removed row for' : 'found no row for'} ${booking.id}`)
@@ -229,60 +308,30 @@ export function deleteBookingFromSheets(booking: Pick<BookingRecord, 'id' | 'cre
         if (attempt < 3) await new Promise(r => setTimeout(r, 5_000 * attempt))
       }
     }
-    if (lastError) reportIssue(`Couldn't reach Google Sheets to delete a row after 3 tries (${lastError}). The next 10-minute re-sync will clean it up.`)
+    if (sawRateLimit) {
+      reportIssue(`Deleting a booking from Google Sheets failed — still rate-limited after 3 tries. The next scheduled re-sync (every 20 minutes) will clean it up.`, 'delete-rate-limited')
+    } else if (lastError) {
+      reportIssue(`Couldn't reach Google Sheets to delete a row after 3 tries (${lastError}). The next scheduled re-sync (every 20 minutes) will clean it up.`, 'delete-network-fail')
+    }
     await new Promise(r => setTimeout(r, 300))
   })
 }
 
-// ── 2. Periodic re-sync — single batch request ────────────────────────────────
-// Sends ALL confirmed/flown bookings in one POST so the server can process each
-// month tab atomically with no concurrent invocations racing each other.
-
-export function startPeriodicReSync(
-  getBookings: () => BookingRecord[],
-): () => void {
-  const INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
-
-  async function runReSync() {
-    const eligible = getBookings().filter(b => shouldSyncToSheets(b.status))
-    if (eligible.length === 0) return
-
-    console.log(`[sheetsSync] Periodic re-sync — sending ${eligible.length} bookings in one batch`)
-
-    let lastError = ''
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const res = await fetch('/api/sheets-append', {
-          method: 'POST',
-          headers: syncHeaders(),
-          body: JSON.stringify({ bookings: eligible.map(toPayload), reconcile: true }),
-        })
-
-        if (res.status === 429) {
-          const wait = attempt * 30_000
-          console.warn(`[sheetsSync] Re-sync rate limited, retrying in ${wait / 1000}s…`)
-          await new Promise(r => setTimeout(r, wait))
-          continue
-        }
-
-        if (!res.ok) {
-          const body = await res.text()
-          reportIssue(`The 10-minute Google Sheets re-sync failed (server said: ${body}). It will try again next cycle.`)
-        } else {
-          const data = await res.json() as { tabs?: string[]; healed?: number; warnings?: string[] }
-          console.log('[sheetsSync] Re-sync complete. Tabs updated:', data.tabs?.join(', ') ?? '—')
-          if (data.healed) console.log(`[sheetsSync] Self-heal: removed ${data.healed} orphan row(s) (deleted in sheet or app)`)
-          data.warnings?.forEach(reportIssue)
-        }
-        return
-      } catch (err) {
-        lastError = err instanceof Error ? err.message : String(err)
-        if (attempt < 3) await new Promise(r => setTimeout(r, 10_000 * attempt))
-      }
-    }
-    if (lastError) reportIssue(`The 10-minute Google Sheets re-sync couldn't reach the server after 3 tries (${lastError}). It will try again next cycle.`)
-  }
-
-  const id = window.setInterval(() => { void runReSync() }, INTERVAL_MS)
-  return () => window.clearInterval(id)
-}
+// ── 2. Periodic re-sync — REMOVED from the client ─────────────────────────────
+// This used to be a `window.setInterval` here that ran a full batch re-sync
+// every 10 minutes FROM EVERY OPEN BROWSER TAB independently. Two real
+// problems came from that:
+//   1. Every open browser ran its own full resync with no coordination —
+//      4 people with the app open meant 4x the Google Sheets API calls for
+//      the exact same data, multiplying rate-limit risk for no benefit.
+//   2. If nobody had the app open, self-heal and orphan-row cleanup never
+//      ran at all, no matter how long the app sat closed.
+// The periodic resync (with self-heal/reconcile) now lives entirely in
+// api/cron-resync.ts, triggered on a fixed schedule by an external scheduler
+// (see CRON_SETUP.md) — exactly ONE execution, regardless of how many
+// browsers are open or whether any are open at all. `startPeriodicReSync`
+// and its `window.setInterval` are gone; nothing in the client needs to call
+// it anymore. The app instead subscribes to a small Firestore status
+// document that the cron job writes after each run — see the
+// `_syncMeta/syncStatus` listener in App.tsx — to show "last synced" and any
+// warnings in the UI, the same as before.

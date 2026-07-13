@@ -1,14 +1,18 @@
-import { syncBookingToSheets, deleteBookingFromSheets, startPeriodicReSync, resetSyncStartupWindow, setSheetsSyncIssueHandler } from './sheetsSync'
+import { syncBookingToSheets, deleteBookingFromSheets, shouldSyncToSheets, resetSyncStartupWindow, setSheetsSyncIssueHandler, setSheetsSyncSuccessHandler, type SyncIssue } from './sheetsSync'
 import { extractBookingFieldsFromText, GeminiExtractError, type ExtractedBookingFields } from './geminiExtract'
 import { useEffect, useRef, useState } from 'react'
 import {
   createUserWithEmailAndPassword,
   type AuthError,
+  deleteUser,
+  EmailAuthProvider,
   onAuthStateChanged,
+  reauthenticateWithCredential,
   sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut,
+  updatePassword,
   updateProfile,
 } from 'firebase/auth'
 import {
@@ -23,6 +27,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   writeBatch,
 } from 'firebase/firestore'
 import {
@@ -31,6 +36,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   ClipboardList,
   Clock3,
   FileText,
@@ -41,7 +47,6 @@ import {
   Mail,
   MapPin,
   MessageSquare,
-  Moon,
   Plane,
   Plus,
   Printer,
@@ -50,7 +55,6 @@ import {
   Search,
   Send,
   Sparkles,
-  Sun,
   Bot,
   UserRound,
   X,
@@ -67,17 +71,22 @@ import {
   Receipt,
   ShoppingCart,
   Ticket,
+  Wallet,
+  BadgeCheck,
+  Pencil,
+  Settings,
 } from 'lucide-react'
 import { auth, db } from './firebase'
 import agencySeal from './assets/brand/agency-seal.png'
 import logo from './assets/brand/logo.png'
 import travelHero from './assets/brand/travel-hero.jpg'
 import travelBanner from './assets/brand/travel-banner.png'
+import creditCardQr from './assets/brand/credit-card-qr.jpeg'
 import './App.css'
 import type {
   Screen, BookingStatus, BookingListFilter,
   BookingFormData, BookingRecord, BookingLineItem,
-  InvoiceLineItem, BreakdownLineItem, DtrEntry,
+  InvoiceLineItem, BreakdownLineItem, BreakdownAlternative, DtrEntry,
   PaxBreakdown, FirebaseUser, POLineItem,
 } from './types'
 import {
@@ -85,19 +94,19 @@ import {
   bookingListFilters, emptyBookingForm, sampleBookings,
 } from './constants'
 import {
-  getDisplayName, getPasswordStrength,
+  getDisplayName, getPasswordStrength, formatRelativeTime,
   normalizeBooking, getStoredBookings,
   getUserBookingsCollectionPath, getBookingOwnerPath,
   parseAmount, parseQuantity, formatAmount, getCurrencySymbol, computePaymentStatus, formatProjectDate, toDateInputValue,
   readPaxBreakdown, sumPaxBreakdown, formatPaxBreakdownLabel,
-  readGroupPax, readExcludedPax, getItemPaxBreakdown,
+  readGroupPax, readExcludedPax, readPaxOverride, getItemPaxBreakdown, readAlternatives,
   createLineItemId, getLines, generateQuotationNo,
   readInvoiceItems, readInvoiceAddons, readBreakdownItems, sortBreakdownItemsByRate,
   getBreakdownColPax, getBreakdownTotal, getBreakdownPaxTotal, getBreakdownItemTotal, getItemPaxCounts,
   buildCombinedTierLine, buildPackageTierLines, getBreakdownTierSubtotals, PAX_CATEGORY_KEYS,
   mapInvoiceItemsToBookingLines, mapBreakdownItemsToBookingLines,
   getBookingLineItems, sumLineItems,
-  getBookingClientTotal, getBookingBreakdownNettTotal,
+  getBookingClientTotal, getBookingBreakdownNettTotal, getBookingLltpAmount, getBookingLltpRates,
   timeStrToMinutes, getDtrEntryMinutes, formatMinutesAsHm,
   formatTimeForDisplay, getCurrentTimeStr, getTodayDateStr,
   getIsoWeekKey, getWeekRangeLabel,
@@ -109,6 +118,105 @@ function App() {
   const [screen, setScreen] = useState<Screen>('splash')
   const [isChatOpen, setIsChatOpen] = useState(false)
   const isChatOpenRef = useRef(false)
+
+  // ── Account settings (nav dropdown: change name, change password, log out, delete account) ──
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false)
+  const accountMenuTriggerRef = useRef<HTMLButtonElement>(null)
+  const [accountModalView, setAccountModalView] = useState<'name' | 'password' | 'delete' | null>(null)
+  const [accountNameInput, setAccountNameInput] = useState('')
+  const [accountCurrentPassword, setAccountCurrentPassword] = useState('')
+  const [accountNewPassword, setAccountNewPassword] = useState('')
+  const [accountConfirmPassword, setAccountConfirmPassword] = useState('')
+  const [accountDeletePassword, setAccountDeletePassword] = useState('')
+  const [accountDeleteConfirmText, setAccountDeleteConfirmText] = useState('')
+  const [accountActionError, setAccountActionError] = useState('')
+  const [accountActionLoading, setAccountActionLoading] = useState(false)
+
+  function openAccountModal(view: 'name' | 'password' | 'delete') {
+    setAccountMenuOpen(false)
+    setAccountActionError('')
+    setAccountNameInput(authUser?.displayName || '')
+    setAccountCurrentPassword('')
+    setAccountNewPassword('')
+    setAccountConfirmPassword('')
+    setAccountDeletePassword('')
+    setAccountDeleteConfirmText('')
+    setAccountModalView(view)
+  }
+
+  function closeAccountModal() {
+    if (accountActionLoading) return
+    setAccountModalView(null)
+    setAccountActionError('')
+  }
+
+  async function handleSaveAccountName() {
+    if (!auth.currentUser) return
+    const trimmed = accountNameInput.trim()
+    if (!trimmed) { setAccountActionError('Enter a name.'); return }
+    setAccountActionLoading(true)
+    setAccountActionError('')
+    try {
+      await updateProfile(auth.currentUser, { displayName: trimmed })
+      setAccountModalView(null)
+    } catch (err) {
+      setAccountActionError(err instanceof Error ? err.message : 'Could not update name.')
+    } finally {
+      setAccountActionLoading(false)
+    }
+  }
+
+  async function handleChangeAccountPassword() {
+    if (!auth.currentUser?.email) return
+    if (!accountCurrentPassword) { setAccountActionError('Enter your current password.'); return }
+    if (accountNewPassword.length < 6) { setAccountActionError('New password must be at least 6 characters.'); return }
+    if (accountNewPassword !== accountConfirmPassword) { setAccountActionError('New passwords do not match.'); return }
+    setAccountActionLoading(true)
+    setAccountActionError('')
+    try {
+      const credential = EmailAuthProvider.credential(auth.currentUser.email, accountCurrentPassword)
+      await reauthenticateWithCredential(auth.currentUser, credential)
+      await updatePassword(auth.currentUser, accountNewPassword)
+      setAccountModalView(null)
+    } catch (err) {
+      const code = (err as AuthError)?.code
+      setAccountActionError(
+        code === 'auth/invalid-credential' || code === 'auth/wrong-password'
+          ? 'Current password is incorrect.'
+          : err instanceof Error ? err.message : 'Could not change password.'
+      )
+    } finally {
+      setAccountActionLoading(false)
+    }
+  }
+
+  async function handleDeleteAccount() {
+    if (!auth.currentUser?.email) return
+    if (accountDeleteConfirmText.trim().toUpperCase() !== 'DELETE') {
+      setAccountActionError('Type DELETE to confirm.')
+      return
+    }
+    if (!accountDeletePassword) { setAccountActionError('Enter your password to confirm.'); return }
+    setAccountActionLoading(true)
+    setAccountActionError('')
+    try {
+      const credential = EmailAuthProvider.credential(auth.currentUser.email, accountDeletePassword)
+      await reauthenticateWithCredential(auth.currentUser, credential)
+      await deleteUser(auth.currentUser)
+      setAccountModalView(null)
+      // onAuthStateChanged will pick up the signed-out state and route back to the login screen.
+    } catch (err) {
+      const code = (err as AuthError)?.code
+      setAccountActionError(
+        code === 'auth/invalid-credential' || code === 'auth/wrong-password'
+          ? 'Password is incorrect.'
+          : err instanceof Error ? err.message : 'Could not delete account.'
+      )
+    } finally {
+      setAccountActionLoading(false)
+    }
+  }
+
   const [chatMessages, setChatMessages] = useState<Array<{
     id: string
     text: string
@@ -153,7 +261,7 @@ function App() {
   const [dtrNewRecordName, setDtrNewRecordName] = useState('')
   const [dtrNewRecordMonth, setDtrNewRecordMonth] = useState(() => getTodayDateStr().slice(0, 7))
   const [dtrNewRecordError, setDtrNewRecordError] = useState('')
-  const [dtrDeleteRecordTarget, setDtrDeleteRecordTarget] = useState<{ employeeName: string; month: string } | null>(null)
+  const [dtrDeleteRecordTarget, setDtrDeleteRecordTarget] = useState<{ employeeName: string } | null>(null)
   const [dtrDeletingRecord, setDtrDeletingRecord] = useState(false)
   const [dtrForm, setDtrForm] = useState<Omit<DtrEntry, 'id' | 'createdAt' | 'updatedAt' | 'loggedBy'>>({
     employeeName: '',
@@ -204,6 +312,7 @@ function App() {
     window.addEventListener('mouseup', onMouseUp)
   }
   const [invoiceEditorReturnScreen, setInvoiceEditorReturnScreen] = useState<Screen>('booking-detail')
+  const [dataFormReturnScreen, setDataFormReturnScreen] = useState<Screen>('booking-detail')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('vmloper.dev@gmail.com')
   const [password, setPassword] = useState('')
@@ -216,24 +325,20 @@ function App() {
   const [dataError, setDataError] = useState('')
   // Surfaces problems reported by sheetsSync.ts (failed/skipped syncs to
   // Google Sheets) that used to only be visible as console.warn output.
-  const [sheetsSyncWarning, setSheetsSyncWarning] = useState('')
+  const [sheetsSyncIssues, setSheetsSyncIssues] = useState<SyncIssue[]>([])
+  // Keys the user has explicitly dismissed. sheetsSync.ts keeps updating its
+  // own recurring-issue list in the background (that's how the same failure
+  // firing repeatedly collapses into one banner instead of many) — this ref
+  // is what makes "dismiss" actually stick instead of the next update to
+  // that same issue silently bringing it back.
+  const dismissedSyncIssueKeysRef = useRef<Set<string>>(new Set())
+  const [sheetsLastSyncedAt, setSheetsLastSyncedAt] = useState<number | null>(null)
   const [dataMessage, setDataMessage] = useState('')
   const [aiPasteOpen, setAiPasteOpen] = useState(false)
   const [aiPasteText, setAiPasteText] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
   const [aiFilledFields, setAiFilledFields] = useState<string[]>([])
-  const [isDark, setIsDark] = useState(() => {
-    const stored = window.localStorage.getItem('llops-theme')
-    if (stored) return stored === 'dark'
-    return window.matchMedia('(prefers-color-scheme: dark)').matches
-  })
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light')
-    window.localStorage.setItem('llops-theme', isDark ? 'dark' : 'light')
-  }, [isDark])
-
   const [isPdfExporting, setIsPdfExporting] = useState(false)
 
   const [isJpgExporting, setIsJpgExporting] = useState(false)
@@ -243,7 +348,7 @@ function App() {
   // Holds the exact booking object built at save-time so templates always
   // reflect the latest saved data regardless of Firestore snapshot timing.
   const lastSavedBookingRef = useRef<BookingRecord | null>(null)
-  const bookingsRef = useRef<BookingRecord[]>([])
+  const previousSyncStatusRef = useRef<Map<string, BookingStatus>>(new Map())
 
   // ── Currency & exchange rate ──────────────────────────────────────────────
   const SUPPORTED_CURRENCIES = [
@@ -287,6 +392,20 @@ function App() {
     const php = amount * rate
     return `PHP ${php.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
+  // Dashboard project cards always show a peso figure so totals are
+  // comparable at a glance, regardless of each booking's own currency.
+  // Foreign-currency bookings are converted using their ACR rate; if no
+  // rate has been entered yet, we fall back to the native-currency amount
+  // (with its own symbol) rather than showing a misleading peso number.
+  function dashboardPhpTotal(booking: typeof bookings[number]): string {
+    const amount = getBookingClientTotal(booking)
+    const currency = booking.currency || 'PHP'
+    if (currency === 'PHP') return formatAmount(String(amount), 'PHP')
+    const rate = parseFloat(booking.acr || '')
+    if (!rate || rate <= 0) return formatAmount(String(amount), currency)
+    const php = amount * rate
+    return `₱${php.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
 
   const [invoiceForm, setInvoiceForm] = useState({
     paymentMethod: '',
@@ -305,16 +424,18 @@ function App() {
   })
   const [isFullyPaidModalOpen, setIsFullyPaidModalOpen] = useState(false)
   const [fullyPaidDateInput, setFullyPaidDateInput] = useState(toDateInputValue())
+  // Lets the user update payment details right from the invoice document
+  // (invoice-preview) instead of navigating away to the invoice-editor screen.
+  const [isPaymentUpdateModalOpen, setIsPaymentUpdateModalOpen] = useState(false)
   const [activeBookingFilter, setActiveBookingFilter] = useState<BookingListFilter>('All')
   const [activeYear, setActiveYear] = useState(() => new Date().getFullYear())
-  const [expandedMonth, setExpandedMonth] = useState<string | null>(() => {
-    const now = new Date()
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-  })
+  const [monthModalKey, setMonthModalKey] = useState<string | null>(null)
+  const [monthModalSearch, setMonthModalSearch] = useState('')
   const [selectedBookingId, setSelectedBookingId] = useState('')
   const [editingBookingId, setEditingBookingId] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const [docsSearchTerm, setDocsSearchTerm] = useState('')
+  const [docsTypeFilter, setDocsTypeFilter] = useState<'All' | 'Breakdown' | 'Quotation' | 'Invoice' | 'Purchase Order' | 'Service Voucher'>('All')
   const [activeDocTab, setActiveDocTab] = useState<'quotation' | 'breakdown' | 'invoice' | 'purchase-order' | 'voucher' | null>(null)
   // Live Preview: while filling the Data Gathering form, split the screen
   // and render the real document markup — driven by the live form state —
@@ -353,6 +474,19 @@ function App() {
   ]
   const [breakdownOptions, setBreakdownOptions] = useState(defaultBreakdownOptions)
   const [openBreakdownDropdownIndex, setOpenBreakdownDropdownIndex] = useState(-1)
+  // Which Pax-Tier Pricing rows currently have their "Alternatives" panel
+  // expanded — keyed by row id (stable across reorders/re-renders, unlike
+  // the array index).
+  const [expandedAltRowIds, setExpandedAltRowIds] = useState<Set<string>>(new Set())
+  // Pax-Tier Pricing rows collapsed down to just their summary line —
+  // starts empty (everything expanded, same as before this existed) so
+  // nothing changes until someone actually collapses a row.
+  const [collapsedPaxRowIds, setCollapsedPaxRowIds] = useState<Set<string>>(new Set())
+  // Pax-Tier Pricing rows where the "Supplier details (for Purchase Order)"
+  // block has been manually revealed — keyed by row id. Starts empty
+  // (block hidden by default; only shows once someone opts in, since most
+  // rows don't need a Purchase Order).
+  const [shownSupplierRowIds, setShownSupplierRowIds] = useState<Set<string>>(new Set())
   const breakdownDropdownTriggerRefs = useRef<Record<number, HTMLButtonElement | null>>({})
   const [customBreakdownRowIndex, setCustomBreakdownRowIndex] = useState(-1)
   const [customBreakdownDraft, setCustomBreakdownDraft] = useState('')
@@ -408,24 +542,39 @@ function App() {
         }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         console.log('[DEBUG snapshot]', firestoreBookings.map(b => ({ id: b.id, ownerId: b.ownerId, packageName: b.packageName })))
         setBookings(firestoreBookings)
-        bookingsRef.current = firestoreBookings
         setDataError('')
 
         // Auto-sync: for every doc added or modified in this snapshot,
         // if its status is Confirmed or Flown push it to Google Sheets silently.
-        // For removed docs (deleted in the app, by this user or any teammate),
-        // remove the matching row from the sheet right away.
+        // If a previously-eligible booking's status just changed AWAY from
+        // Confirmed/Flown (e.g. downgraded back to Invoice or Quotation),
+        // remove its row instantly instead of leaving it for the next
+        // scheduled resync (which still catches it as a fallback within 20
+        // minutes if this instant call fails or nobody had the app open).
+        // For removed docs (deleted in the app, by this user or any
+        // teammate), remove the matching row from the sheet right away.
         snapshot.docChanges().forEach((change) => {
           if (change.type === 'added' || change.type === 'modified') {
             const changeData = change.doc.data() as BookingRecord
             const changeOwnerId = changeData.ownerId || change.doc.ref.parent.parent?.id
             const changeBooking = normalizeBooking({ ...changeData, id: change.doc.id, ownerId: changeOwnerId })
-            void syncBookingToSheets(changeBooking)
+
+            const previousStatus = previousSyncStatusRef.current.get(changeBooking.id)
+            const wasEligible = previousStatus ? shouldSyncToSheets(previousStatus) : false
+            const isEligible = shouldSyncToSheets(changeBooking.status)
+
+            if (change.type === 'modified' && wasEligible && !isEligible) {
+              void deleteBookingFromSheets({ id: changeBooking.id, createdAt: changeBooking.createdAt })
+            } else {
+              void syncBookingToSheets(changeBooking)
+            }
+            previousSyncStatusRef.current.set(changeBooking.id, changeBooking.status)
           } else if (change.type === 'removed') {
             // Firestore still hands us the doc's last-known data on removal,
             // which is all deleteBookingFromSheets needs (id + createdAt).
             const changeData = change.doc.data() as BookingRecord
             void deleteBookingFromSheets({ id: change.doc.id, createdAt: changeData.createdAt })
+            previousSyncStatusRef.current.delete(change.doc.id)
           }
         })
       },
@@ -438,19 +587,59 @@ function App() {
     )
   }, [authUser])
 
-  // ── Periodic re-sync ────────────────────────────────────────────────────────
+  // ── Periodic re-sync status ──────────────────────────────────────────────────
+  // The actual periodic full resync no longer runs from the browser at all —
+  // it runs server-side on a fixed schedule (api/cron-resync.ts), exactly once,
+  // regardless of how many browsers have the app open (see sheetsSync.ts for
+  // the full story on why that changed). This effect just WATCHES the small
+  // status document that cron job writes after each run, so the "last synced"
+  // indicator and any warnings still show up here — they're just fed from the
+  // server's own run now instead of this browser doing the syncing itself.
   useEffect(() => {
     if (!authUser?.emailVerified) return
-    const stop = startPeriodicReSync(() => bookingsRef.current)
-    return stop
+    const statusRef = doc(db, '_syncMeta', 'syncStatus')
+    let lastSeenWarnings = ''
+    return onSnapshot(statusRef, (snap) => {
+      const data = snap.data() as { lastSyncAt?: string; warnings?: string; failedTabs?: string } | undefined
+      if (!data) return
+
+      if (data.lastSyncAt) {
+        const at = new Date(data.lastSyncAt).getTime()
+        if (!isNaN(at)) setSheetsLastSyncedAt((prev) => (prev === null ? at : Math.max(prev, at)))
+      }
+
+      // Only add a new banner entry when the warning text actually changed —
+      // otherwise every snapshot re-fire (even for an unrelated field update)
+      // would re-add the same message and spam the dismissible list.
+      const warningText = data.warnings || ''
+      if (warningText && warningText !== lastSeenWarnings) {
+        lastSeenWarnings = warningText
+        const at = data.lastSyncAt ? new Date(data.lastSyncAt).getTime() : Date.now()
+        const parts = warningText.split(' | ').filter(Boolean)
+        setSheetsSyncIssues((prev) => [
+          ...parts.map((message) => ({ message: `[Scheduled sync] ${message}`, at })),
+          ...prev,
+        ].slice(0, 5))
+      }
+    })
   }, [authUser])
 
   // Surface Google Sheets sync problems (failed pushes, skipped bookings with
   // no client name, etc.) as a dismissible banner instead of only a
   // console.warn nobody sees. Registered once for the life of the app.
+  // Keeps the last few issues (not just the latest) so one failure can't
+  // silently hide behind a different one, plus a "last synced" timestamp so a
+  // sync that's stuck failing the same way every cycle is visible even between
+  // error banners.
   useEffect(() => {
-    setSheetsSyncIssueHandler((message) => setSheetsSyncWarning(message))
-    return () => setSheetsSyncIssueHandler(null)
+    setSheetsSyncIssueHandler((issues) =>
+      setSheetsSyncIssues(issues.filter((issue) => !issue.key || !dismissedSyncIssueKeysRef.current.has(issue.key)))
+    )
+    setSheetsSyncSuccessHandler((at) => setSheetsLastSyncedAt((prev) => (prev === null ? at : Math.max(prev, at))))
+    return () => {
+      setSheetsSyncIssueHandler(null)
+      setSheetsSyncSuccessHandler(null)
+    }
   }, [])
 
   useEffect(() => {
@@ -492,13 +681,17 @@ function App() {
     })
   }, [authUser])
 
-  // Auto-flip bookings to "Flown" once their travel end date has passed
+  // Auto-flip bookings to "Flown" once their travel end date has passed —
+  // but only from Confirmed. A Quotation or Invoice that never got paid
+  // isn't a real trip that happened just because the date passed; it should
+  // stay exactly what it is (and keep needing a human to actually confirm
+  // it) rather than silently becoming "Flown".
   const bookingsFlownKey = bookings.map(b => b.id + b.status + b.travelEnd).join(',')
   useEffect(() => {
     if (!authUser || bookings.length === 0) return
     const today = toDateInputValue()
     const toFlown = bookings.filter(b =>
-      b.status !== 'Flown' &&
+      b.status === 'Confirmed' &&
       b.travelEnd &&
       b.travelEnd < today
     )
@@ -506,10 +699,21 @@ function App() {
     toFlown.forEach(b => {
       const updatedBooking = { ...b, status: 'Flown' as BookingStatus }
       setBookings(prev => prev.map(x => x.id === b.id ? updatedBooking : x))
-      void setDoc(doc(db, getBookingOwnerPath(b, authUser.uid), b.id), {
+      // BUG FIX: this used to be setDoc(..., { merge: true }). merge:true
+      // writes the doc whether or not it already exists — if a stale
+      // browser tab's local `bookings` state still remembered a booking
+      // that had since been deleted from Firestore, this line would
+      // silently resurrect it as a bare-bones "ghost" document containing
+      // only { status, updatedAt } and nothing else (no clientName, no
+      // itinerary — exactly the empty phantom bookings that kept showing
+      // up in Sheets sync warnings). updateDoc() only ever writes to a
+      // document that's already there; if it's gone, this throws instead
+      // of recreating it, so we catch and drop the error silently since
+      // there's genuinely nothing to update anymore.
+      void updateDoc(doc(db, getBookingOwnerPath(b, authUser.uid), b.id), {
         status: 'Flown',
         updatedAt: new Date().toISOString(),
-      }, { merge: true })
+      }).catch(() => {})
     })
   }, [bookingsFlownKey, authUser])
 
@@ -581,11 +785,12 @@ function App() {
     }
   }
 
-  // Opens an existing employee+month record in the detail editor (shows ALL months for that employee).
-  function openDtrRecord(employeeName: string, month: string) {
+  // Opens an existing employee record in the detail editor (shows ALL months for that employee).
+  function openDtrRecord(employeeName: string, startMonth?: string) {
     setDtrNameFilter(employeeName)
     setDtrMonthFilter('all')
     setDtrEditingId(null)
+    const month = startMonth || getTodayDateStr().slice(0, 7)
     setDtrForm({ employeeName, date: getTodayDateStr().slice(0, 7) === month ? getTodayDateStr() : `${month}-01`, amIn: '', amOut: '', pmIn: '', pmOut: '', notes: '' })
     setDtrError('')
     setDtrMessage('')
@@ -614,15 +819,15 @@ function App() {
     setDtrMessage(alreadyExists ? `Opened existing record for ${name}.` : `New record ready for ${name} — log the first day below.`)
   }
 
-  // Deletes every entry that makes up a whole employee+month record.
-  async function handleDeleteDtrRecord(employeeName: string, month: string) {
+  // Deletes every entry that makes up an employee's whole record (all months).
+  async function handleDeleteDtrRecord(employeeName: string) {
     setDtrDeletingRecord(true)
     try {
-      const targets = dtrEntries.filter((e) => e.employeeName === employeeName && e.date.startsWith(month))
+      const targets = dtrEntries.filter((e) => e.employeeName === employeeName)
       await Promise.all(targets.map((e) => deleteDoc(doc(db, dtrCollectionKey, e.id))))
-      setDtrMessage(`Deleted record for ${employeeName} (${month}).`)
+      setDtrMessage(`Deleted record for ${employeeName}.`)
       setDtrError('')
-      if (dtrView === 'detail' && dtrNameFilter === employeeName && dtrMonthFilter === month) {
+      if (dtrView === 'detail' && dtrNameFilter === employeeName) {
         setDtrView('records')
       }
     } catch {
@@ -1120,6 +1325,13 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
     try {
       setIsAuthLoading(true)
       await auth.currentUser.reload()
+      // reload() only updates the local user profile (what the UI reads).
+      // Firestore's security rules evaluate a separate, cached ID token that
+      // does NOT auto-update just because the profile changed — without this
+      // forced refresh, Firestore keeps rejecting requests with the old
+      // pre-verification token for up to an hour even though the app thinks
+      // you're verified.
+      await auth.currentUser.getIdToken(true)
       const refreshedUser = auth.currentUser
       setAuthUser(refreshedUser)
       if (refreshedUser?.emailVerified) {
@@ -1168,6 +1380,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
       setScreen('home')
       return
     }
+    setDataFormReturnScreen(screen)
     setEditingBookingId(selectedBooking.id)
     const normalized = normalizeBooking(selectedBooking)
     
@@ -1618,6 +1831,20 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
   function changeBreakdownItemField(index: number, field: keyof BreakdownLineItem, value: any) {
     let brkCurrent = getBreakdownItemsList()
     const item = brkCurrent[index]
+
+    // Only one "TA Comm" row is allowed per booking — its amount and the
+    // booking's Agent field (top of the Data Gathering form) are what sync
+    // to the Google Sheet's TA Comm / Agent columns, and a second row would
+    // make that sync ambiguous. Block picking it again rather than
+    // silently summing or overwriting.
+    if (field === 'description' && String(value).trim().toLowerCase() === 'ta comm') {
+      const alreadyExists = brkCurrent.some((row, i) => i !== index && (row.description || '').trim().toLowerCase() === 'ta comm')
+      if (alreadyExists) {
+        window.alert('Only one "TA Comm" item is allowed per booking. Edit the existing TA Comm row instead of adding another.')
+        return
+      }
+    }
+
     brkCurrent[index] = { ...item, [field]: value }
 
     if (field === 'vendor') {
@@ -1674,9 +1901,140 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
     }
   }
 
+  // ── Pax-Tier Pricing alternatives ─────────────────────────────────────────
+  // A row's OWN fields (vendor/price2Pax/etc.) are always the ones read by
+  // calculations and printed documents. "Alternatives" are other priced
+  // options kept alongside the row but never read directly — choosing one
+  // copies its values onto the row's own fields (archiving the previous
+  // values back into the alternatives list), so nothing elsewhere in the
+  // app needs to know alternatives exist at all.
+  function addBreakdownAlternative(index: number) {
+    const brkCurrent = getBreakdownItemsList()
+    const item = brkCurrent[index]
+    if (!item) return
+    const alts = readAlternatives(item)
+    const newAlt: BreakdownAlternative = { id: createLineItemId() }
+    brkCurrent[index] = { ...item, alternatives: JSON.stringify([...alts, newAlt]) }
+    saveBreakdownItemsList(brkCurrent)
+    if (item.id) setExpandedAltRowIds(prev => new Set(prev).add(item.id!))
+  }
+
+  function changeAlternativeField(index: number, altId: string, field: keyof BreakdownAlternative, value: string) {
+    const brkCurrent = getBreakdownItemsList()
+    const item = brkCurrent[index]
+    if (!item) return
+    const alts = readAlternatives(item).map(a => a.id === altId ? { ...a, [field]: value } : a)
+    brkCurrent[index] = { ...item, alternatives: JSON.stringify(alts) }
+    saveBreakdownItemsList(brkCurrent)
+  }
+
+  function removeBreakdownAlternative(index: number, altId: string) {
+    const brkCurrent = getBreakdownItemsList()
+    const item = brkCurrent[index]
+    if (!item) return
+    const alts = readAlternatives(item).filter(a => a.id !== altId)
+    brkCurrent[index] = { ...item, alternatives: JSON.stringify(alts) }
+    saveBreakdownItemsList(brkCurrent)
+  }
+
+  // Makes `altId` the active option for this row: its values are copied
+  // onto the row's own fields (what calculations/documents read), and the
+  // row's previous values are archived back into the alternatives list so
+  // nothing is lost and the swap can be reversed later.
+  function selectBreakdownAlternative(index: number, altId: string) {
+    let brkCurrent = getBreakdownItemsList()
+    const item = brkCurrent[index]
+    if (!item) return
+    const alts = readAlternatives(item)
+    const target = alts.find(a => a.id === altId)
+    if (!target) return
+
+    const archived: BreakdownAlternative = {
+      id: createLineItemId(),
+      label: item.vendor || 'Previous option',
+      vendor: item.vendor,
+      contactNumber: item.contactNumber,
+      paymentMethod: item.paymentMethod,
+      agent: item.agent,
+      details: item.details,
+      price2Pax: item.price2Pax,
+      price5Pax: item.price5Pax,
+      priceGroup: item.priceGroup,
+      priceInfant: item.priceInfant,
+    }
+    const remainingAlts = alts.filter(a => a.id !== altId)
+
+    const updatedItem: BreakdownLineItem = {
+      ...item,
+      vendor: target.vendor,
+      contactNumber: target.contactNumber,
+      paymentMethod: target.paymentMethod,
+      agent: target.agent,
+      details: target.details,
+      price2Pax: target.price2Pax,
+      price5Pax: target.price5Pax,
+      priceGroup: target.priceGroup,
+      priceInfant: target.priceInfant,
+      alternatives: JSON.stringify([...remainingAlts, archived]),
+    }
+    brkCurrent[index] = updatedItem
+    saveBreakdownItemsList(brkCurrent)
+
+    // Mirror the newly-active vendor/supplier details onto the linked P.O.
+    // item, same as a manual edit to those fields would.
+    syncMirrorPOField(updatedItem.mirrorId, 'vendor', updatedItem.vendor || '')
+    syncMirrorPOField(updatedItem.mirrorId, 'contactNo', updatedItem.contactNumber || '')
+    syncMirrorPOField(updatedItem.mirrorId, 'agent', updatedItem.agent || '')
+    syncMirrorPOField(updatedItem.mirrorId, 'paymentMethod', updatedItem.paymentMethod || '')
+  }
+
+  function toggleSupplierRowShown(rowId: string) {
+    setShownSupplierRowIds(prev => {
+      const next = new Set(prev)
+      if (next.has(rowId)) next.delete(rowId)
+      else next.add(rowId)
+      return next
+    })
+  }
+
+  function toggleAltRowExpanded(rowId: string) {
+    setExpandedAltRowIds(prev => {
+      const next = new Set(prev)
+      if (next.has(rowId)) next.delete(rowId)
+      else next.add(rowId)
+      return next
+    })
+  }
+
+  function togglePaxRowCollapsed(rowId: string) {
+    setCollapsedPaxRowIds(prev => {
+      const next = new Set(prev)
+      if (next.has(rowId)) next.delete(rowId)
+      else next.add(rowId)
+      return next
+    })
+  }
+
   // Flips the "Show to Document" flag on the Invoice addon or P.O. line item
   // that's mirrored 1:1 with this Breakdown row (same shared id), so the
   // toggle can live on the Breakdown tab's Pax-Tier Pricing row itself.
+  // Explicitly sets (rather than flips) the "Show to Document" flag on the
+  // Purchase Order line item mirrored to this Breakdown row, so revealing
+  // the row's supplier details can automatically turn PO visibility on
+  // (and hiding them can turn it back off) without a separate manual toggle.
+  function setBreakdownMirrorPOVisibility(mirrorId: string | undefined, itemId: string | undefined, shown: boolean) {
+    const sharedId = mirrorId ? mirrorId.replace(/^item-/, '') : itemId
+    if (!sharedId) return
+    setBookingForm((prev) => {
+      let poItems: POLineItem[] = []
+      try { const p = JSON.parse(prev.poLineItemsJson || '[]'); if (Array.isArray(p)) poItems = p } catch {}
+      const idx = poItems.findIndex((p) => p.id === sharedId)
+      if (idx === -1) return prev
+      const nextPO = poItems.map((p, i) => (i === idx ? { ...p, showInDocument: shown } : p))
+      return { ...prev, poLineItemsJson: JSON.stringify(nextPO) }
+    })
+  }
+
   function toggleBreakdownMirrorVisibility(mirrorId: string | undefined, itemId: string | undefined, target: 'invoice' | 'po') {
     const sharedId = mirrorId ? mirrorId.replace(/^item-/, '') : itemId
     if (!sharedId) return
@@ -1725,6 +2083,16 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
     })
   }
 
+  function updateLltpRateField(category: keyof PaxBreakdown, value: string) {
+    setDataError('')
+    setDataMessage('')
+    setBookingForm((prev) => {
+      const rates = readPaxBreakdown(prev.lltpRates)
+      rates[category] = value
+      return { ...prev, lltpRates: JSON.stringify(rates) }
+    })
+  }
+
   // Opts a Pax-Tier Pricing row in/out of a category from the shared group
   // headcount — e.g. removing "Child" from a row that only the adults in
   // the group are taking.
@@ -1739,6 +2107,31 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
     current[index] = { ...item, excludedPax: JSON.stringify(nextExcluded) }
     saveBreakdownItemsList(current)
     const nextPax = getItemPaxBreakdown({ ...item, excludedPax: JSON.stringify(nextExcluded) }, bookingForm)
+    syncMirrorPOPax(item.mirrorId, nextPax)
+  }
+
+  // Add-on rows only: nudges one category's headcount for just this row up
+  // or down (the ▲/▼ buttons next to the row's remove "X"). Can never go
+  // below 0 or above the shared group total set above — e.g. with 5 Adults
+  // in the group, an add-on only 1 of them is taking can be dialed down to
+  // 1, but never bumped past 5. Once dialed back up to the group's full
+  // total the override is dropped entirely, so it can't go stale if the
+  // group total is later lowered.
+  function adjustItemPaxOverride(index: number, category: keyof PaxBreakdown, delta: 1 | -1) {
+    const current = getBreakdownItemsList()
+    const item = current[index]
+    if (!item || item.itemType !== 'addon') return
+    if (readExcludedPax(item).includes(category)) return
+    const sharedMax = parseQuantity(readGroupPax(bookingForm)[category])
+    const currentValue = parseQuantity(getItemPaxCounts(item, bookingForm)[PAX_CATEGORY_KEYS.indexOf(category)])
+    const nextValue = Math.max(0, Math.min(sharedMax, currentValue + delta))
+    const override = readPaxOverride(item)
+    const nextOverride = { ...override }
+    if (nextValue === sharedMax) delete nextOverride[category]
+    else nextOverride[category] = String(nextValue)
+    current[index] = { ...item, paxOverride: JSON.stringify(nextOverride) }
+    saveBreakdownItemsList(current)
+    const nextPax = getItemPaxBreakdown({ ...item, paxOverride: JSON.stringify(nextOverride) }, bookingForm)
     syncMirrorPOPax(item.mirrorId, nextPax)
   }
 
@@ -1771,9 +2164,26 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
       ...bookingForm,
       unitPrice: String(calculatedUnitPrice),
       sellingPrice: String(getBookingClientTotal(bookingForm)),
-      id: editingBookingId || `BK-${Date.now()}`,
+      // BUG FIX: this used to be `BK-${Date.now()}` — a millisecond timestamp.
+      // Two new bookings saved within the same millisecond (e.g. a double-tap
+      // on "Save" on a slow connection, or two teammates saving at once) would
+      // get the SAME id, and the second save would setDoc(..., {merge:true})
+      // straight into the first booking's document instead of creating a
+      // second one — silently collapsing two different projects into one row
+      // with no error shown to either person. crypto.randomUUID() makes a
+      // collision practically impossible while keeping the "BK-" prefix.
+      id: editingBookingId || `BK-${crypto.randomUUID()}`,
       createdAt: bookingCreatedAt
-        ? new Date(bookingCreatedAt + 'T00:00:00').toISOString()
+        // BUG FIX: 'T00:00:00' with no zone is parsed as LOCAL midnight, and
+        // .toISOString() then converts that to UTC — for timezones ahead of
+        // UTC (e.g. Philippines, UTC+8) local midnight on the 1st becomes
+        // 4pm UTC on the 31st of the PREVIOUS month. Since Google Sheets tab
+        // assignment reads the month/day straight off this stored string, that
+        // silently filed bookings into the wrong month tab (e.g. a June 1
+        // booking landing in the "May 2026" tab instead). Appending 'Z' treats the
+        // typed date as UTC directly, so the calendar date the user picked
+        // is preserved exactly no matter what timezone this runs in.
+        ? new Date(bookingCreatedAt + 'T00:00:00Z').toISOString()
         : (existingBooking?.createdAt || new Date().toISOString()),
       createdByName: bookingForm.createdByName || authUser?.displayName || '',
       ownerId: existingBooking?.ownerId || authUser?.uid,
@@ -1804,7 +2214,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
       setSelectedBookingId(booking.id)
       if (isEditing) {
         setEditingBookingId('')
-        setScreen('booking-detail')
+        setScreen(dataFormReturnScreen)
       } else {
         setEditingBookingId('')
         setScreen('home')
@@ -1815,7 +2225,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
       setSelectedBookingId(booking.id)
       if (isEditing) {
         setEditingBookingId('')
-        setScreen('booking-detail')
+        setScreen(dataFormReturnScreen)
       } else {
         setEditingBookingId('')
         setScreen('home')
@@ -1831,7 +2241,11 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
   function updateSelectedBookingCreatedAt(dateStr: string) {
     if (!dateStr) return
     const targetBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
-    const createdAt = new Date(dateStr + 'T00:00:00').toISOString()
+    // Same timezone fix as the main save path above — 'Z' preserves the
+    // exact calendar date the user picked in the date picker regardless of
+    // local timezone offset, so this record can't get silently misfiled
+    // into the wrong month tab in Google Sheets.
+    const createdAt = new Date(dateStr + 'T00:00:00Z').toISOString()
 
     setBookings((currentBookings) =>
       currentBookings.map((booking) => booking.id === selectedBookingId ? { ...booking, createdAt } : booking)
@@ -1960,7 +2374,12 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
     applyCurrencyToBookingId(editingBookingId, bookingForm.currency || 'PHP')
   }
 
-  function openQuotationPreview() { setScreen('quotation-preview') }
+  function openQuotationPreview() {
+    if (screen === 'booking-detail' || screen === 'document-folder' || screen === 'home') {
+      setInvoiceEditorReturnScreen(screen)
+    }
+    setScreen('quotation-preview')
+  }
   
   function openInvoiceEditor() {
     const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
@@ -1983,6 +2402,25 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
     setScreen('invoice-editor')
   }
 
+  // Same as openInvoiceEditor, but opens the payment fields as an overlay on
+  // top of the invoice document instead of navigating to a separate screen —
+  // so the user can update payment without leaving the document.
+  function openPaymentUpdateModal() {
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
+    if (!selectedBooking) return
+    setInvoiceForm({
+      paymentMethod: selectedBooking.paymentMethod || '',
+      paymentRecords: selectedBooking.paymentRecords || '',
+      invoiceAmountPaid: selectedBooking.invoiceAmountPaid || '',
+      invoicePaymentDate: selectedBooking.invoicePaymentDate || '',
+      invoicePaymentStatus: selectedBooking.invoicePaymentStatus || 'Unpaid',
+      invoiceFullyPaidDate: selectedBooking.invoiceFullyPaidDate || '',
+      invoiceReference: selectedBooking.invoiceReference || '',
+    })
+    setPaymentEntry({ amount: '', method: '', reference: '', date: toDateInputValue() })
+    setIsPaymentUpdateModalOpen(true)
+  }
+
   function updateInvoiceField<Field extends keyof typeof invoiceForm>(
     field: Field,
     value: (typeof invoiceForm)[Field],
@@ -1991,19 +2429,28 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
   }
 
   function handleLogPayment() {
-    const amount = parseFloat(paymentEntry.amount)
-    if (!amount || amount <= 0) return
+    const enteredAmount = parseFloat(paymentEntry.amount)
+    if (!enteredAmount || enteredAmount <= 0) return
     const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
     const totalPrice = selectedBooking ? sumLineItems(getBookingLineItems(selectedBooking), 'total') : 0
+    const paymentCurrency = selectedBooking?.currency || 'PHP'
+    const acrRate = parseFloat(selectedBooking?.acr || '')
+    // Non-PHP bookings collect real payments in pesos (cash/GCash/bank), so when
+    // an ACR rate is set on the booking, treat the entered amount as pesos and
+    // convert it back into the booking's native currency for the running total.
+    const logInPhp = paymentCurrency !== 'PHP' && acrRate > 0
+    const nativeAmount = Math.round((logInPhp ? enteredAmount / acrRate : enteredAmount) * 100) / 100
     const dateLabel = paymentEntry.date
       ? new Date(paymentEntry.date + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
       : new Date().toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
     const methodPart = paymentEntry.method ? ` via ${paymentEntry.method}` : ''
     const refPart = paymentEntry.reference ? ` (Ref: ${paymentEntry.reference})` : ''
-    const paymentCurrency = selectedBooking?.currency || 'PHP'
-    const record = `${dateLabel}${methodPart}${refPart} — ${getCurrencySymbol(paymentCurrency)}${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+    const amountLabel = logInPhp
+      ? `₱${enteredAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+      : `${getCurrencySymbol(paymentCurrency)}${enteredAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+    const record = `${dateLabel}${methodPart}${refPart} — ${amountLabel}`
     const prevPaid = parseAmount(invoiceForm.invoiceAmountPaid)
-    const newPaid = prevPaid + amount
+    const newPaid = Math.round((prevPaid + nativeAmount) * 100) / 100
     const prevRecords = invoiceForm.paymentRecords.trim()
     const newRecords = prevRecords ? `${prevRecords}\n${record}` : record
     const newStatus = computePaymentStatus(totalPrice, newPaid)
@@ -2020,17 +2467,30 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
   }
 
   function getInvoiceEditorTotal(): number {
-    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
-    return selectedBooking ? sumLineItems(getBookingLineItems(selectedBooking), 'total') : 0
+    // Uses the live bookingForm (the single master Data Gathering Form state)
+    // rather than the last-saved booking snapshot — so if the user has just
+    // added/edited an addon and hits "Fully Paid" before saving, the payment
+    // total still includes it instead of paying off a stale, addon-less total.
+    return sumLineItems(getBookingLineItems(bookingForm), 'total')
   }
 
   function handleRemovePaymentRecord(index: number) {
+    const selectedBooking = (lastSavedBookingRef.current?.id === selectedBookingId ? lastSavedBookingRef.current : null) ?? bookings.find((booking) => booking.id === selectedBookingId)
+    const paymentCurrency = selectedBooking?.currency || 'PHP'
+    const acrRate = parseFloat(selectedBooking?.acr || '')
+
     const lines = invoiceForm.paymentRecords.split('\n').filter(Boolean)
     const removedLine = lines[index] || ''
     lines.splice(index, 1)
     const removedAmountMatch = removedLine.match(/[\d,]+(?:\.\d{1,2})?\s*$/)
-    const removedAmount = removedAmountMatch ? parseAmount(removedAmountMatch[0]) : 0
-    const newPaid = Math.max(parseAmount(invoiceForm.invoiceAmountPaid) - removedAmount, 0)
+    const removedAmountShown = removedAmountMatch ? parseAmount(removedAmountMatch[0]) : 0
+    // Records for non-PHP bookings with an ACR rate are logged (and displayed)
+    // in pesos, but invoiceAmountPaid is tracked in the booking's native
+    // currency — so the peso figure in the text has to be converted back
+    // before it's subtracted, the same way handleLogPayment converted it going in.
+    const wasLoggedInPhp = paymentCurrency !== 'PHP' && acrRate > 0 && removedLine.includes('₱')
+    const removedAmount = wasLoggedInPhp ? removedAmountShown / acrRate : removedAmountShown
+    const newPaid = Math.max(Math.round((parseAmount(invoiceForm.invoiceAmountPaid) - removedAmount) * 100) / 100, 0)
     const totalPrice = getInvoiceEditorTotal()
     const newStatus = computePaymentStatus(totalPrice, newPaid)
     setInvoiceForm((f) => ({
@@ -2087,13 +2547,22 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
 
     // Payment received (even a partial downpayment) on a still-Quotation or
     // still-Invoice project means the booking is on — auto-confirm it. This
-    // only ever moves Quotation/Invoice -> Confirmed; it never touches a
-    // project that's already Confirmed or Flown, and it never downgrades
-    // anything. Confirmed and Flown are automatic-only — never manually
-    // selectable.
+    // only ever moves Quotation/Invoice -> Confirmed. Confirmed and Flown are
+    // automatic-only — never manually selectable.
+    //
+    // The reverse also holds: if every payment record on a Confirmed/Flown
+    // booking gets removed (amount paid drops back to 0), the booking isn't
+    // actually paid-for anymore, so it falls back to Invoice. This also
+    // means it drops out of the Google Sheets sync (which only mirrors
+    // Confirmed/Flown bookings) on the next cycle.
     const amountPaidNow = parseAmount(invoiceForm.invoiceAmountPaid)
     const shouldAutoConfirm = amountPaidNow > 0 && (targetBooking?.status === 'Quotation' || targetBooking?.status === 'Invoice')
-    const invoiceFormToSave = shouldAutoConfirm ? { ...invoiceForm, status: 'Confirmed' as BookingStatus } : invoiceForm
+    const shouldAutoDowngrade = amountPaidNow <= 0 && (targetBooking?.status === 'Confirmed' || targetBooking?.status === 'Flown')
+    const invoiceFormToSave = shouldAutoConfirm
+      ? { ...invoiceForm, status: 'Confirmed' as BookingStatus }
+      : shouldAutoDowngrade
+        ? { ...invoiceForm, status: 'Invoice' as BookingStatus }
+        : invoiceForm
 
     setBookings((currentBookings) =>
       currentBookings.map((booking) =>
@@ -2107,15 +2576,6 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
     try {
       if (!authUser) throw new Error('Missing signed-in user')
       const resolvedPath = getBookingOwnerPath(targetBooking, authUser.uid)
-      console.log('[DEBUG invoice-save]', {
-        selectedBookingId,
-        authUid: authUser.uid,
-        targetBookingFound: Boolean(targetBooking),
-        targetBookingId: targetBooking?.id,
-        targetBookingOwnerId: targetBooking?.ownerId,
-        resolvedPath,
-        bookingsArrayLength: bookings.length,
-      })
       await setDoc(doc(db, resolvedPath, selectedBookingId), {
         ...invoiceFormToSave,
         updatedAt: new Date().toISOString(),
@@ -2123,10 +2583,12 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
       setDataError('')
       setDataMessage(shouldAutoConfirm ? 'Invoice payment details saved — project auto-confirmed.' : 'Invoice payment details saved successfully.')
       setScreen('invoice-preview')
+      setIsPaymentUpdateModalOpen(false)
     } catch {
       setDataError('Invoice saved locally, but cloud update failed.')
       setDataMessage('')
       setScreen('invoice-preview')
+      setIsPaymentUpdateModalOpen(false)
     }
   }
 
@@ -2159,8 +2621,18 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
   }
 
   function openPurchaseOrderPreview() { setScreen('purchase-order-preview') }
-  function openVoucherPreview() { setScreen('voucher-preview') }
-  function openBreakdownPreview() { setScreen('breakdown-preview') }
+  function openVoucherPreview() {
+    if (screen === 'booking-detail' || screen === 'document-folder' || screen === 'home') {
+      setInvoiceEditorReturnScreen(screen)
+    }
+    setScreen('voucher-preview')
+  }
+  function openBreakdownPreview() {
+    if (screen === 'booking-detail' || screen === 'document-folder' || screen === 'home') {
+      setInvoiceEditorReturnScreen(screen)
+    }
+    setScreen('breakdown-preview')
+  }
   function openDocumentFolder() { setScreen('document-folder') }
 
   function openDocumentByTitle(title: string) {
@@ -2219,7 +2691,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
 
     if (isDtrScreen) {
       const docEl = document.querySelector<HTMLElement>('.dtr-print-doc')
-      if (!docEl) { if (wasDark) root.setAttribute('data-theme', 'dark'); window.print(); return }
+      if (!docEl) { if (wasDark) root.setAttribute('data-theme', 'dark'); setDataError('DTR PDF export failed: could not find the DTR document on this page. Try reloading and downloading again.'); return }
 
       // html2canvas can render a blank/white canvas when the captured element sits at an
       // extreme off-screen position (e.g. left:-9999px) — the internal canvas math gets
@@ -2251,14 +2723,14 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
       }
     } else {
       printableArea = document.querySelector<HTMLElement>('.print-document')
-      if (!printableArea) { if (wasDark) root.setAttribute('data-theme', 'dark'); window.print(); return }
+      if (!printableArea) { if (wasDark) root.setAttribute('data-theme', 'dark'); setDataError('PDF export failed: could not find the document on this page. Try reloading and downloading again.'); return }
       restoreFn = () => { if (wasDark) root.setAttribute('data-theme', 'dark') }
     }
 
     try {
       setIsPdfExporting(true)
       const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
-        import('html2canvas'),
+        import('html2canvas-pro'),
         import('jspdf'),
       ])
       const canvas = await html2canvas(printableArea, { backgroundColor: '#ffffff', scale: 2, useCORS: true, logging: false, windowWidth: isDtrScreen ? 860 : undefined })
@@ -2290,10 +2762,11 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
         fileName = `${buildDownloadBaseName(currentBooking, currentDocTypeLabel())}.pdf`
       }
       pdf.save(fileName.replace(/[^\w.-]+/g, '_'))
-    } catch {
+    } catch (err) {
+      console.error('PDF export failed:', err)
       restoreFn?.()
-      setDataError(isDtrScreen ? 'DTR PDF export failed. Use the Print button as a fallback.' : 'PDF download failed. Use Ctrl+P and turn off browser headers and footers.')
-      window.print()
+      const reason = err instanceof Error ? err.message : String(err)
+      setDataError(isDtrScreen ? `DTR PDF export failed: ${reason}` : `PDF download failed: ${reason}`)
     } finally {
       setIsPdfExporting(false)
     }
@@ -2313,7 +2786,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
 
     try {
       setIsJpgExporting(true)
-      const { default: html2canvas } = await import('html2canvas')
+      const { default: html2canvas } = await import('html2canvas-pro')
       const canvas = await html2canvas(printableArea, {
         backgroundColor: '#ffffff',
         scale: 2,
@@ -2350,9 +2823,11 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
           await new Promise((r) => setTimeout(r, 120))
         }
       }
-    } catch {
+    } catch (err) {
+      console.error('JPG export failed:', err)
       if (wasDark) root.setAttribute('data-theme', 'dark')
-      setDataError('JPG export failed. Try the PDF or Print option instead.')
+      const reason = err instanceof Error ? err.message : String(err)
+      setDataError(`JPG export failed: ${reason}`)
     } finally {
       setIsJpgExporting(false)
     }
@@ -2484,6 +2959,25 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
       'Other incidental charges not stated',
     ])
 
+    // Day-by-day itinerary rows explicitly toggled "Quotation" in the
+    // Schedule section's day builder. Unlike the Voucher (which always
+    // shows every day), the Quotation only shows the days the user has
+    // opted in, and is omitted entirely when none are toggled on.
+    const quotationItineraryRows: { date: string; itinerary: string; hotel: string }[] = (() => {
+      if (!selectedBooking.voucherRowsJson) return []
+      try {
+        const parsed = JSON.parse(selectedBooking.voucherRowsJson)
+        if (!Array.isArray(parsed)) return []
+        return parsed
+          .filter((r) => r && r.showOnQuotation)
+          .map((r) => ({
+            date: r.date ? formatProjectDate(r.date) : '',
+            itinerary: r.itinerary || '',
+            hotel: r.hotel || '',
+          }))
+      } catch { return [] }
+    })()
+
     return (
       <section className="quotation-preview print-document">
         <header className="quote-header">
@@ -2549,6 +3043,30 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
                 {selectedBooking.hotelAddress && <p>{selectedBooking.hotelAddress}</p>}
               </article>
             )}
+          </section>
+        )}
+
+        {quotationItineraryRows.length > 0 && (
+          <section className="quote-itinerary">
+            <h2>Day-by-Day Itinerary</h2>
+            <table className="voucher-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Itinerary</th>
+                  <th>Hotel</th>
+                </tr>
+              </thead>
+              <tbody>
+                {quotationItineraryRows.map((row, i) => (
+                  <tr key={`${row.date}-${i}`}>
+                    <td>{row.date}</td>
+                    <td style={{ whiteSpace: 'pre-wrap' }}>{row.itinerary}</td>
+                    <td>{row.hotel}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </section>
         )}
 
@@ -2655,10 +3173,12 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
           </div>
           <div className="amount-due-box">
             <span>Amount Due</span>
-            <strong>
-              {acrPhpTotal(balance, selectedBooking.currency, selectedBooking.acr)
-                ? acrPhpTotal(balance, selectedBooking.currency, selectedBooking.acr)!.replace('PHP ', '₱')
-                : convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}
+            <strong className={selectedBooking.invoicePaymentStatus === 'Paid' ? 'amount-due-paid' : ''}>
+              {selectedBooking.invoicePaymentStatus === 'Paid'
+                ? 'PAID'
+                : acrPhpTotal(balance, selectedBooking.currency, selectedBooking.acr)
+                  ? acrPhpTotal(balance, selectedBooking.currency, selectedBooking.acr)!.replace('PHP ', '₱')
+                  : convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}
             </strong>
           </div>
         </section>
@@ -2702,16 +3222,20 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
                     <td>₱{parseFloat(selectedBooking.acr as string).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   </tr>
                 )}
-                <tr className="quote-acr-row">
-                  <td colSpan={3}>PAID</td>
-                  <td>{convertAndFormat(parseAmount(selectedBooking.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</td>
-                </tr>
                 {acrPhpTotal(totalPrice, selectedBooking.currency, selectedBooking.acr) && (
                   <tr className="quote-total-row">
                     <td colSpan={3}>PESO VALUE</td>
                     <td>{acrPhpTotal(totalPrice, selectedBooking.currency, selectedBooking.acr)!.replace('PHP ', '₱')}</td>
                   </tr>
                 )}
+                <tr className="quote-acr-row">
+                  <td colSpan={3}>PAID</td>
+                  <td>
+                    {acrPhpTotal(amountPaid, selectedBooking.currency, selectedBooking.acr)
+                      ? acrPhpTotal(amountPaid, selectedBooking.currency, selectedBooking.acr)!.replace('PHP ', '₱')
+                      : convertAndFormat(amountPaid, selectedBooking.currency || 'PHP', exchangeRates)}
+                  </td>
+                </tr>
                 {selectedBooking.invoicePaymentStatus === 'Paid' && selectedBooking.invoiceFullyPaidDate && (
                   <tr className="quote-acr-row">
                     <td colSpan={3}>FULLY PAID ON</td>
@@ -2743,32 +3267,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
               ? formatProjectDate(selectedBooking.invoicePaymentDate)
               : 'To be advised'}.
             Reference: {selectedBooking.invoiceReference || 'N/A'}.
-            Flight details: {selectedBooking.flightDetails || 'To be advised'}.
           </p>
-          <section className="invoice-policy">
-            <h3>Flight Details</h3>
-            <p>{selectedBooking.flightDetails || 'To be advised'}</p>
-            <h3>Terms and Conditions</h3>
-            <p>Booking Policy: Payments are non-refundable once made.</p>
-            <p>
-              Hotel and tours are re-bookable under certain conditions and
-              subject to fees and penalties.
-            </p>
-            <p>
-              Any alteration made without approval from the issuing office
-              will be deemed null and void.
-            </p>
-            <p>
-              Any incidental expenses will be on the guest account. The
-              issuing office is not liable for problems caused by airline,
-              hotel, or local tour operators.
-            </p>
-            <p>
-              Passengers are responsible for checking travel documents and
-              immigration requirements before booking.
-            </p>
-          </section>
-
           <div className="transaction-box">
             <strong>For faster transactions:</strong>
             <span>You may deposit your payment below:</span>
@@ -2790,6 +3289,77 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
               </div>
             </div>
           </div>
+
+          <table className="invoice-table credit-card-table">
+            <thead>
+              <tr>
+                <th colSpan={2}>Credit Card Payment</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td className="credit-card-info">
+                  For credit card transactions, please use the payment link or QR code provided.
+                  <br />
+                  Kindly add a <strong>5% credit card processing fee</strong> to the{' '}
+                  <strong>total amount due</strong> when making payment. This fee covers the
+                  applicable bank and payment processing charges.
+                </td>
+                <td className="credit-card-qr-cell">
+                  <img src={creditCardQr} alt="Credit card payment QR code" className="credit-card-qr" />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table className="invoice-table bank-transfer-table">
+            <thead>
+              <tr>
+                <th colSpan={2}>Company Bank Transfer</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td colSpan={2} className="bank-transfer-info">
+                  Please use the company bank account below. Kindly allow up to 24 hours for
+                  payment verification.
+                </td>
+              </tr>
+              <tr>
+                <td className="bank-transfer-cell">
+                  <span className="bank-name">BDO - SM CENTRAL</span>
+                  <span>LION AND LAMB TRAVEL</span>
+                  <span>PESO SA: 007700435895</span>
+                </td>
+                <td className="bank-transfer-cell">
+                  <span className="bank-name">PBCOM - OLONGAPO</span>
+                  <span>LION AND LAMB TRAVEL AND ESTATE CORPORATION</span>
+                  <span>PESO CA: TBA</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section className="invoice-policy invoice-terms-page">
+          <h3>Payment &amp; Booking Terms and Conditions</h3>
+          <ol className="invoice-terms-list">
+            <li>
+              <strong>Booking Confirmation.</strong> Rates are book-and-buy and subject to availability and change until confirmed. Any fare/rate difference before final confirmation is for the guest's account.
+            </li>
+            <li>
+              <strong>Strictly Non-Refundable.</strong> All payments are STRICTLY NON-REFUNDABLE — no refunds for cancellations, no-shows, unused services, or voluntary changes, unless approved by the supplier and subject to their penalties/fees.
+            </li>
+            <li>
+              <strong>Rebooking &amp; Amendments.</strong> Rebooking, rescheduling, and name corrections are subject to supplier policy and availability; any resulting fees are shouldered by the guest.
+            </li>
+            <li>
+              <strong>Supplier Policies.</strong> All bookings follow the terms, conditions, and availability of the respective airline, hotel, cruise line, transport provider, or tour operator.
+            </li>
+            <li>
+              <strong>Acceptance of Terms.</strong> Payment of this Invoice constitutes acceptance of these Terms and Conditions.
+            </li>
+          </ol>
         </section>
       </section>
     )
@@ -2805,6 +3375,33 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
       ? `${formatProjectDate(selectedBooking.travelStart)}${selectedBooking.travelEnd ? ` - ${formatProjectDate(selectedBooking.travelEnd)}` : ''}`
       : 'TBA'
     const optionDateStr = selectedBooking.optionDate ? formatProjectDate(selectedBooking.optionDate) : 'TBA'
+
+    // Day-by-day itinerary — same source and fallback as the Service
+    // Voucher (every day, not just the ones toggled on for the Quotation),
+    // so the supplier gets the full trip context on the P.O. too.
+    const poItineraryRows: { date: string; itinerary: string; hotel: string }[] = (() => {
+      if (selectedBooking.voucherRowsJson) {
+        try {
+          const parsed = JSON.parse(selectedBooking.voucherRowsJson)
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed.map((r) => ({
+            date: r.date ? formatProjectDate(r.date) : '',
+            itinerary: r.itinerary || '',
+            hotel: r.hotel || '',
+          }))
+        } catch { /* fall through */ }
+      }
+      const lines = getLines(selectedBooking.itinerary, [
+        selectedBooking.itemDescription || `Arrival and start of ${selectedBooking.packageName}`,
+        'Free own leisure. Final reminders and departure arrangements.',
+      ])
+      return lines.map((line, index) => ({
+        date: index === 0
+          ? selectedBooking.travelStart ? formatProjectDate(selectedBooking.travelStart) : `Day ${index + 1}`
+          : index === lines.length - 1 && selectedBooking.travelEnd ? formatProjectDate(selectedBooking.travelEnd) : `Day ${index + 1}`,
+        itinerary: line,
+        hotel: selectedBooking.hotelName || '',
+      }))
+    })()
 
     const poGroups: POLineItem[][] = []
     const vendorKeyMap = new Map<string, number>()
@@ -2922,7 +3519,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
             <div>
               <span>Vendor:</span>
               <strong>{first.vendor || 'To be assigned'}</strong>
-              <small>Agent: {first.agent || 'N/A'}</small>
+              <small>Supplier Agent: {first.agent || 'N/A'}</small>
               <small>Contact No.: {first.contactNo || 'N/A'}</small>
             </div>
             <div>
@@ -2932,6 +3529,30 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
               <small>Contact No.: {selectedBooking.contactNumber || 'N/A'}</small>
             </div>
           </section>
+
+          {poItineraryRows.length > 0 && (
+            <section className="po-itinerary">
+              <h2>Day-by-Day Itinerary</h2>
+              <table className="po-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Itinerary</th>
+                    <th>Hotel</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {poItineraryRows.map((row, i) => (
+                    <tr key={`${row.date}-${i}`}>
+                      <td>{row.date}</td>
+                      <td style={{ whiteSpace: 'pre-wrap' }}>{row.itinerary}</td>
+                      <td>{row.hotel}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
 
           <table className="po-table po-service-table">
             <thead>
@@ -2990,7 +3611,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
           <section className="po-notes-grid">
             <div>
               <span>Hotel:</span>
-              <strong>{selectedBooking.accommodation || 'N/A'}</strong>
+              <strong>{selectedBooking.hotelName || selectedBooking.accommodation || 'N/A'}</strong>
             </div>
             <div>
               <span>Flight Details:</span>
@@ -3174,14 +3795,43 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
           )}
         </section>
 
-        <section className="voucher-disclaimer">
-          <strong>Disclaimer and Confidentiality Notice</strong>
-          <p>
-            Lion and Lamb Travel arranges travel services through independent
-            vendors such as airlines, accommodation, transportation, tours, and
-            related services. Confirmation vouchers are non-refundable,
-            non-transferable, and subject to supplier rules and availability.
-          </p>
+        <section className="voucher-terms">
+          <h3>Terms &amp; Conditions</h3>
+          <ol className="voucher-terms-list">
+            <li>
+              <strong>Itinerary Changes.</strong> The itinerary is subject to change due to weather, airline or transportation schedule changes, local operator requirements, government regulations, force majeure, or other circumstances beyond Lion and Lamb Travel's control.
+            </li>
+            <li>
+              <strong>Guest Responsibility.</strong> Guests must promptly inform Lion and Lamb Travel of any changes affecting travel (flight changes, delays, document updates, etc.) and must verify all booking details upon receipt, reporting discrepancies without delay.
+            </li>
+            <li>
+              <strong>Local Operator Services.</strong> Tours, transfers, accommodations, and other services are provided by independent airlines, hotels, and operators. Lion and Lamb Travel acts only as an intermediary and is not liable for their delays, changes, or other acts/omissions.
+            </li>
+            <li>
+              <strong>Cancellation, Amendments &amp; No-Show.</strong> Cancellation, amendment, no-show, early check-out, and unused service charges follow the respective supplier's policy; applicable penalties and fees are borne by the guest.
+            </li>
+            <li>
+              <strong>Non-Refundable Services.</strong> Any unused airfare, land arrangements, accommodations, transfers, tours, or meals is non-refundable and non-transferable unless approved by the service provider.
+            </li>
+            <li>
+              <strong>Travel Documents.</strong> Guests are solely responsible for valid passports, visas, and other travel documents. Lion and Lamb Travel is not responsible for denied boarding/entry or other issues from incomplete or invalid documentation.
+            </li>
+            <li>
+              <strong>Travel Insurance.</strong> Comprehensive travel insurance covering trip cancellation, medical emergencies, baggage loss/delay, and other travel risks is strongly recommended.
+            </li>
+            <li>
+              <strong>Assumption of Risk.</strong> Travel carries inherent risks (accidents, illness, natural disasters, disruptions, etc.); by booking, guests acknowledge and voluntarily assume these risks.
+            </li>
+            <li>
+              <strong>Limitation of Liability.</strong> To the fullest extent permitted by law, Lion and Lamb Travel is not liable for injury, loss, damage, or expense arising from independent suppliers' acts or from events beyond its control, including force majeure.
+            </li>
+            <li>
+              <strong>Right to Modify Services.</strong> Lion and Lamb Travel may substitute hotels, transportation, activities, or schedules with services of comparable standard when necessary, without prior notice.
+            </li>
+            <li>
+              <strong>Acceptance of Terms.</strong> Confirmation of booking, payment, issuance of travel documents, and/or participation in the tour constitutes acceptance of these Terms &amp; Conditions.
+            </li>
+          </ol>
         </section>
       </section>
     )
@@ -3255,6 +3905,12 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
     const flatItemsTotal = nonPackageItems.reduce((sum, item) => (
       parseAmount(item.unitPrice) > 0 ? sum + getBreakdownItemTotal(item, selectedBooking) : sum
     ), 0)
+    // LLTP's per-category rates are now folded directly into `subtotals`
+    // (and therefore `totals`) above, the same way any other tier-priced
+    // Inclusion is — so it no longer needs to be added again here.
+    const lltpRates = getBookingLltpRates(selectedBooking)
+    const lltpByCol = [lltpRates.adult, lltpRates.child, lltpRates.senior, lltpRates.infant].map(parseAmount)
+    const hasLltp = lltpByCol.some((v) => v > 0)
     // Grand Total is simply the sum of the four column totals above, plus
     // whatever flat-rate rows couldn't be attributed to a column.
     const grandTotal = totals.reduce((sum, val) => sum + val, 0) + flatItemsTotal
@@ -3266,14 +3922,14 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
           <thead>
             <tr className="bq-title-row">
               <th colSpan={2}>QUOTATION: {selectedBooking.quotationNo || selectedBooking.id}</th>
-              <th colSpan={4} className="bq-amount-header">AMOUNT</th>
+              <th colSpan={4} className="bq-amount-header">CLIENT NAME</th>
             </tr>
             <tr className="bq-info-row">
               <td className="bq-label">NAME:</td>
               <td className="bq-value">
                 {selectedBooking.packageName}
               </td>
-              <td rowSpan={2} colSpan={4} className="bq-amount-cell"></td>
+              <td rowSpan={2} colSpan={4} className="bq-amount-cell">{selectedBooking.clientName}</td>
             </tr>
             <tr className="bq-info-row">
               <td className="bq-label">DATE OF TRAVEL:</td>
@@ -3331,6 +3987,17 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
                 </tr>
               )
             })}
+            {hasLltp && (
+              <tr className="bq-data-row">
+                <td className="bq-service">LLTP</td>
+                <td className="bq-details"></td>
+                {lltpByCol.map((val, ci) => (
+                  <td key={ci} className={`bq-price${val > 0 ? ' bq-has-value' : ''}${ci === 3 ? ' bq-infant-col' : ''}`}>
+                    {val > 0 ? `₱${toPhp(val).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                  </td>
+                ))}
+              </tr>
+            )}
             <tr className="bq-subtotal-row">
               <td colSpan={2}>SUBTOTAL:</td>
               {subtotals.map((val, i) => (
@@ -3374,7 +4041,9 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
     return {
       ...bookingForm,
       id: editingBookingId || selectedBookingId || 'DRAFT',
-      createdAt: bookingCreatedAt ? new Date(bookingCreatedAt + 'T00:00:00').toISOString() : new Date().toISOString(),
+      // Same timezone fix as the save path (see updateSelectedBookingCreatedAt) —
+      // 'Z' keeps this preview's date consistent with what actually gets stored.
+      createdAt: bookingCreatedAt ? new Date(bookingCreatedAt + 'T00:00:00Z').toISOString() : new Date().toISOString(),
     }
   }
 
@@ -3523,9 +4192,6 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
   if (screen === 'data-form') {
     const isEditingBooking = Boolean(editingBookingId)
     const currentBreakdownItems = getBreakdownItemsList()
-    const currentInvoiceAddonsForToggles: { id: string; showInDocument?: boolean }[] = (() => {
-      try { const a = JSON.parse(bookingForm.invoiceAddons); return Array.isArray(a) ? a : [] } catch { return [] }
-    })()
     const currentPOItemsForToggles: POLineItem[] = (() => {
       try { const p = JSON.parse(bookingForm.poLineItemsJson || '[]'); return Array.isArray(p) ? p : [] } catch { return [] }
     })()
@@ -3598,15 +4264,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
           <div className="nav-actions">
             <button
               type="button"
-              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
-              onClick={() => setIsDark((d) => !d)}
-              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-            >
-              {isDark ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
-            <button
-              type="button"
-              onClick={() => { setEditingBookingId(''); setActiveDocTab(null); setScreen(isEditingBooking ? 'booking-detail' : 'home') }}
+              onClick={() => { setEditingBookingId(''); setActiveDocTab(null); setScreen(isEditingBooking ? dataFormReturnScreen : 'home') }}
               title="Close"
             >
               <X size={18} />
@@ -3726,6 +4384,11 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
               </div>
             </div>
             <div className="field-grid three">
+              <label>
+                Agent
+                <input value={bookingForm.agentName} onChange={(e) => updateBookingField('agentName', e.target.value)} placeholder="e.g. Juan Dela Cruz" />
+                <span className="field-help">The travel agent for this booking — used for the TA Comm line item and synced to the Google Sheet's Agent column.</span>
+              </label>
               <label>
                 <span className="field-label"><span>Client name</span><span className="required-marker">Required</span></span>
                 <input required={activeDocTab === 'breakdown'} value={bookingForm.clientName} onChange={(e) => updateBookingField('clientName', e.target.value)} placeholder="Ms. Joanna Pico" />
@@ -3916,6 +4579,35 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
               </div>
             </div>
 
+            {/* Flat internal profit line, entered once here per pax
+                category — folded into the Breakdown's cost subtotal
+                exactly like a normal Inclusion (raising the printed GRAND
+                TOTAL and the Quotation/Invoice's fallback package price the
+                same way an Inclusion would: rate × shared headcount), then
+                backed back out of the NETT figure synced to Google Sheets
+                since it isn't a real supplier cost. */}
+            <div className="breakdown-group-pax-panel">
+              <div className="pax-tier-field-label">LLTP</div>
+              <p className="breakdown-tier-config-hint">
+                Rate per person, per category. Shows on the Breakdown like a normal inclusion; the Google Sheet's NETT is the subtotal minus this amount.
+              </p>
+              <div className="breakdown-group-pax-fields">
+                {(['adult', 'child', 'senior', 'infant'] as const).map((category, ci) => (
+                  <label className="pax-tier-field" key={category}>
+                    <span className="pax-tier-field-label">{['Adult', 'Child', 'Senior', 'Infant'][ci]}</span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={readPaxBreakdown(bookingForm.lltpRates)[category]}
+                      onChange={(e) => updateLltpRateField(category, e.target.value)}
+                      placeholder="0.00"
+                      className="tier-pax-input"
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+
             {/* Per-service prices — every row sets its own price per
                 person for whichever pax categories apply to it; the
                 headcount itself is inherited from the shared group total
@@ -3967,27 +4659,63 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
                 </div>
               </div>
 
+              {(() => {
+                const nonPackageRows = currentBreakdownItems.filter(i => !i.isPackageRow)
+                const inclusionRows = nonPackageRows.filter(i => i.itemType !== 'addon')
+                const addonRows = nonPackageRows.filter(i => i.itemType === 'addon')
+                const inclusionsTotal = inclusionRows.reduce((sum, i) => sum + getBreakdownItemTotal(i, bookingForm), 0) + getBookingLltpAmount(bookingForm)
+                const addonsTotal = addonRows.reduce((sum, i) => sum + getBreakdownItemTotal(i, bookingForm), 0)
+                const currencySymbol = getCurrencySymbol(bookingForm.currency)
+                const fmt = (n: number) => `${currencySymbol}${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                if (nonPackageRows.length === 0) return null
+                return (
+                  <div className="pax-tier-overview-strip">
+                    <div className="pax-tier-overview-item">
+                      <span className="pax-tier-overview-count">{inclusionRows.length}</span>
+                      <span className="pax-tier-overview-label">Inclusion{inclusionRows.length === 1 ? '' : 's'} · Breakdown</span>
+                      <span className="pax-tier-overview-amount">{fmt(inclusionsTotal)}</span>
+                    </div>
+                    <div className="pax-tier-overview-divider" />
+                    <div className="pax-tier-overview-item">
+                      <span className="pax-tier-overview-count">{addonRows.length}</span>
+                      <span className="pax-tier-overview-label">Add-on{addonRows.length === 1 ? '' : 's'} · Quotation &amp; Invoice</span>
+                      <span className="pax-tier-overview-amount">{fmt(addonsTotal)}</span>
+                    </div>
+                    <div className="pax-tier-overview-divider" />
+                    <div className="pax-tier-overview-item pax-tier-overview-item-total">
+                      <span className="pax-tier-overview-label">Combined</span>
+                      <span className="pax-tier-overview-amount">{fmt(inclusionsTotal + addonsTotal)}</span>
+                    </div>
+                  </div>
+                )
+              })()}
+
               <div className="line-items-table">
                 {currentBreakdownItems.filter(item => !item.isPackageRow).map((item) => {
                   const realIndex = currentBreakdownItems.indexOf(item)
                   const sharedId = item.mirrorId ? item.mirrorId.replace(/^item-/, '') : item.id
-                  const linkedAddon = currentInvoiceAddonsForToggles.find((a) => a.id === sharedId)
                   const linkedPO = currentPOItemsForToggles.find((p) => p.id === sharedId)
-                  const shownInQuotation = !!item.sendToQuotation
-                  const shownInInvoice = linkedAddon ? linkedAddon.showInDocument !== false : false
-                  const shownInPO = linkedPO ? linkedPO.showInDocument !== false : false
                   const itemPax = getItemPaxBreakdown(item, bookingForm)
                   const itemExcludedPax = readExcludedPax(item)
-                  // Rows saved before Inclusion/Add-on existed have no
-                  // itemType — treated as Inclusion for document behavior,
-                  // but flagged "Legacy" here so the manual Quotation/
-                  // Invoice toggles they already rely on keep working
-                  // exactly as before instead of being locked off.
-                  const isLegacyItem = !item.itemType
+                  // Every row strictly follows its type: Inclusion is
+                  // Breakdown-only, Add-on is Quotation/Invoice-only. No
+                  // manual override, no exceptions for older rows.
                   const rowItemType: 'inclusion' | 'addon' = item.itemType === 'addon' ? 'addon' : 'inclusion'
+                  const rowId = item.id || String(realIndex)
+                  const rowTotal = getBreakdownItemTotal(item, bookingForm)
+                  const isRowCollapsed = collapsedPaxRowIds.has(rowId)
+                  const currencySymbol = getCurrencySymbol(bookingForm.currency)
                   return (
-                    <div key={item.id || realIndex} className="line-item-data-row">
-                      <div className="pax-tier-type-row">
+                    <div key={item.id || realIndex} className={`pax-tier-row-card${isRowCollapsed ? ' collapsed' : ''}`}>
+                      <div className="pax-tier-row-summary">
+                        <button
+                          type="button"
+                          className="pax-tier-row-collapse-btn"
+                          onClick={() => togglePaxRowCollapsed(rowId)}
+                          title={isRowCollapsed ? 'Expand this row' : 'Collapse this row'}
+                        >
+                          {isRowCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                        </button>
                         <div className="pax-tier-type-switch">
                           <button
                             type="button"
@@ -4006,8 +4734,19 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
                             Add-on
                           </button>
                         </div>
-                        {isLegacyItem && <span className="pax-tier-type-legacy-tag" title="Created before Inclusion/Add-on existed — behaves like an Inclusion, but keeps its own manual Quotation/Invoice toggles">Legacy</span>}
+                        <span className="pax-tier-row-name">{item.description || 'Untitled service'}</span>
+                        <span className="pax-tier-row-total">{currencySymbol}{rowTotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <button
+                          type="button"
+                          className="remove-line-btn"
+                          onClick={() => removeBreakdownItemRow(realIndex)}
+                          title="Remove this row"
+                        >
+                          <X size={14} />
+                        </button>
                       </div>
+                      {!isRowCollapsed && (
+                      <div className="pax-tier-row-body">
                       <div className="line-items-row pax-tier-row pax-tier-counts-row">
                         <div className="pax-tier-field">
                           <span className="pax-tier-field-label">Service</span>
@@ -4082,11 +4821,39 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
                         </div>
                         {(['adult', 'child', 'senior', 'infant'] as const).map((category, ci) => {
                           const isExcluded = itemExcludedPax.includes(category)
+                          const groupMax = parseQuantity(readGroupPax(bookingForm)[category])
+                          const currentCount = parseQuantity(itemPax[category])
+                          // The ▲/▼ stepper only applies to Add-on rows —
+                          // Inclusions always fully inherit or fully
+                          // exclude a category via the X button alone.
+                          const canAdjust = rowItemType === 'addon' && !isExcluded
                           return (
                             <div className="pax-tier-field" key={category}>
                               <span className="pax-tier-field-label">{['Adult', 'Child', 'Senior', 'Infant'][ci]}</span>
                               <div className={`pax-tier-inherited-value${isExcluded ? ' excluded' : ''}`}>
+                                {canAdjust && (
+                                  <button
+                                    type="button"
+                                    className="pax-tier-adjust-btn"
+                                    onClick={() => adjustItemPaxOverride(realIndex, category, -1)}
+                                    disabled={currentCount <= 0}
+                                    title={`Reduce ${category} taking this add-on`}
+                                  >
+                                    <ChevronDown size={11} />
+                                  </button>
+                                )}
                                 <span>{isExcluded ? '—' : (itemPax[category] || '0')}</span>
+                                {canAdjust && (
+                                  <button
+                                    type="button"
+                                    className="pax-tier-adjust-btn"
+                                    onClick={() => adjustItemPaxOverride(realIndex, category, 1)}
+                                    disabled={currentCount >= groupMax}
+                                    title={`Increase ${category} taking this add-on (up to the group total above)`}
+                                  >
+                                    <ChevronUp size={11} />
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   className="pax-tier-exclude-btn"
@@ -4126,91 +4893,188 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
                             />
                           </label>
                         ))}
-                        <button
-                          type="button"
-                          className="remove-line-btn"
-                          onClick={() => removeBreakdownItemRow(realIndex)}
-                          title="Remove this row"
-                        >
-                            <X size={14} />
-                          </button>
                       </div>
-                      {item.mirrorId && (
-                        <div className="pax-tier-supplier-row">
-                          <span className="pax-tier-supplier-label">Supplier details (for Purchase Order)</span>
-                          <div className="field-grid four">
-                            <label>
-                              Vendor
-                              <input
-                                type="text"
-                                value={item.vendor || linkedPO?.vendor || ''}
-                                onChange={(e) => changeBreakdownItemField(realIndex, 'vendor', e.target.value)}
-                                placeholder="e.g. Cebu Pacific"
-                              />
-                            </label>
-                            <label>
-                              Contact No.
-                              <input
-                                type="text"
-                                value={item.contactNumber || linkedPO?.contactNo || ''}
-                                onChange={(e) => changeBreakdownItemField(realIndex, 'contactNumber', e.target.value)}
-                                placeholder="09xxxxxxxxx"
-                              />
-                            </label>
-                            <label>
-                              Agent
-                              <input
-                                type="text"
-                                value={item.agent || linkedPO?.agent || ''}
-                                onChange={(e) => changeBreakdownItemField(realIndex, 'agent', e.target.value)}
-                                placeholder="e.g. Juan Dela Cruz"
-                              />
-                            </label>
-                            <label>
-                              Payment Method
-                              <input
-                                type="text"
-                                value={item.paymentMethod || linkedPO?.paymentMethod || ''}
-                                onChange={(e) => changeBreakdownItemField(realIndex, 'paymentMethod', e.target.value)}
-                                placeholder="Bank Transfer, GCash, Cash"
-                              />
-                            </label>
-                            <label style={{ gridColumn: '1 / -1' }}>
-                              Description (Purchase Order only)
-                              <input
-                                type="text"
-                                value={linkedPO?.description || ''}
-                                onChange={(e) => changePOItemDescription(item.mirrorId, e.target.value)}
-                                placeholder="e.g. Round-trip airfare for 5 pax, CRK-MPH"
-                              />
-                            </label>
+                      {item.mirrorId && (() => {
+                        const isSupplierShown = shownSupplierRowIds.has(rowId)
+                        return (
+                          <div className="pax-tier-supplier-row">
+                            <div className="pax-tier-supplier-row-header">
+                              <span className="pax-tier-supplier-label">Supplier details (for Purchase Order)</span>
+                              <button
+                                type="button"
+                                className="pax-tier-supplier-hide-btn"
+                                onClick={() => {
+                                  const willShow = !isSupplierShown
+                                  toggleSupplierRowShown(rowId)
+                                  setBreakdownMirrorPOVisibility(item.mirrorId, item.id, willShow)
+                                }}
+                                title={isSupplierShown ? 'Hide supplier details (also removes this item from the Purchase Order)' : 'Show supplier details and include this item in the Purchase Order'}
+                              >
+                                {isSupplierShown ? <EyeOff size={12} /> : <Eye size={12} />}
+                                <span>{isSupplierShown ? 'Hide' : 'Add Purchase Order details'}</span>
+                              </button>
+                            </div>
+                            {isSupplierShown && (
+                              <div className="field-grid four">
+                                <label>
+                                  Vendor
+                                  <input
+                                    type="text"
+                                    value={item.vendor || linkedPO?.vendor || ''}
+                                    onChange={(e) => changeBreakdownItemField(realIndex, 'vendor', e.target.value)}
+                                    placeholder="e.g. Cebu Pacific"
+                                  />
+                                </label>
+                                <label>
+                                  Contact No.
+                                  <input
+                                    type="text"
+                                    value={item.contactNumber || linkedPO?.contactNo || ''}
+                                    onChange={(e) => changeBreakdownItemField(realIndex, 'contactNumber', e.target.value)}
+                                    placeholder="09xxxxxxxxx"
+                                  />
+                                </label>
+                                <label>
+                                  Supplier Agent
+                                  <input
+                                    type="text"
+                                    value={item.agent || linkedPO?.agent || ''}
+                                    onChange={(e) => changeBreakdownItemField(realIndex, 'agent', e.target.value)}
+                                    placeholder="e.g. Juan Dela Cruz"
+                                  />
+                                </label>
+                                <label>
+                                  Payment Method
+                                  <input
+                                    type="text"
+                                    value={item.paymentMethod || linkedPO?.paymentMethod || ''}
+                                    onChange={(e) => changeBreakdownItemField(realIndex, 'paymentMethod', e.target.value)}
+                                    placeholder="Bank Transfer, GCash, Cash"
+                                  />
+                                </label>
+                                <label style={{ gridColumn: '1 / -1' }}>
+                                  Description (Purchase Order only)
+                                  <input
+                                    type="text"
+                                    value={linkedPO?.description || ''}
+                                    onChange={(e) => changePOItemDescription(item.mirrorId, e.target.value)}
+                                    placeholder="e.g. Round-trip airfare for 5 pax, CRK-MPH"
+                                  />
+                                </label>
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      )}
+                        )
+                      })()}
+                      {(() => {
+                        const rowAlts = readAlternatives(item)
+                        const isExpanded = expandedAltRowIds.has(rowId)
+                        return (
+                          <div className="pax-tier-alt-block">
+                            <div className="pax-tier-alt-header">
+                              <button
+                                type="button"
+                                className="pax-tier-alt-toggle"
+                                onClick={() => toggleAltRowExpanded(rowId)}
+                                disabled={rowAlts.length === 0}
+                                title={rowAlts.length === 0 ? 'No alternatives yet' : (isExpanded ? 'Hide alternatives' : 'Show alternatives')}
+                              >
+                                <svg width="10" height="10" viewBox="0 0 12 12" fill="none" style={{ transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}><path d="M4 2l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                Alternatives{rowAlts.length > 0 ? ` (${rowAlts.length})` : ''}
+                              </button>
+                              <button
+                                type="button"
+                                className="pax-tier-alt-add-btn"
+                                onClick={() => { addBreakdownAlternative(realIndex) }}
+                                title="Save another option (e.g. a different vendor's quote) without changing the active price"
+                              >
+                                <Plus size={11} /> Add alternative
+                              </button>
+                            </div>
+                            {isExpanded && rowAlts.length > 0 && (
+                              <div className="pax-tier-alt-list">
+                                {rowAlts.map((alt) => (
+                                  <div key={alt.id} className="pax-tier-alt-card">
+                                    <div className="pax-tier-alt-card-row">
+                                      <label className="pax-tier-alt-field pax-tier-alt-field-wide">
+                                        <span>Vendor / Option</span>
+                                        <input
+                                          type="text"
+                                          value={alt.vendor || ''}
+                                          onChange={(e) => changeAlternativeField(realIndex, alt.id, 'vendor', e.target.value)}
+                                          placeholder="e.g. AirAsia"
+                                        />
+                                      </label>
+                                      <label className="pax-tier-alt-field">
+                                        <span>Details</span>
+                                        <input
+                                          type="text"
+                                          value={alt.details || ''}
+                                          onChange={(e) => changeAlternativeField(realIndex, alt.id, 'details', e.target.value)}
+                                          placeholder="e.g. CRK - MPH"
+                                        />
+                                      </label>
+                                    </div>
+                                    <div className="pax-tier-alt-card-row">
+                                      {(['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant'] as const).map((field, fi) => (
+                                        <label className="pax-tier-alt-field pax-tier-alt-field-price" key={field}>
+                                          <span>{['Adult', 'Child', 'Senior', 'Infant'][fi]}</span>
+                                          <input
+                                            type="text"
+                                            value={(alt[field] as string) || ''}
+                                            onChange={(e) => changeAlternativeField(realIndex, alt.id, field, e.target.value)}
+                                            placeholder="0.00"
+                                          />
+                                        </label>
+                                      ))}
+                                    </div>
+                                    <div className="pax-tier-alt-card-row">
+                                      <label className="pax-tier-alt-field">
+                                        <span>Contact No.</span>
+                                        <input
+                                          type="text"
+                                          value={alt.contactNumber || ''}
+                                          onChange={(e) => changeAlternativeField(realIndex, alt.id, 'contactNumber', e.target.value)}
+                                          placeholder="09xxxxxxxxx"
+                                        />
+                                      </label>
+                                      <label className="pax-tier-alt-field">
+                                        <span>Payment Method</span>
+                                        <input
+                                          type="text"
+                                          value={alt.paymentMethod || ''}
+                                          onChange={(e) => changeAlternativeField(realIndex, alt.id, 'paymentMethod', e.target.value)}
+                                          placeholder="Bank Transfer, GCash, Cash"
+                                        />
+                                      </label>
+                                    </div>
+                                    <div className="pax-tier-alt-card-actions">
+                                      <button
+                                        type="button"
+                                        className="pax-tier-alt-use-btn"
+                                        onClick={() => selectBreakdownAlternative(realIndex, alt.id)}
+                                        title="Make this the active price — it will show in the calculation and on documents"
+                                      >
+                                        Use this one
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="pax-tier-alt-remove-btn"
+                                        onClick={() => removeBreakdownAlternative(realIndex, alt.id)}
+                                        title="Delete this alternative"
+                                      >
+                                        <X size={12} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })()}
                       <div className="pax-tier-toggle-row">
-                        {isLegacyItem ? (
-                          <>
-                            <button
-                              type="button"
-                              className={`pax-tier-toggle-btn ${shownInQuotation ? 'active' : ''}`}
-                              onClick={() => changeBreakdownItemField(realIndex, 'sendToQuotation', !item.sendToQuotation)}
-                              title="Show this item in the Quotation document"
-                            >
-                              {shownInQuotation ? <Eye size={12} /> : <EyeOff size={12} />}
-                              <span>Quotation</span>
-                            </button>
-                            <button
-                              type="button"
-                              className={`pax-tier-toggle-btn ${shownInInvoice ? 'active' : ''}`}
-                              onClick={() => toggleBreakdownMirrorVisibility(item.mirrorId, item.id, 'invoice')}
-                              disabled={!linkedAddon}
-                              title={linkedAddon ? 'Show this item in the Invoice document' : 'No linked Invoice addon yet'}
-                            >
-                              {shownInInvoice ? <Eye size={12} /> : <EyeOff size={12} />}
-                              <span>Invoice</span>
-                            </button>
-                          </>
-                        ) : rowItemType === 'addon' ? (
+                        {rowItemType === 'addon' ? (
                           <span className="pax-tier-toggle-static" title="Add-ons always show on the Quotation & Invoice, never the Breakdown">
                             <Eye size={12} /> Quotation &amp; Invoice
                           </span>
@@ -4219,17 +5083,9 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
                             <Eye size={12} /> Breakdown only
                           </span>
                         )}
-                        <button
-                          type="button"
-                          className={`pax-tier-toggle-btn ${shownInPO ? 'active' : ''}`}
-                          onClick={() => toggleBreakdownMirrorVisibility(item.mirrorId, item.id, 'po')}
-                          disabled={!linkedPO}
-                          title={linkedPO ? 'Show this item in the Purchase Order document' : 'No linked Purchase Order item yet'}
-                        >
-                          {shownInPO ? <Eye size={12} /> : <EyeOff size={12} />}
-                          <span>Purchase Order</span>
-                        </button>
                       </div>
+                      </div>
+                      )}
                     </div>
                   )
                 })}
@@ -4327,11 +5183,12 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
               <h2>Itinerary &amp; hotel per day</h2>
               <div className="doc-affects">
                 <span className="doc-affects-label">Appears on</span>
+                <span className="doc-tag doc-tag-quotation">Quotation</span>
                 <span className="doc-tag doc-tag-voucher">Voucher</span>
               </div>
             </div>
             {(() => {
-              const rows: { date: string; itinerary: string; hotel: string }[] = (() => {
+              const rows: { date: string; itinerary: string; hotel: string; showOnQuotation?: boolean }[] = (() => {
                 try { return bookingForm.voucherRowsJson ? JSON.parse(bookingForm.voucherRowsJson) : [] } catch { return [] }
               })()
               const save = (updated: typeof rows) => updateBookingField('voucherRowsJson', JSON.stringify(updated))
@@ -4347,6 +5204,10 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
                 save(next)
               }
               const removeRow = (i: number) => save(rows.filter((_, idx) => idx !== i))
+              const toggleShowOnQuotation = (i: number) => {
+                const next = rows.map((r, idx) => idx === i ? { ...r, showOnQuotation: !r.showOnQuotation } : r)
+                save(next)
+              }
               return (
                 <div className="voucher-day-builder">
                   {rows.length === 0 && (
@@ -4356,7 +5217,18 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
                     <div key={i} className="voucher-day-row">
                       <div className="voucher-day-header">
                         <span>Day {i + 1}</span>
-                        <button type="button" className="voucher-day-remove" onClick={() => removeRow(i)}>× Remove</button>
+                        <div className="voucher-day-header-actions">
+                          <button
+                            type="button"
+                            className={`pax-tier-toggle-btn ${row.showOnQuotation ? 'active' : ''}`}
+                            onClick={() => toggleShowOnQuotation(i)}
+                            title={row.showOnQuotation ? 'Shown on the Quotation document — click to hide' : 'Show this day on the Quotation document'}
+                          >
+                            {row.showOnQuotation ? <Eye size={12} /> : <EyeOff size={12} />}
+                            <span>Quotation</span>
+                          </button>
+                          <button type="button" className="voucher-day-remove" onClick={() => removeRow(i)}>× Remove</button>
+                        </div>
                       </div>
                       <div className="field-grid three">
                         <label>
@@ -4410,7 +5282,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
                 <button
                   type="button"
                   className="cancel-form-btn"
-                  onClick={() => { setEditingBookingId(''); setScreen(isEditingBooking ? 'booking-detail' : 'home') }}
+                  onClick={() => { setEditingBookingId(''); setScreen(isEditingBooking ? dataFormReturnScreen : 'home') }}
                 >
                   ← Cancel
                 </button>
@@ -4442,6 +5314,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
           const label = item?.description || ''
           const modalPax = getItemPaxBreakdown(item, bookingForm)
           const modalExcluded = readExcludedPax(item)
+          const modalIsAddon = item?.itemType === 'addon'
           return (
             <div className="pax-modal-overlay" onClick={() => setPaxModalIndex(-1)}>
               <div className="pax-modal" onClick={(e) => e.stopPropagation()}>
@@ -4454,11 +5327,36 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
                 <div className="pax-modal-body">
                   {(['adult', 'child', 'senior', 'infant'] as const).map((category) => {
                     const isExcluded = modalExcluded.includes(category)
+                    const groupMax = parseQuantity(readGroupPax(bookingForm)[category])
+                    const currentCount = parseQuantity(modalPax[category])
+                    const canAdjust = modalIsAddon && !isExcluded
                     return (
                       <label key={category} className="pax-modal-field">
                         <span>{category.charAt(0).toUpperCase() + category.slice(1)}</span>
                         <div className={`pax-tier-inherited-value${isExcluded ? ' excluded' : ''}`}>
+                          {canAdjust && (
+                            <button
+                              type="button"
+                              className="pax-tier-adjust-btn"
+                              onClick={() => adjustItemPaxOverride(paxModalIndex, category, -1)}
+                              disabled={currentCount <= 0}
+                              title={`Reduce ${category} taking this add-on`}
+                            >
+                              <ChevronDown size={11} />
+                            </button>
+                          )}
                           <span>{isExcluded ? '—' : (modalPax[category] || '0')}</span>
+                          {canAdjust && (
+                            <button
+                              type="button"
+                              className="pax-tier-adjust-btn"
+                              onClick={() => adjustItemPaxOverride(paxModalIndex, category, 1)}
+                              disabled={currentCount >= groupMax}
+                              title={`Increase ${category} taking this add-on (up to the group total above)`}
+                            >
+                              <ChevronUp size={11} />
+                            </button>
+                          )}
                           <button
                             type="button"
                             className="pax-tier-exclude-btn"
@@ -4507,14 +5405,6 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
             </div>
           </div>
           <div className="nav-actions">
-            <button
-              type="button"
-              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
-              onClick={() => setIsDark((d) => !d)}
-              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-            >
-              {isDark ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
             <button type="button" onClick={() => setScreen('home')} title="Back">
               <X size={18} />
             </button>
@@ -4764,14 +5654,6 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
           </div>
           <div className="nav-actions">
             <button
-              type="button"
-              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
-              onClick={() => setIsDark((d) => !d)}
-              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-            >
-              {isDark ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
-            <button
               className="nav-text-action"
               type="button"
               onClick={() => setScreen('booking-detail')}
@@ -4867,12 +5749,13 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
           </div>
           <div className="nav-actions">
             <button
+              className="nav-text-action"
               type="button"
-              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
-              onClick={() => setIsDark((d) => !d)}
-              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+              onClick={handleEditBooking}
+              title="Edit booking info"
             >
-              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+              <Pencil size={18} />
+              <span>Edit booking info</span>
             </button>
             <button
               className="nav-text-action"
@@ -4896,7 +5779,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
             </button>
             <button
               type="button"
-              onClick={() => setScreen('document-folder')}
+              onClick={() => setScreen(invoiceEditorReturnScreen)}
               title="Back"
             >
               <X size={18} />
@@ -4930,6 +5813,8 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
     const totalPrice = sumLineItems(lineItems, 'total')
     const amountPaid = parseAmount(invoiceForm.invoiceAmountPaid)
     const balance = Math.max(totalPrice - amountPaid, 0)
+    const acrRate = parseFloat(selectedBooking.acr || '')
+    const logPaymentInPhp = Boolean(selectedBooking.currency && selectedBooking.currency !== 'PHP' && acrRate > 0)
 
     return (
       <main className="data-screen">
@@ -4942,14 +5827,6 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
             </div>
           </div>
           <div className="nav-actions">
-            <button
-              type="button"
-              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
-              onClick={() => setIsDark((d) => !d)}
-              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-            >
-              {isDark ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
             <button
               type="button"
               onClick={() => setScreen(invoiceEditorReturnScreen)}
@@ -4984,6 +5861,11 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
             <article>
               <span>Amount paid</span>
               <strong>{convertAndFormat(parseAmount(invoiceForm.invoiceAmountPaid), selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+              {logPaymentInPhp && (
+                <small style={{ display: 'block', marginTop: 4, fontWeight: 700, color: 'var(--muted)' }}>
+                  ≈ {acrPhpTotal(parseAmount(invoiceForm.invoiceAmountPaid), selectedBooking.currency, selectedBooking.acr)?.replace('PHP ', '₱')} paid
+                </small>
+              )}
             </article>
             <article>
               <span>Balance</span>
@@ -4998,15 +5880,25 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
             </div>
             <div className="field-grid two">
               <label>
-                Amount received ({getCurrencySymbol(selectedBooking.currency)})
+                Amount received ({logPaymentInPhp ? '₱' : getCurrencySymbol(selectedBooking.currency)})
                 <input
                   type="number"
                   min="0"
                   step="0.01"
                   value={paymentEntry.amount}
                   onChange={(e) => setPaymentEntry((p) => ({ ...p, amount: e.target.value }))}
-                  placeholder="e.g. 5000"
+                  placeholder={logPaymentInPhp ? 'e.g. 150' : 'e.g. 5000'}
                 />
+                {logPaymentInPhp && (
+                  <span className="field-help">
+                    Logged in Philippine pesos, converted using this booking's ACR rate (1 {selectedBooking.currency} = ₱{acrRate.toLocaleString('en-PH', { minimumFractionDigits: 2 })}).
+                  </span>
+                )}
+                {!logPaymentInPhp && selectedBooking.currency && selectedBooking.currency !== 'PHP' && (
+                  <span className="field-help">
+                    Set an ACR rate on this booking to log peso payments instead.
+                  </span>
+                )}
               </label>
               <label>
                 Payment date
@@ -5165,12 +6057,13 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
           </div>
           <div className="nav-actions">
             <button
+              className="nav-text-action"
               type="button"
-              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
-              onClick={() => setIsDark((d) => !d)}
-              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+              onClick={handleEditBooking}
+              title="Edit booking info"
             >
-              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+              <Pencil size={18} />
+              <span>Edit booking info</span>
             </button>
             <button
               className="nav-text-action"
@@ -5194,6 +6087,15 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
             </button>
             <button
               type="button"
+              className="nav-text-action"
+              onClick={openPaymentUpdateModal}
+              title="Update payment"
+            >
+              <CheckCircle2 size={18} />
+              <span>Update Payment</span>
+            </button>
+            <button
+              type="button"
               onClick={openInvoiceEditor}
               title="Edit invoice"
             >
@@ -5210,6 +6112,215 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
         </nav>
 
         {renderInvoiceDoc(selectedBooking)}
+
+        {isPaymentUpdateModalOpen && (
+          <div className="pax-modal-overlay" onClick={() => setIsPaymentUpdateModalOpen(false)}>
+            <div className="pax-modal payment-update-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="pax-modal-header">
+                <span>Update <strong>payment</strong></span>
+                <button type="button" className="pax-modal-close" onClick={() => setIsPaymentUpdateModalOpen(false)}>
+                  <X size={18} />
+                </button>
+              </div>
+
+              <form className="payment-update-modal-body" onSubmit={handleSaveInvoiceUpdate}>
+                {(() => {
+                  const lineItems = getBookingLineItems(selectedBooking)
+                  const totalPrice = sumLineItems(lineItems, 'total')
+                  const amountPaid = parseAmount(invoiceForm.invoiceAmountPaid)
+                  const balance = Math.max(totalPrice - amountPaid, 0)
+                  const acrRate = parseFloat(selectedBooking.acr || '')
+                  const logPaymentInPhp = Boolean(selectedBooking.currency && selectedBooking.currency !== 'PHP' && acrRate > 0)
+
+                  return (
+                    <>
+                      <section className="invoice-edit-summary">
+                        <article>
+                          <span>Total invoice</span>
+                          <strong>{convertAndFormat(totalPrice, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+                        </article>
+                        <article>
+                          <span>Amount paid</span>
+                          <strong>{convertAndFormat(amountPaid, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+                          {logPaymentInPhp && (
+                            <small style={{ display: 'block', marginTop: 4, fontWeight: 700, color: 'var(--muted)' }}>
+                              ≈ {acrPhpTotal(amountPaid, selectedBooking.currency, selectedBooking.acr)?.replace('PHP ', '₱')} paid
+                            </small>
+                          )}
+                        </article>
+                        <article>
+                          <span>Balance</span>
+                          <strong>{convertAndFormat(balance, selectedBooking.currency || 'PHP', exchangeRates)}</strong>
+                        </article>
+                      </section>
+
+                      <section className="form-section">
+                        <div className="form-section-heading">
+                          <p>Log a payment</p>
+                          <h2>Add customer payment</h2>
+                        </div>
+                        <div className="field-grid two">
+                          <label>
+                            Amount received ({logPaymentInPhp ? '₱' : getCurrencySymbol(selectedBooking.currency)})
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={paymentEntry.amount}
+                              onChange={(e) => setPaymentEntry((p) => ({ ...p, amount: e.target.value }))}
+                              placeholder={logPaymentInPhp ? 'e.g. 150' : 'e.g. 5000'}
+                            />
+                            {logPaymentInPhp && (
+                              <span className="field-help">
+                                Logged in Philippine pesos, converted using this booking's ACR rate (1 {selectedBooking.currency} = ₱{acrRate.toLocaleString('en-PH', { minimumFractionDigits: 2 })}).
+                              </span>
+                            )}
+                            {!logPaymentInPhp && selectedBooking.currency && selectedBooking.currency !== 'PHP' && (
+                              <span className="field-help">
+                                Set an ACR rate on this booking to log peso payments instead.
+                              </span>
+                            )}
+                          </label>
+                          <label>
+                            Payment date
+                            <input
+                              type="date"
+                              value={paymentEntry.date}
+                              onChange={(e) => setPaymentEntry((p) => ({ ...p, date: e.target.value }))}
+                            />
+                          </label>
+                          <label>
+                            Payment method
+                            <input
+                              value={paymentEntry.method}
+                              onChange={(e) => setPaymentEntry((p) => ({ ...p, method: e.target.value }))}
+                              placeholder="GCash, BDO, cash, etc."
+                            />
+                          </label>
+                          <label>
+                            Reference / OR no.
+                            <input
+                              value={paymentEntry.reference}
+                              onChange={(e) => setPaymentEntry((p) => ({ ...p, reference: e.target.value }))}
+                              placeholder="GCash ref, OR no., bank ref"
+                            />
+                          </label>
+                        </div>
+                        <button
+                          type="button"
+                          className="log-payment-btn"
+                          onClick={handleLogPayment}
+                          disabled={!paymentEntry.amount || Number(paymentEntry.amount) <= 0}
+                        >
+                          + Log payment
+                        </button>
+                      </section>
+
+                      <section className="form-section">
+                        <div className="form-section-heading">
+                          <p>Payment records</p>
+                          <h2>History &amp; status</h2>
+                        </div>
+                        <div className="payment-log-list">
+                          {invoiceForm.paymentRecords
+                            ? invoiceForm.paymentRecords.split('\n').filter(Boolean).map((rec, i) => (
+                                <div key={i} className="payment-log-entry">
+                                  <span>{rec}</span>
+                                  <button
+                                    type="button"
+                                    className="payment-log-remove"
+                                    title="Remove this record"
+                                    onClick={() => handleRemovePaymentRecord(i)}
+                                  >×</button>
+                                </div>
+                              ))
+                            : <p className="payment-log-empty">No payments logged yet.</p>
+                          }
+                        </div>
+                        <div className="field-grid two" style={{ marginTop: '1rem' }}>
+                          <label>
+                            Payment status
+                            <div className="payment-status-row">
+                              <span className={`payment-status-badge status-${invoiceForm.invoicePaymentStatus.toLowerCase().replaceAll(' ', '-')}`}>
+                                {invoiceForm.invoicePaymentStatus}
+                              </span>
+                              {invoiceForm.invoicePaymentStatus !== 'Paid' && (
+                                <button
+                                  type="button"
+                                  className="mark-paid-btn"
+                                  onClick={() => handlePaymentStatusSelect('Paid')}
+                                >
+                                  <CheckCircle2 size={16} />
+                                  PAID?
+                                </button>
+                              )}
+                            </div>
+                            <span className="field-help">Auto-updates as you log or remove payments. Click "PAID?" to settle the remaining balance and record the date it was fully paid.</span>
+                          </label>
+                          <label>
+                            Total paid so far (auto-summed)
+                            <input
+                              type="number"
+                              value={invoiceForm.invoiceAmountPaid}
+                              onChange={(event) => updateInvoiceField('invoiceAmountPaid', event.target.value)}
+                              placeholder="0"
+                            />
+                          </label>
+                        </div>
+                      </section>
+                    </>
+                  )
+                })()}
+
+                <div className="fully-paid-modal-actions">
+                  <button type="button" className="fully-paid-cancel-btn" onClick={() => setIsPaymentUpdateModalOpen(false)}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="fully-paid-confirm-btn">
+                    <Save size={16} />
+                    Save payment update
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {isFullyPaidModalOpen && (
+          <div className="pax-modal-overlay" onClick={() => setIsFullyPaidModalOpen(false)}>
+            <div className="pax-modal fully-paid-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="pax-modal-header">
+                <span>Mark invoice as <strong>Paid</strong></span>
+                <button type="button" className="pax-modal-close" onClick={() => setIsFullyPaidModalOpen(false)}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="fully-paid-modal-body">
+                <p>
+                  This will settle the remaining balance of{' '}
+                  <strong>{convertAndFormat(Math.max(getInvoiceEditorTotal() - parseAmount(invoiceForm.invoiceAmountPaid), 0), selectedBooking.currency || 'PHP', exchangeRates)}</strong>{' '}
+                  to {selectedBooking.currency || 'PHP'} 0.00. When was it fully paid?
+                </p>
+                <label className="fully-paid-date-field">
+                  Date fully paid
+                  <input
+                    type="date"
+                    value={fullyPaidDateInput}
+                    onChange={(e) => setFullyPaidDateInput(e.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="fully-paid-modal-actions">
+                <button type="button" className="fully-paid-cancel-btn" onClick={() => setIsFullyPaidModalOpen(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="fully-paid-confirm-btn" onClick={confirmFullyPaid}>
+                  Confirm fully paid
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     )
   }
@@ -5242,14 +6353,6 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
             </div>
           </div>
           <div className="nav-actions">
-            <button
-              type="button"
-              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
-              onClick={() => setIsDark((d) => !d)}
-              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-            >
-              {isDark ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
             <button
               className="nav-text-action"
               type="button"
@@ -5314,12 +6417,13 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
           </div>
           <div className="nav-actions">
             <button
+              className="nav-text-action"
               type="button"
-              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
-              onClick={() => setIsDark((d) => !d)}
-              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+              onClick={handleEditBooking}
+              title="Edit booking info"
             >
-              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+              <Pencil size={18} />
+              <span>Edit booking info</span>
             </button>
             <button
               className="nav-text-action"
@@ -5343,7 +6447,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
             </button>
             <button
               type="button"
-              onClick={() => setScreen('document-folder')}
+              onClick={() => setScreen(invoiceEditorReturnScreen)}
               title="Back"
             >
               <X size={18} />
@@ -5385,12 +6489,13 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
           </div>
           <div className="nav-actions">
             <button
+              className="nav-text-action"
               type="button"
-              className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
-              onClick={() => setIsDark((d) => !d)}
-              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+              onClick={handleEditBooking}
+              title="Edit booking info"
             >
-              {isDark ? <Sun size={18} /> : <Moon size={18} />}
+              <Pencil size={18} />
+              <span>Edit booking info</span>
             </button>
             <button
               className="nav-text-action"
@@ -5414,7 +6519,7 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
             </button>
             <button
               type="button"
-              onClick={() => setScreen('document-folder')}
+              onClick={() => setScreen(invoiceEditorReturnScreen)}
               title="Back"
             >
               <X size={18} />
@@ -5435,25 +6540,29 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
       .sort((a, b) => a.date.localeCompare(b.date) || a.employeeName.localeCompare(b.employeeName))
     const totalMinutesVisible = visibleEntries.reduce((sum, e) => sum + getDtrEntryMinutes(e), 0)
     const daysLoggedVisible = new Set(visibleEntries.map((e) => e.date)).size
-    // Group every entry into an employee+month "record" — this is what makes the
+    // Group every entry into an employee "record" — this is what makes the
     // DTR feel like a normal records system: create one, open one, delete one.
-    type DtrRecordSummary = { employeeName: string; month: string; daysLogged: number; totalMinutes: number; lastUpdated: string }
+    // Grouped by employee ONLY (not employee+month) so logging into a new
+    // month keeps adding to the same card instead of spawning a new one.
+    type DtrRecordSummary = { employeeName: string; firstMonth: string; lastMonth: string; daysLogged: number; totalMinutes: number; lastUpdated: string }
     const recordMap = new Map<string, DtrRecordSummary>()
     for (const entry of dtrEntries) {
       const month = entry.date.slice(0, 7)
-      const key = `${entry.employeeName}__${month}`
+      const key = entry.employeeName
       if (!recordMap.has(key)) {
-        recordMap.set(key, { employeeName: entry.employeeName, month, daysLogged: 0, totalMinutes: 0, lastUpdated: entry.updatedAt || entry.createdAt || '' })
+        recordMap.set(key, { employeeName: entry.employeeName, firstMonth: month, lastMonth: month, daysLogged: 0, totalMinutes: 0, lastUpdated: entry.updatedAt || entry.createdAt || '' })
       }
       const rec = recordMap.get(key)!
       rec.daysLogged += 1
       rec.totalMinutes += getDtrEntryMinutes(entry)
+      if (month < rec.firstMonth) rec.firstMonth = month
+      if (month > rec.lastMonth) rec.lastMonth = month
       if ((entry.updatedAt || entry.createdAt || '') > rec.lastUpdated) rec.lastUpdated = entry.updatedAt || entry.createdAt || ''
     }
-    const allRecords = Array.from(recordMap.values()).sort((a, b) => b.month.localeCompare(a.month) || a.employeeName.localeCompare(b.employeeName))
+    const allRecords = Array.from(recordMap.values()).sort((a, b) => b.lastMonth.localeCompare(a.lastMonth) || a.employeeName.localeCompare(b.employeeName))
     const recordSearchLower = dtrRecordSearch.trim().toLowerCase()
     const filteredRecords = recordSearchLower
-      ? allRecords.filter((r) => r.employeeName.toLowerCase().includes(recordSearchLower) || r.month.includes(recordSearchLower))
+      ? allRecords.filter((r) => r.employeeName.toLowerCase().includes(recordSearchLower) || r.firstMonth.includes(recordSearchLower) || r.lastMonth.includes(recordSearchLower))
       : allRecords
 
     // ----- DTR records list (landing) view -----
@@ -5516,10 +6625,11 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
             ) : (
               <div className="dtr-records-grid">
                 {filteredRecords.map((rec) => {
-                  const monthLabel = new Date(`${rec.month}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-                  const isCurrentMonth = rec.month === getTodayDateStr().slice(0, 7)
+                  const formatMonth = (m: string) => new Date(`${m}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+                  const monthLabel = rec.firstMonth === rec.lastMonth ? formatMonth(rec.firstMonth) : `${formatMonth(rec.firstMonth)} – ${formatMonth(rec.lastMonth)}`
+                  const isCurrentMonth = rec.lastMonth === getTodayDateStr().slice(0, 7)
                   return (
-                    <div key={`${rec.employeeName}__${rec.month}`} className={`dtr-record-card ${isCurrentMonth ? 'dtr-record-card-current' : ''}`}>
+                    <div key={rec.employeeName} className={`dtr-record-card ${isCurrentMonth ? 'dtr-record-card-current' : ''}`}>
                       <div className="dtr-record-card-top">
                         <div className="dtr-record-avatar">{rec.employeeName.charAt(0).toUpperCase()}</div>
                         <div className="dtr-record-card-info">
@@ -5538,11 +6648,11 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
                         </div>
                       </div>
                       <div className="dtr-record-card-actions">
-                        <button type="button" className="dtr-record-open-btn" onClick={() => openDtrRecord(rec.employeeName, rec.month)}>
+                        <button type="button" className="dtr-record-open-btn" onClick={() => openDtrRecord(rec.employeeName)}>
                           <Eye size={14} />
                           Open
                         </button>
-                        <button type="button" className="dtr-record-delete-btn" onClick={() => setDtrDeleteRecordTarget({ employeeName: rec.employeeName, month: rec.month })}>
+                        <button type="button" className="dtr-record-delete-btn" onClick={() => setDtrDeleteRecordTarget({ employeeName: rec.employeeName })}>
                           <Trash2 size={14} />
                         </button>
                       </div>
@@ -5600,12 +6710,11 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
               <div className="dtr-modal" onClick={(e) => e.stopPropagation()}>
                 <h3>Delete this record?</h3>
                 <p className="dtr-modal-sub">
-                  This permanently deletes every logged day for <strong>{dtrDeleteRecordTarget.employeeName}</strong> in{' '}
-                  <strong>{new Date(`${dtrDeleteRecordTarget.month}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</strong>. This cannot be undone.
+                  This permanently deletes every logged day for <strong>{dtrDeleteRecordTarget.employeeName}</strong> across all months. This cannot be undone.
                 </p>
                 <div className="dtr-modal-actions">
                   <button type="button" className="dtr-cancel-btn" disabled={dtrDeletingRecord} onClick={() => setDtrDeleteRecordTarget(null)}>Cancel</button>
-                  <button type="button" className="dtr-record-delete-confirm-btn" disabled={dtrDeletingRecord} onClick={() => handleDeleteDtrRecord(dtrDeleteRecordTarget.employeeName, dtrDeleteRecordTarget.month)}>
+                  <button type="button" className="dtr-record-delete-confirm-btn" disabled={dtrDeletingRecord} onClick={() => handleDeleteDtrRecord(dtrDeleteRecordTarget.employeeName)}>
                     <Trash2 size={15} />
                     {dtrDeletingRecord ? 'Deleting...' : 'Delete record'}
                   </button>
@@ -6076,8 +7185,59 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
   ).sort((a, b) => b - a)
   if (!availableYears.includes(activeYear)) availableYears.unshift(activeYear)
 
-  function toggleMonth(monthKey: string) {
-    setExpandedMonth(prev => prev === monthKey ? null : monthKey)
+  function openMonthModal(monthKey: string) {
+    setMonthModalSearch('')
+    setMonthModalKey(monthKey)
+  }
+  function closeMonthModal() {
+    setMonthModalKey(null)
+    setMonthModalSearch('')
+  }
+  const activeMonthGroup = bookingsByMonth.find((m) => m.monthKey === monthModalKey) ?? null
+  const monthModalQuery = monthModalSearch.trim().toLowerCase()
+  const monthModalItems = activeMonthGroup
+    ? activeMonthGroup.items.filter((b) => !monthModalQuery || [b.clientName, b.packageName, b.destination, b.quotationNo, b.status]
+        .join(' ').toLowerCase().includes(monthModalQuery))
+    : []
+
+  // Global name/package/destination search — surfaced in its own modal as the user types
+  const globalSearchQuery = searchTerm.trim().toLowerCase()
+  const globalSearchResults = globalSearchQuery
+    ? bookings.filter((b) => [b.clientName, b.packageName, b.destination, b.quotationNo, b.status]
+        .join(' ').toLowerCase().includes(globalSearchQuery))
+    : []
+
+  function renderBookingRow(booking: typeof bookings[number], onSelect: () => void) {
+    return (
+      <button
+        key={booking.id}
+        type="button"
+        className={`project-card status-${booking.status.toLowerCase().replaceAll(' ', '-')}`}
+        onClick={onSelect}
+      >
+        <div className="project-main">
+          <div className="project-icon"><FileText size={20} /></div>
+          <div>
+            <strong style={{ fontSize: '1.05rem', fontWeight: 800 }}>{booking.clientName}</strong>
+            <span style={{ fontSize: '0.8rem', opacity: 0.75 }}>{booking.packageName}</span>
+          </div>
+        </div>
+        <div className="project-meta">
+          <span className="status-pill">{booking.status}</span>
+          <span><CalendarDays size={14} />{formatProjectDate(booking.createdAt)}</span>
+          {booking.travelStart && (
+            <span><Plane size={14} />{formatProjectDate(booking.travelStart)}{booking.travelEnd ? ` – ${formatProjectDate(booking.travelEnd)}` : ''}</span>
+          )}
+          <span><MapPin size={14} />{dashboardPhpTotal(booking)}</span>
+          {(booking.createdByName || (booking as any).createdByEmail) && (
+            <span className="booking-by-tag">
+              By: {booking.createdByName || getDisplayName((booking as any).createdByEmail)}
+            </span>
+          )}
+          <ChevronRight size={17} />
+        </div>
+      </button>
+    )
   }
 
   return (
@@ -6091,14 +7251,6 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
           </div>
         </div>
         <div className="nav-actions">
-          <button
-            type="button"
-            className={`dark-toggle-btn ${isDark ? 'dark-active' : ''}`}
-            onClick={() => setIsDark((d) => !d)}
-            title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-          >
-            {isDark ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
           <button
             type="button"
             className={`chat-nav-btn ${isChatOpen ? 'chat-active' : ''}`}
@@ -6120,9 +7272,47 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
               <span className="nav-clock-period">{formatLiveClockParts(liveClock).period}</span>
             </span>
           </button>
-          <button type="button" onClick={handleLogout} title="Log out">
-            <LogOut size={18} />
-          </button>
+          <div className="account-menu-wrap">
+            <button
+              ref={accountMenuTriggerRef}
+              type="button"
+              className={`nav-text-action account-menu-trigger${accountMenuOpen ? ' is-open' : ''}`}
+              onClick={() => setAccountMenuOpen(o => !o)}
+              title="Account settings"
+            >
+              <Settings size={18} />
+            </button>
+            {accountMenuOpen && (
+              <FloatingDropdownMenu anchorRef={accountMenuTriggerRef} onClose={() => setAccountMenuOpen(false)}>
+                <ul className="po-service-dropdown-list account-menu-list">
+                  <li className="account-menu-header">
+                    <strong>{authUser?.displayName || (authUser?.email ? getDisplayName(authUser.email) : 'Account')}</strong>
+                    <span>{authUser?.email}</span>
+                  </li>
+                  <li className="po-service-dropdown-item">
+                    <button type="button" className="po-service-dropdown-select" onClick={() => openAccountModal('name')}>
+                      <Pencil size={14} /> Change name
+                    </button>
+                  </li>
+                  <li className="po-service-dropdown-item">
+                    <button type="button" className="po-service-dropdown-select" onClick={() => openAccountModal('password')}>
+                      <LockKeyhole size={14} /> Change password
+                    </button>
+                  </li>
+                  <li className="po-service-dropdown-item">
+                    <button type="button" className="po-service-dropdown-select" onClick={() => { setAccountMenuOpen(false); void handleLogout() }}>
+                      <LogOut size={14} /> Log out
+                    </button>
+                  </li>
+                  <li className="po-service-dropdown-item">
+                    <button type="button" className="po-service-dropdown-select account-menu-danger" onClick={() => openAccountModal('delete')}>
+                      <Trash2 size={14} /> Delete account
+                    </button>
+                  </li>
+                </ul>
+              </FloatingDropdownMenu>
+            )}
+          </div>
           <button
               type="button"
               className="nav-text-action"
@@ -6198,86 +7388,125 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
 
 
 
-          <section className="dashboard-grid">
-            <article className="summary-card teal" onClick={() => setActiveBookingFilter('Quotation')} style={{ cursor: 'pointer' }}>
-              <div className="summary-card-top">
-                <div className="summary-icon blue">
-                  <ClipboardList size={20} />
-                </div>
-                <span>Quotation</span>
-              </div>
-              <strong>{quotationCount}</strong>
-              <small>Pending confirmation</small>
-            </article>
-            <article className="summary-card gold" onClick={() => setActiveBookingFilter('Invoice')} style={{ cursor: 'pointer' }}>
-              <div className="summary-card-top">
-                <div className="summary-icon gold">
-                  <Receipt size={20} />
-                </div>
-                <span>Invoice</span>
-              </div>
-              <strong>{invoiceCount}</strong>
-              <small>Awaiting payment</small>
-            </article>
-            <article className="summary-card green" onClick={() => setActiveBookingFilter('Confirmed')} style={{ cursor: 'pointer' }}>
-              <div className="summary-card-top">
-                <div className="summary-icon green">
-                  <CheckCircle2 size={20} />
-                </div>
-                <span>Confirmed</span>
-              </div>
-              <strong>{confirmedCount}</strong>
-              <small>Ready for travel</small>
-            </article>
-          </section>
-
           <section className="docs-hub-panel">
             <div className="docs-hub-heading">
               <div>
-                <p>Internal</p>
                 <h2>Documents</h2>
               </div>
               <span>{bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length} bookings</span>
             </div>
 
-            <label className="docs-hub-search">
-              <Search size={13} />
-              <input
-                value={docsSearchTerm}
-                onChange={(e) => setDocsSearchTerm(e.target.value)}
-                placeholder="Search client or package…"
-              />
-              {docsSearchTerm.trim() && (
-                <button type="button" className="clear-search-btn" onClick={() => setDocsSearchTerm('')} title="Clear">
-                  <X size={12} />
-                </button>
-              )}
-            </label>
+            <div className="docs-hub-search-row">
+              <label className="docs-hub-search">
+                <Search size={13} />
+                <input
+                  value={docsSearchTerm}
+                  onChange={(e) => setDocsSearchTerm(e.target.value)}
+                  placeholder="Search client or package…"
+                />
+                {docsSearchTerm.trim() && (
+                  <button type="button" className="clear-search-btn" onClick={() => setDocsSearchTerm('')} title="Clear">
+                    <X size={12} />
+                  </button>
+                )}
+              </label>
+              <select
+                className="docs-hub-type-select"
+                value={docsTypeFilter}
+                onChange={(e) => setDocsTypeFilter(e.target.value as typeof docsTypeFilter)}
+              >
+                <option value="All">All documents</option>
+                <option value="Breakdown">Breakdown</option>
+                <option value="Quotation">Quotation</option>
+                <option value="Invoice">Invoice</option>
+                <option value="Purchase Order">Purchase Order</option>
+                <option value="Service Voucher">Service Voucher</option>
+              </select>
+            </div>
 
-            <div className="docs-hub-cards">
+            <div className={`docs-hub-cards ${docsTypeFilter !== 'All' ? 'docs-hub-cards--single' : ''}`}>
               {(() => {
                 const q = docsSearchTerm.trim().toLowerCase()
-                const eligible = bookings.filter(b =>
-                  (b.status === 'Confirmed' || b.status === 'Flown') &&
-                  (!q || b.clientName.toLowerCase().includes(q) || b.packageName.toLowerCase().includes(q))
-                )
-                const noBase = bookings.filter(b => b.status === 'Confirmed' || b.status === 'Flown').length === 0
-                const noMatch = !noBase && eligible.length === 0
+                const matchesSearch = (b: BookingRecord) =>
+                  !q || b.clientName.toLowerCase().includes(q) || b.packageName.toLowerCase().includes(q)
 
-                const renderList = (targetScreen: 'breakdown-preview' | 'purchase-order-preview') => (
+                // Breakdown: any booking with at least one non-package breakdown line item
+                const hasBreakdownRows = (b: BookingRecord) => {
+                  try {
+                    const rows = JSON.parse(b.breakdownLineItemsJson)
+                    return Array.isArray(rows) && rows.some((i: { isPackageRow?: boolean }) => !i.isPackageRow)
+                  } catch { return false }
+                }
+                const breakdownBase = bookings.filter(b => b.status !== 'Flown' && hasBreakdownRows(b))
+                const breakdownList = breakdownBase.filter(matchesSearch)
+                const noBaseBreakdown = breakdownBase.length === 0
+                const noMatchBreakdown = !noBaseBreakdown && breakdownList.length === 0
+
+                // Quotation: only projects still at Quotation status
+                const quotationList = bookings.filter(b => b.status === 'Quotation' && matchesSearch(b))
+                const noBaseQuotation = bookings.filter(b => b.status === 'Quotation').length === 0
+                const noMatchQuotation = !noBaseQuotation && quotationList.length === 0
+
+                // Invoice: only projects still at Invoice status
+                const invoiceList = bookings.filter(b => b.status === 'Invoice' && matchesSearch(b))
+                const noBaseInvoice = bookings.filter(b => b.status === 'Invoice').length === 0
+                const noMatchInvoice = !noBaseInvoice && invoiceList.length === 0
+
+                // Purchase Order: only projects that actually have at least one
+                // PO supplier line item saved (i.e. "Add Purchase Order details"
+                // was used on a service in the Breakdown/Pax-Tier section).
+                const hasPOItems = (b: BookingRecord) => {
+                  try {
+                    const rows = JSON.parse(b.poLineItemsJson || '[]')
+                    return Array.isArray(rows) && rows.some((i: { showInDocument?: boolean }) => i.showInDocument !== false)
+                  } catch { return false }
+                }
+                const purchaseOrderBase = bookings.filter(b => b.status !== 'Flown' && hasPOItems(b))
+                const purchaseOrderList = purchaseOrderBase.filter(matchesSearch)
+                const noBasePurchaseOrder = purchaseOrderBase.length === 0
+                const noMatchPurchaseOrder = !noBasePurchaseOrder && purchaseOrderList.length === 0
+
+                // Service Voucher: confirmed only (Flown excluded)
+                const eligible = bookings.filter(b => b.status === 'Confirmed' && matchesSearch(b))
+                const noBaseEligible = bookings.filter(b => b.status === 'Confirmed').length === 0
+                const noMatchEligible = !noBaseEligible && eligible.length === 0
+
+                // Partially Paid: invoices with a partial payment logged
+                const partiallyPaidBase = bookings.filter(b => b.status !== 'Flown' && b.invoicePaymentStatus === 'Partially Paid')
+                const partiallyPaidList = partiallyPaidBase.filter(matchesSearch)
+                const noBasePartiallyPaid = partiallyPaidBase.length === 0
+                const noMatchPartiallyPaid = !noBasePartiallyPaid && partiallyPaidList.length === 0
+
+                // Fully Paid: invoices that are fully settled
+                const fullyPaidBase = bookings.filter(b => b.status !== 'Flown' && b.invoicePaymentStatus === 'Paid')
+                const fullyPaidList = fullyPaidBase.filter(matchesSearch)
+                const noBaseFullyPaid = fullyPaidBase.length === 0
+                const noMatchFullyPaid = !noBaseFullyPaid && fullyPaidList.length === 0
+
+                const renderList = (
+                  targetScreen: 'invoice-preview' | 'quotation-preview' | 'voucher-preview' | 'breakdown-preview' | 'purchase-order-preview',
+                  list: BookingRecord[],
+                  noBase: boolean,
+                  noMatch: boolean,
+                  emptyLabel: string
+                ) => (
                   <div className="docs-hub-list">
                     {noBase
-                      ? <p className="docs-hub-empty">No confirmed or flown bookings yet.</p>
+                      ? <p className="docs-hub-empty">{emptyLabel}</p>
                       : noMatch
                         ? <p className="docs-hub-empty">No results for “{docsSearchTerm}”.</p>
-                        : eligible.map(b => (
+                        : list.map(b => (
                           <button
                             type="button"
                             key={b.id}
                             className="docs-hub-row"
-                            onClick={() => { setSelectedBookingId(b.id); setScreen(targetScreen) }}
+                            onClick={() => {
+                              setSelectedBookingId(b.id)
+                              setInvoiceEditorReturnScreen('home')
+                              setScreen(targetScreen)
+                            }}
                           >
-                            <span className={`docs-hub-badge docs-hub-badge--${b.status === 'Flown' ? 'flown' : 'confirmed'}`}>{b.status}</span>
+                            <span className={`docs-hub-badge docs-hub-badge--${b.status === 'Flown' ? 'flown' : b.status === 'Confirmed' ? 'confirmed' : 'default'}`}>{b.status}</span>
                             <span className="docs-hub-info">
                               <span className="docs-hub-client">{b.clientName}</span>
                               <span className="docs-hub-pkg">{b.packageName}</span>
@@ -6291,21 +7520,128 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
 
                 return (
                   <>
-                    <div className="docs-hub-card">
-                      <div className="docs-hub-card-header">
-                        <FileText size={13} />
-                        <span>Breakdown</span>
-                        <strong>{eligible.length}</strong>
+                    {(docsTypeFilter === 'All' || docsTypeFilter === 'Breakdown') && (
+                      <div className="docs-hub-card">
+                        <div className="docs-hub-card-header">
+                          <FileBarChart2 size={13} />
+                          <span>Breakdown</span>
+                          <strong>{breakdownList.length}</strong>
+                        </div>
+                        {renderList('breakdown-preview', breakdownList, noBaseBreakdown, noMatchBreakdown, 'No breakdowns yet.')}
                       </div>
-                      {renderList('breakdown-preview')}
+                    )}
+                    {(docsTypeFilter === 'All' || docsTypeFilter === 'Quotation') && (
+                      <div className="docs-hub-card">
+                        <div className="docs-hub-card-header">
+                          <ClipboardList size={13} />
+                          <span>Quotation</span>
+                          <strong>{quotationList.length}</strong>
+                        </div>
+                        {renderList('quotation-preview', quotationList, noBaseQuotation, noMatchQuotation, 'No quotations yet.')}
+                      </div>
+                    )}
+                    {(docsTypeFilter === 'All' || docsTypeFilter === 'Invoice') && (
+                      <div className="docs-hub-card">
+                        <div className="docs-hub-card-header">
+                          <Receipt size={13} />
+                          <span>Invoice</span>
+                          <strong>{invoiceList.length}</strong>
+                        </div>
+                        {renderList('invoice-preview', invoiceList, noBaseInvoice, noMatchInvoice, 'No invoices yet.')}
+                      </div>
+                    )}
+                    {(docsTypeFilter === 'All' || docsTypeFilter === 'Purchase Order') && (
+                      <div className="docs-hub-card">
+                        <div className="docs-hub-card-header">
+                          <ShoppingCart size={13} />
+                          <span>Purchase Order</span>
+                          <strong>{purchaseOrderList.length}</strong>
+                        </div>
+                        {renderList('purchase-order-preview', purchaseOrderList, noBasePurchaseOrder, noMatchPurchaseOrder, 'No purchase orders yet.')}
+                      </div>
+                    )}
+                    {(docsTypeFilter === 'All' || docsTypeFilter === 'Service Voucher') && (
+                      <div className="docs-hub-card">
+                        <div className="docs-hub-card-header">
+                          <Ticket size={13} />
+                          <span>Service Voucher</span>
+                          <strong>{eligible.length}</strong>
+                        </div>
+                        {renderList('voucher-preview', eligible, noBaseEligible, noMatchEligible, 'No confirmed bookings yet.')}
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
+
+            <div className="docs-hub-payment-cards">
+              {(() => {
+                const q = docsSearchTerm.trim().toLowerCase()
+                const matchesSearch = (b: BookingRecord) =>
+                  !q || b.clientName.toLowerCase().includes(q) || b.packageName.toLowerCase().includes(q)
+
+                const partiallyPaidBase = bookings.filter(b => b.status !== 'Flown' && b.invoicePaymentStatus === 'Partially Paid')
+                const partiallyPaidList = partiallyPaidBase.filter(matchesSearch)
+                const noBasePartiallyPaid = partiallyPaidBase.length === 0
+                const noMatchPartiallyPaid = !noBasePartiallyPaid && partiallyPaidList.length === 0
+
+                const fullyPaidBase = bookings.filter(b => b.status !== 'Flown' && b.invoicePaymentStatus === 'Paid')
+                const fullyPaidList = fullyPaidBase.filter(matchesSearch)
+                const noBaseFullyPaid = fullyPaidBase.length === 0
+                const noMatchFullyPaid = !noBaseFullyPaid && fullyPaidList.length === 0
+
+                const renderPaymentList = (
+                  list: BookingRecord[],
+                  noBase: boolean,
+                  noMatch: boolean,
+                  emptyLabel: string
+                ) => (
+                  <div className="docs-hub-list">
+                    {noBase
+                      ? <p className="docs-hub-empty">{emptyLabel}</p>
+                      : noMatch
+                        ? <p className="docs-hub-empty">No results for “{docsSearchTerm}”.</p>
+                        : list.map(b => (
+                          <button
+                            type="button"
+                            key={b.id}
+                            className="docs-hub-row"
+                            onClick={() => {
+                              setSelectedBookingId(b.id)
+                              setInvoiceEditorReturnScreen('home')
+                              setScreen('invoice-preview')
+                            }}
+                          >
+                            <span className={`docs-hub-badge docs-hub-badge--${b.status === 'Flown' ? 'flown' : b.status === 'Confirmed' ? 'confirmed' : 'default'}`}>{b.status}</span>
+                            <span className="docs-hub-info">
+                              <span className="docs-hub-client">{b.clientName}</span>
+                              <span className="docs-hub-pkg">{b.packageName}</span>
+                            </span>
+                            <ChevronRight size={13} />
+                          </button>
+                        ))
+                    }
+                  </div>
+                )
+
+                return (
+                  <>
+                    <div className="docs-hub-card docs-hub-card--payment docs-hub-card--partial">
+                      <div className="docs-hub-card-header">
+                        <Wallet size={13} />
+                        <span>Partially Paid</span>
+                        <strong>{partiallyPaidList.length}</strong>
+                      </div>
+                      {renderPaymentList(partiallyPaidList, noBasePartiallyPaid, noMatchPartiallyPaid, 'No partially paid invoices yet.')}
                     </div>
-                    <div className="docs-hub-card">
+                    <div className="docs-hub-card docs-hub-card--payment docs-hub-card--full">
                       <div className="docs-hub-card-header">
-                        <FileText size={13} />
-                        <span>Purchase Order</span>
-                        <strong>{eligible.length}</strong>
+                        <BadgeCheck size={13} />
+                        <span>Fully Paid</span>
+                        <strong>{fullyPaidList.length}</strong>
                       </div>
-                      {renderList('purchase-order-preview')}
+                      {renderPaymentList(fullyPaidList, noBaseFullyPaid, noMatchFullyPaid, 'No fully paid invoices yet.')}
                     </div>
                   </>
                 )
@@ -6330,19 +7666,31 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
 
           {dataError && <p className="data-alert error">{dataError}</p>}
           {dataMessage && <p className="data-alert info">{dataMessage}</p>}
-          {sheetsSyncWarning && (
-            <p className="data-alert info" style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-              <span>⚠ Sheets sync: {sheetsSyncWarning}</span>
+          {sheetsLastSyncedAt && (
+            <p className="data-alert info" style={{ fontSize: '.72rem', opacity: 0.75, margin: '0 0 6px' }}>
+              Sheets last synced {formatRelativeTime(sheetsLastSyncedAt)}
+            </p>
+          )}
+          {sheetsSyncIssues.map((issue, i) => (
+            <p
+              key={`${issue.at}-${i}`}
+              className="data-alert info"
+              style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}
+            >
+              <span>⚠ Sheets sync: {issue.message}</span>
               <button
                 type="button"
-                onClick={() => setSheetsSyncWarning('')}
+                onClick={() => {
+                  if (issue.key) dismissedSyncIssueKeysRef.current.add(issue.key)
+                  setSheetsSyncIssues((prev) => prev.filter((_, idx) => idx !== i))
+                }}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', color: 'inherit', flexShrink: 0 }}
                 aria-label="Dismiss"
               >
                 ✕
               </button>
             </p>
-          )}
+          ))}
 
           <label className="booking-search">
             <Search size={16} />
@@ -6386,61 +7734,84 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
             ))}
           </div>
 
-          <div className="project-list">
-            {bookingsByMonth.map(({ monthKey, label, items }) => {
-              const isOpen = expandedMonth === monthKey
-              return (
-                <div key={monthKey} className="month-group">
-                  <button
-                    type="button"
-                    className={`month-group-header ${isOpen ? 'open' : ''}`}
-                    onClick={() => toggleMonth(monthKey)}
-                  >
-                    <ChevronDown size={14} style={{ transform: isOpen ? 'none' : 'rotate(-90deg)', transition: 'transform 0.2s' }} />
-                    <span>{label}</span>
-                    {items.length > 0 && <strong>{items.length}</strong>}
+          <div className="month-strip">
+            {bookingsByMonth.filter(({ items }) => items.length > 0).map(({ monthKey, label, items }) => (
+              <button
+                key={monthKey}
+                type="button"
+                className={`month-card ${items.length === 0 ? 'is-empty' : ''}`}
+                onClick={() => openMonthModal(monthKey)}
+              >
+                <span className="month-card-label">{label}</span>
+                <strong className="month-card-count">{items.length}</strong>
+                <span className="month-card-sub">{items.length === 1 ? 'project' : 'projects'}</span>
+              </button>
+            ))}
+          </div>
+
+          {monthModalKey && activeMonthGroup && (
+            <div className="month-modal-overlay" onClick={closeMonthModal}>
+              <div className="month-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="month-modal-header">
+                  <div>
+                    <strong>{activeMonthGroup.label} {activeYear}</strong>
+                    <span>{activeMonthGroup.items.length} {activeMonthGroup.items.length === 1 ? 'project' : 'projects'}</span>
+                  </div>
+                  <button type="button" className="month-modal-close" onClick={closeMonthModal}>
+                    <X size={18} />
                   </button>
-                  {isOpen && (
-                    <div className="month-group-items">
-                      {items.length === 0 ? (
-                        <p className="month-empty">No projects in {label}.</p>
-                      ) : items.map((booking) => (
-                        <button
-                          key={booking.id}
-                          type="button"
-                          className={`project-card status-${booking.status.toLowerCase().replaceAll(' ', '-')}`}
-                          onClick={() => openBookingDetail(booking.id)}
-                        >
-                          <div className="project-main">
-                            <div className="project-icon"><FileText size={20} /></div>
-                            <div>
-                              <strong style={{ fontSize: '1.05rem', fontWeight: 800 }}>{booking.clientName}</strong>
-                              <span style={{ fontSize: '0.8rem', opacity: 0.75 }}>{booking.packageName}</span>
-                            </div>
-                            {booking.isDuplicate && <span className="duplicated-tag">DUPLICATED</span>}
-                          </div>
-                          <div className="project-meta">
-                            <span className="status-pill">{booking.status}</span>
-                            <span><CalendarDays size={14} />{formatProjectDate(booking.createdAt)}</span>
-                            {booking.travelStart && (
-                              <span><Plane size={14} />{formatProjectDate(booking.travelStart)}{booking.travelEnd ? ` – ${formatProjectDate(booking.travelEnd)}` : ''}</span>
-                            )}
-                            <span><MapPin size={14} />{formatAmount(String(getBookingClientTotal(booking)))}</span>
-                            {(booking.createdByName || (booking as any).createdByEmail) && (
-                              <span className="booking-by-tag">
-                                By: {booking.createdByName || getDisplayName((booking as any).createdByEmail)}
-                              </span>
-                            )}
-                            <ChevronRight size={17} />
-                          </div>
-                        </button>
-                      ))}
-                    </div>
+                </div>
+                <div className="month-modal-search-wrap">
+                  <label className="booking-search">
+                    <Search size={16} />
+                    <input
+                      autoFocus
+                      value={monthModalSearch}
+                      onChange={(e) => setMonthModalSearch(e.target.value)}
+                      placeholder="Search client, package, destination…"
+                    />
+                    {monthModalSearch.trim() && (
+                      <button type="button" className="clear-search-btn" onClick={() => setMonthModalSearch('')} title="Clear">
+                        <X size={14} />
+                      </button>
+                    )}
+                  </label>
+                </div>
+                <div className="month-modal-body">
+                  {activeMonthGroup.items.length === 0 ? (
+                    <p className="month-empty">No projects in {activeMonthGroup.label}.</p>
+                  ) : monthModalItems.length === 0 ? (
+                    <p className="month-empty">No project matching “{monthModalSearch}” in {activeMonthGroup.label}.</p>
+                  ) : monthModalItems.map((booking) =>
+                    renderBookingRow(booking, () => { closeMonthModal(); openBookingDetail(booking.id) })
                   )}
                 </div>
-              )
-            })}
-          </div>
+              </div>
+            </div>
+          )}
+
+          {globalSearchQuery && (
+            <div className="month-modal-overlay" onClick={() => setSearchTerm('')}>
+              <div className="month-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="month-modal-header">
+                  <div>
+                    <strong>Search results</strong>
+                    <span>“{searchTerm.trim()}” · {globalSearchResults.length} {globalSearchResults.length === 1 ? 'match' : 'matches'}</span>
+                  </div>
+                  <button type="button" className="month-modal-close" onClick={() => setSearchTerm('')}>
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className="month-modal-body">
+                  {globalSearchResults.length === 0 ? (
+                    <p className="month-empty">No project found for “{searchTerm.trim()}”. That client or package doesn't seem to exist yet.</p>
+                  ) : globalSearchResults.map((booking) =>
+                    renderBookingRow(booking, () => { setSearchTerm(''); openBookingDetail(booking.id) })
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           <div style={{ marginTop: 'auto', paddingTop: '14px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ color: 'var(--muted)', fontSize: '.78rem', fontWeight: 700 }}>
@@ -6755,6 +8126,158 @@ Today's date: ${toDateInputValue()}. You have the last 20 messages for context. 
             >
               <Send size={16} />
             </button>
+          </div>
+        </div>
+      )}
+
+      {accountModalView === 'name' && (
+        <div className="pax-modal-overlay" onClick={closeAccountModal}>
+          <div className="pax-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="pax-modal-header">
+              <span>Change <strong>name</strong></span>
+              <button type="button" className="pax-modal-close" onClick={closeAccountModal}>
+                <X size={18} />
+              </button>
+            </div>
+            <form
+              className="payment-update-modal-body"
+              onSubmit={(e) => { e.preventDefault(); void handleSaveAccountName() }}
+            >
+              <div className="form-section">
+                <div className="field-grid">
+                  <label>
+                    Display name
+                    <input
+                      autoFocus
+                      value={accountNameInput}
+                      onChange={(e) => setAccountNameInput(e.target.value)}
+                      placeholder="e.g. Juan Dela Cruz"
+                    />
+                  </label>
+                </div>
+                {accountActionError && <p className="field-help account-menu-danger">{accountActionError}</p>}
+              </div>
+              <div className="fully-paid-modal-actions">
+                <button type="button" className="fully-paid-cancel-btn" onClick={closeAccountModal} disabled={accountActionLoading}>
+                  Cancel
+                </button>
+                <button type="submit" className="fully-paid-confirm-btn" disabled={accountActionLoading}>
+                  {accountActionLoading ? 'Saving…' : 'Save name'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {accountModalView === 'password' && (
+        <div className="pax-modal-overlay" onClick={closeAccountModal}>
+          <div className="pax-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="pax-modal-header">
+              <span>Change <strong>password</strong></span>
+              <button type="button" className="pax-modal-close" onClick={closeAccountModal}>
+                <X size={18} />
+              </button>
+            </div>
+            <form
+              className="payment-update-modal-body"
+              onSubmit={(e) => { e.preventDefault(); void handleChangeAccountPassword() }}
+            >
+              <div className="form-section">
+                <div className="field-grid">
+                  <label>
+                    Current password
+                    <input
+                      autoFocus
+                      type="password"
+                      value={accountCurrentPassword}
+                      onChange={(e) => setAccountCurrentPassword(e.target.value)}
+                      placeholder="Current password"
+                    />
+                  </label>
+                  <label>
+                    New password
+                    <input
+                      type="password"
+                      value={accountNewPassword}
+                      onChange={(e) => setAccountNewPassword(e.target.value)}
+                      placeholder="At least 6 characters"
+                    />
+                  </label>
+                  <label>
+                    Confirm new password
+                    <input
+                      type="password"
+                      value={accountConfirmPassword}
+                      onChange={(e) => setAccountConfirmPassword(e.target.value)}
+                      placeholder="Re-enter new password"
+                    />
+                  </label>
+                </div>
+                {accountActionError && <p className="field-help account-menu-danger">{accountActionError}</p>}
+              </div>
+              <div className="fully-paid-modal-actions">
+                <button type="button" className="fully-paid-cancel-btn" onClick={closeAccountModal} disabled={accountActionLoading}>
+                  Cancel
+                </button>
+                <button type="submit" className="fully-paid-confirm-btn" disabled={accountActionLoading}>
+                  {accountActionLoading ? 'Updating…' : 'Update password'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {accountModalView === 'delete' && (
+        <div className="pax-modal-overlay" onClick={closeAccountModal}>
+          <div className="pax-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="pax-modal-header">
+              <span>Delete <strong>account</strong></span>
+              <button type="button" className="pax-modal-close" onClick={closeAccountModal}>
+                <X size={18} />
+              </button>
+            </div>
+            <form
+              className="payment-update-modal-body"
+              onSubmit={(e) => { e.preventDefault(); void handleDeleteAccount() }}
+            >
+              <div className="form-section">
+                <p className="field-help account-menu-danger">
+                  This permanently deletes your login. It does not remove your bookings from Firestore —
+                  talk to an admin if those also need to be cleaned up. This cannot be undone.
+                </p>
+                <div className="field-grid">
+                  <label>
+                    Type DELETE to confirm
+                    <input
+                      autoFocus
+                      value={accountDeleteConfirmText}
+                      onChange={(e) => setAccountDeleteConfirmText(e.target.value)}
+                      placeholder="DELETE"
+                    />
+                  </label>
+                  <label>
+                    Password
+                    <input
+                      type="password"
+                      value={accountDeletePassword}
+                      onChange={(e) => setAccountDeletePassword(e.target.value)}
+                      placeholder="Confirm your password"
+                    />
+                  </label>
+                </div>
+                {accountActionError && <p className="field-help account-menu-danger">{accountActionError}</p>}
+              </div>
+              <div className="fully-paid-modal-actions">
+                <button type="button" className="fully-paid-cancel-btn" onClick={closeAccountModal} disabled={accountActionLoading}>
+                  Cancel
+                </button>
+                <button type="submit" className="fully-paid-confirm-btn account-menu-danger-btn" disabled={accountActionLoading}>
+                  {accountActionLoading ? 'Deleting…' : 'Delete my account'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

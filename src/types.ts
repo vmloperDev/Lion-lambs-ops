@@ -54,16 +54,13 @@ export type BreakdownLineItem = {
   sendToInvoice: boolean
   sendToPO?: boolean
   sendToQuotation?: boolean
-  sendToBreakdown?: boolean
   isPackageRow?: boolean
   // 'inclusion' = internal cost shown only on the Breakdown document (never
   // Quotation/Invoice) — its cost is meant to already be folded into the
   // Package's flat per-pax rate. 'addon' = client-facing extra shown on
   // BOTH the Quotation and Invoice, but never printed on the Breakdown.
-  // Rows created before this distinction existed have no itemType, and are
-  // treated the same as 'inclusion' (their old behavior — always shown on
-  // Breakdown, manual Quotation/Invoice toggles) so nothing already saved
-  // changes appearance.
+  // No manual override exists — a row with no itemType saved (e.g. very
+  // old data) is treated as 'inclusion' by default.
   itemType?: 'inclusion' | 'addon'
   price2Pax?: string
   price5Pax?: string
@@ -76,6 +73,41 @@ export type BreakdownLineItem = {
   // service that doesn't apply to the child in the group would carry
   // '["child"]' here.
   excludedPax?: string
+  // Add-on rows only: JSON object mapping a PaxBreakdown category key to a
+  // reduced headcount for just this row, e.g. '{"adult":"1"}' when the
+  // group has 5 adults but only 1 is taking this add-on. Only meaningful
+  // when itemType is 'addon' — Inclusion rows ignore this and always use
+  // the full shared count (minus excludedPax). A category's override is
+  // always clamped between 0 and the shared group count for that
+  // category, and is cleared (falls back to the full shared count) once
+  // it's raised back up to the group total, so it never grows stale if
+  // the group total above is later reduced.
+  paxOverride?: string
+  // JSON string array of BreakdownAlternative — other priced options for
+  // this same service (e.g. a second, cheaper airline quote) that are kept
+  // on file but NOT currently active. Only the row's own fields above
+  // (vendor/price2Pax/etc.) are ever read by calculations or documents —
+  // switching the active option copies an alternative's values onto those
+  // fields (and archives the previous ones back into this list) rather
+  // than changing how totals/documents are computed.
+  alternatives?: string
+}
+
+// A single alternative priced option kept on a Breakdown row (see
+// `BreakdownLineItem.alternatives`). Mirrors the subset of a row's own
+// fields that differ between suppliers/options.
+export type BreakdownAlternative = {
+  id: string
+  label?: string
+  vendor?: string
+  contactNumber?: string
+  paymentMethod?: string
+  agent?: string
+  details?: string
+  price2Pax?: string
+  price5Pax?: string
+  priceGroup?: string
+  priceInfant?: string
 }
 
 export type POLineItem = {
@@ -98,6 +130,12 @@ export type BookingFormData = {
   clientName: string
   contactNumber: string
   clientEmail: string
+  // The travel agent tied to this booking as a whole (distinct from a
+  // Pax-Tier Pricing row's "Supplier Agent", which is a supplier/vendor
+  // contact). This is who a "TA Comm" line item's commission is owed to,
+  // and is what syncs to the Google Sheet's Agent column alongside the
+  // TA Comm amount.
+  agentName: string
   currency: string
   acr: string  // Airline Conversion Rate: PHP value of 1 unit of `currency`, used to convert foreign-currency invoice/quotation totals to PHP
   packageName: string
@@ -122,6 +160,14 @@ export type BookingFormData = {
   breakdownLineItemsJson: string
   breakdownPaxTiers: string
   breakdownColLabels: string
+  // Flat internal profit line entered once at the top of Pax-Tier Pricing —
+  // JSON PaxBreakdown of a per-category (Adult/Child/Senior/Infant) rate,
+  // same shape as groupPax. Folded into the Breakdown's cost subtotal
+  // exactly like a normal Inclusion (see getBreakdownTotal — rate ×
+  // that category's shared headcount), then backed back out of the NETT
+  // figure synced to Google Sheets (see getBookingReportingNettTotal)
+  // since it isn't a real supplier expense.
+  lltpRates: string
   itemDescription: string
   quantity: string
   unitPrice: string

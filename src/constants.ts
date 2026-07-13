@@ -1,4 +1,4 @@
-import type { BookingFormData, BookingListFilter, BookingRecord } from './types'
+import type { BookingFormData, BookingListFilter, BookingRecord } from './types.js'
 
 export const bookingStorageKey = 'lion-lamb-bookings'
 export const bookingsCollectionKey = 'bookings'
@@ -16,6 +16,7 @@ export const emptyBookingForm: BookingFormData = {
   clientName: '',
   contactNumber: '',
   clientEmail: '',
+  agentName: '',
   currency: 'PHP',
   acr: '',
   packageName: '',
@@ -34,6 +35,7 @@ export const emptyBookingForm: BookingFormData = {
   breakdownLineItemsJson: '',
   breakdownPaxTiers: '',
   breakdownColLabels: '',
+  lltpRates: '',
   itemDescription: '',
   quantity: '1',
   unitPrice: '',

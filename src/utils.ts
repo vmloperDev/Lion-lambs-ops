@@ -1,11 +1,22 @@
 import type {
   BookingFormData, BookingLineItem, BookingRecord,
-  BreakdownLineItem, DtrEntry, InvoiceLineItem,
+  BreakdownLineItem, BreakdownAlternative, DtrEntry, InvoiceLineItem,
   PasswordStrength, PaxBreakdown,
 } from './types'
-import { emptyBookingForm, bookingStorageKey, sampleBookings } from './constants'
+import { emptyBookingForm, bookingStorageKey, sampleBookings } from './constants.js'
 
 // ── Auth / display helpers ──────────────────────────────────────────────────
+
+export function formatRelativeTime(timestampMs: number): string {
+  const diffSeconds = Math.max(0, Math.round((Date.now() - timestampMs) / 1000))
+  if (diffSeconds < 60) return 'just now'
+  const diffMinutes = Math.round(diffSeconds / 60)
+  if (diffMinutes < 60) return `${diffMinutes} min ago`
+  const diffHours = Math.round(diffMinutes / 60)
+  if (diffHours < 24) return `${diffHours} hr ago`
+  const diffDays = Math.round(diffHours / 24)
+  return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`
+}
 
 export function getDisplayName(emailAddress: string) {
   const username = emailAddress.split('@')[0] || 'Team Member'
@@ -165,6 +176,30 @@ export const PAX_CATEGORY_KEYS = ['adult', 'child', 'senior', 'infant'] as const
 export function readExcludedPax(item?: BreakdownLineItem): string[] {
   try {
     const parsed = JSON.parse(item?.excludedPax || '[]')
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+// Add-on rows only: a per-category headcount reduction for just this row
+// (see `BreakdownLineItem.paxOverride`). A category missing from the
+// object means "use the full shared group count" for that category.
+export function readPaxOverride(item?: BreakdownLineItem): Partial<Record<(typeof PAX_CATEGORY_KEYS)[number], string>> {
+  try {
+    const parsed = JSON.parse(item?.paxOverride || '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+// Other priced options kept on file for a Breakdown row (e.g. a second
+// airline quote) that aren't the currently active one — see
+// `BreakdownLineItem.alternatives` in types.ts.
+export function readAlternatives(item?: BreakdownLineItem): BreakdownAlternative[] {
+  try {
+    const parsed = JSON.parse(item?.alternatives || '[]')
     return Array.isArray(parsed) ? parsed : []
   } catch {
     return []
@@ -364,6 +399,12 @@ export function buildCombinedTierLine(description: string, item: BreakdownLineIt
 export function getBreakdownTierSubtotals(booking: BookingFormData): number[] {
   const inclusionItems = readBreakdownItems(booking).filter((item) => !item.isPackageRow && item.itemType !== 'addon')
   const fields: (keyof BreakdownLineItem)[] = ['price2Pax', 'price5Pax', 'priceGroup', 'priceInfant']
+  // LLTP is entered once per category at the top of Pax-Tier Pricing and
+  // behaves exactly like any other Inclusion's per-tier rate — its Adult
+  // rate raises the ADULT column's subtotal, its Child rate raises CHILD,
+  // etc., instead of only ever showing as one combined flat number.
+  const lltpRates = getBookingLltpRates(booking)
+  const lltpByCol = [lltpRates.adult, lltpRates.child, lltpRates.senior, lltpRates.infant]
   return fields.map((field, i) =>
     inclusionItems.reduce((sum, item) => {
       if (parseAmount(item.unitPrice) > 0) return sum
@@ -373,7 +414,7 @@ export function getBreakdownTierSubtotals(booking: BookingFormData): number[] {
       // everywhere it's priced, not just its headcount.
       if (readExcludedPax(item).includes(PAX_CATEGORY_KEYS[i])) return sum
       return sum + parseAmount(item[field] as string)
-    }, 0)
+    }, parseAmount(lltpByCol[i]))
   )
 }
 
@@ -449,7 +490,21 @@ export function getBreakdownColPax(booking: BookingFormData): string[] {
 export function getItemPaxCounts(item: BreakdownLineItem | undefined, booking: BookingFormData): string[] {
   const shared = getGroupPaxCounts(booking)
   const excluded = readExcludedPax(item)
-  return shared.map((value, i) => (excluded.includes(PAX_CATEGORY_KEYS[i]) ? '' : value))
+  // Add-on rows can additionally dial a category's headcount down below
+  // the shared group total (e.g. only 1 of the group's 5 adults taking
+  // this add-on) via paxOverride. Inclusions never read this — they only
+  // ever fully inherit or fully exclude a category via excludedPax.
+  const isAddon = item?.itemType === 'addon'
+  const override = isAddon ? readPaxOverride(item) : {}
+  return shared.map((value, i) => {
+    const key = PAX_CATEGORY_KEYS[i]
+    if (excluded.includes(key)) return ''
+    const overrideValue = override[key]
+    if (overrideValue === undefined || overrideValue === '') return value
+    const max = parseQuantity(value)
+    const clamped = Math.max(0, Math.min(parseQuantity(overrideValue), max))
+    return String(clamped)
+  })
 }
 
 // The effective headcount for a row, as a PaxBreakdown object (used when
@@ -484,14 +539,69 @@ export function getBreakdownItemQty(item: BreakdownLineItem, booking: BookingFor
   return paxTotal > 0 ? paxTotal : 1
 }
 
+// The booking's LLTP (internal profit) rates entered at the top of
+// Pax-Tier Pricing — one rate per Adult/Child/Senior/Infant category,
+// same shape as groupPax.
+export function getBookingLltpRates(booking: BookingFormData): PaxBreakdown {
+  return readPaxBreakdown(booking.lltpRates)
+}
+
+// LLTP's total, computed exactly like a normal Inclusion row: each
+// category's rate × that category's shared group headcount.
+export function getBookingLltpAmount(booking: BookingFormData): number {
+  const rates = getBookingLltpRates(booking)
+  const counts = getGroupPaxCounts(booking) // [adult, child, senior, infant]
+  const rateList = [rates.adult, rates.child, rates.senior, rates.infant]
+  return rateList.reduce((sum, rate, i) => sum + parseAmount(rate) * parseQuantity(counts[i]), 0)
+}
+
+// Whether the booking has ANY LLTP rate entered (Adult/Child/Senior/Infant,
+// at the top of Pax-Tier Pricing). NETT and LLTP can only be split apart
+// from the Breakdown's combined total when at least one of these rates is
+// filled in — with none entered there's nothing to subtract, so the Google
+// Sheet should say so plainly instead of showing a NETT that's silently
+// just the full client price.
+export function bookingHasLltpInput(booking: BookingFormData): boolean {
+  const rates = getBookingLltpRates(booking)
+  return [rates.adult, rates.child, rates.senior, rates.infant].some((rate) => parseAmount(rate) > 0)
+}
+
 // The Breakdown sheet's grand total (sum of every Inclusion row's pax-tier
-// total). This is what the Package's client price falls back to on the
+// total, plus the flat LLTP line folded in exactly like a normal Inclusion).
+// This is what the Package's client price falls back to on the
 // Quotation/Invoice whenever no addon or other priced item is shown on
 // that document — see readInvoicePackageAndAddonLines below.
 export function getBreakdownTotal(booking: BookingFormData): number {
-  return readBreakdownItems(booking)
+  const itemsTotal = readBreakdownItems(booking)
     .filter((item) => !item.isPackageRow && item.itemType !== 'addon')
     .reduce((sum, item) => sum + getBreakdownItemTotal(item, booking), 0)
+  return itemsTotal + getBookingLltpAmount(booking)
+}
+
+// The true supplier-only NETT — what actually gets synced to the Google
+// Sheet's NETT column. LLTP isn't a real supplier expense, so it's the
+// Breakdown's full subtotal (which folds LLTP in like any other Inclusion)
+// minus the LLTP amount itself.
+export function getBookingReportingNettTotal(booking: BookingFormData): number {
+  return getBreakdownTotal(booking) - getBookingLltpAmount(booking)
+}
+
+// Travel-Agent Commission — a Pax-Tier Pricing / Breakdown row named
+// "TA Comm" (see defaultBreakdownOptions in App.tsx) is a flat internal line
+// like any other Inclusion/Add-on, but it also needs to be broken out onto
+// its own two columns in the Google Sheet: the commission amount, and the
+// agent it's owed to. The agent comes from the booking-level `agentName`
+// field (top of the Data Gathering form) — NOT the item row's own `agent`
+// field, which is a Supplier Agent (a vendor/supplier contact) and means
+// something different. Only one "TA Comm" row is allowed per booking (the
+// UI prevents adding a second), but this still sums defensively in case
+// older data somehow has more than one.
+export function getBookingTaCommInfo(booking: BookingFormData): { amount: number; agent: string } {
+  const matches = readBreakdownItems(booking).filter(
+    (item) => (item.description || '').trim().toLowerCase() === 'ta comm',
+  )
+  const amount = matches.reduce((sum, item) => sum + getBreakdownItemTotal(item, booking), 0)
+  return { amount, agent: (booking.agentName || '').trim() }
 }
 
 // The booking's single shared group headcount (Adult + Child + Senior +
