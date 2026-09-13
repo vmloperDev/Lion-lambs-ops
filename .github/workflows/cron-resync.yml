@@ -1,0 +1,15 @@
+name: Cron Resync
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch: {}   # lets you manually trigger it from the Actions tab too
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger resync
+        run: |
+          curl -sf -X POST "https://lion-lambs-ops.vercel.app/api/cron-resync" \
+            -H "Authorization: Bearer ${{ secrets.CRON_RESYNC_SECRET }}"
