@@ -44,7 +44,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { getAccessToken, FIRESTORE_SCOPE, runFullResyncCycle, tryAcquireLock, releaseLock, type BookingPayload } from './_lib/sheetsCore.js'
-import { getBookingClientTotal, getBookingReportingNettTotal, getBookingLltpAmount, bookingHasLltpInput, getBreakdownTotal, getBookingTaCommInfo } from '../src/utils.js'
+import { getBookingInvoiceTotal, getBookingReportingNettTotal, getBookingLltpAmount, bookingHasLltpInput, getBookingReportingGrossTotal, getBookingTaCommInfo } from '../src/utils.js'
 import type { BookingFormData } from '../src/types.js'
 
 // ── Firestore REST helpers ─────────────────────────────────────────────────────
@@ -159,13 +159,16 @@ async function writeStatus(token: string, projectId: string, status: Record<stri
 // from what the app itself would compute for the same booking.
 function toBookingPayload(raw: Record<string, unknown> & { id: string }): BookingPayload {
   const booking = raw as unknown as BookingFormData & { id: string; createdAt: string }
-  const clientTotal    = getBookingClientTotal(booking)
-  const breakdownGrossTotal = getBreakdownTotal(booking)
+  const breakdownGrossTotal = getBookingReportingGrossTotal(booking)
   const nettTotal       = getBookingReportingNettTotal(booking)
   const lltpAmount      = getBookingLltpAmount(booking)
   const hasLltp         = bookingHasLltpInput(booking)
+  // Actual amount due after any Invoice discount — basis for Balance/PAID
+  // status, so a fully-paid discounted booking shows PAID with a blank
+  // balance instead of appearing to still owe the discount amount.
+  const invoiceTotal    = getBookingInvoiceTotal(booking)
   const amountPaid      = parseFloat((booking.invoiceAmountPaid as string) || '0')
-  const invoiceBalance  = Math.max(clientTotal - amountPaid, 0)
+  const invoiceBalance  = Math.max(invoiceTotal - amountPaid, 0)
   const taComm           = getBookingTaCommInfo(booking)
 
   return {
@@ -175,7 +178,7 @@ function toBookingPayload(raw: Record<string, unknown> & { id: string }): Bookin
     travelStart: (raw.travelStart as string) || '',
     travelEnd: (raw.travelEnd as string) || '',
     packageName: (raw.packageName as string) || '',
-    sellingPrice: String(clientTotal),
+    sellingPrice: String(invoiceTotal),
     breakdownGrossTotal: String(breakdownGrossTotal),
     nettCost: String(nettTotal),
     lltpAmount: String(lltpAmount),

@@ -441,12 +441,14 @@ export const MONTH_TAB_RE = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\
 const NO_LLTP_MESSAGE = 'No LLTP entered — cannot be calculated'
 
 function buildRow(b: BookingPayload) {
-  // `gross` (sellingPrice) is the REAL invoice total — Breakdown + addons —
-  // and stays the basis for balance/paid-status math below, since that's
-  // real money the client owes. The Gross COLUMN shown in the sheet is a
-  // different number: Breakdown-only, addon-free, so it always ties out
-  // with NETT + LLTP (both of which are also addon-free). Older queued
-  // payloads without breakdownGrossTotal fall back to sellingPrice as before.
+  // `gross` (sellingPrice) is the REAL amount due — Breakdown + addons,
+  // minus any Invoice discount — and stays the basis for balance/paid-status
+  // math below, since that's the real money the client actually owes. The
+  // Gross COLUMN shown in the sheet is a different number: Breakdown-only,
+  // addon-free (discount deducted separately there too), so it doesn't
+  // necessarily match this figure — it's a reporting total, not a billing
+  // one. Older queued payloads without breakdownGrossTotal fall back to
+  // sellingPrice as before.
   const gross   = parseFloat(b.sellingPrice   || '0')
   const grossForSheet = b.breakdownGrossTotal !== undefined ? parseFloat(b.breakdownGrossTotal) : gross
   // Older queued payloads (from before this field existed) won't have

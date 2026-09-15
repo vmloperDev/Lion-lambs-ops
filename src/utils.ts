@@ -586,6 +586,20 @@ export function getBookingReportingNettTotal(booking: BookingFormData): number {
   return getBreakdownTotal(booking) - getBookingLltpAmount(booking)
 }
 
+// The Gross that gets synced to the Google Sheet's Gross column — the
+// Breakdown total, minus any discount that's actually being given to the
+// client. A discount only counts here once it's applied to the Invoice
+// (discountApplyInvoice), since that's what actually reduces the amount
+// billed/collected; a discount applied only to the Quotation is just a
+// proposal and hasn't reduced anything yet. The discount is calculated off
+// the Breakdown total itself (not the addon-inflated invoice subtotal),
+// matching what breakdownGrossTotal already represents.
+export function getBookingReportingGrossTotal(booking: BookingFormData): number {
+  const breakdownGross = getBreakdownTotal(booking)
+  const discount = getInvoiceDiscountAmount(booking, breakdownGross)
+  return Math.max(breakdownGross - discount, 0)
+}
+
 // Travel-Agent Commission — a Pax-Tier Pricing / Breakdown row named
 // "TA Comm" (see defaultBreakdownOptions in App.tsx) is a flat internal line
 // like any other Inclusion/Add-on, but it also needs to be broken out onto

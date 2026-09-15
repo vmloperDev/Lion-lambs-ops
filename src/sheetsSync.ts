@@ -12,7 +12,7 @@
 //    down where `startPeriodicReSync` used to live for why.
 
 import type { BookingRecord, BookingStatus } from './types'
-import { getBookingClientTotal, getBookingReportingNettTotal, getBookingLltpAmount, bookingHasLltpInput, getBreakdownTotal, getBookingTaCommInfo } from './utils'
+import { getBookingInvoiceTotal, getBookingReportingNettTotal, getBookingLltpAmount, bookingHasLltpInput, getBookingReportingGrossTotal, getBookingTaCommInfo } from './utils'
 
 const TRIGGER_STATUSES = new Set<BookingStatus>(['Confirmed', 'Flown'])
 const SYNC_SECRET = import.meta.env.VITE_SHEETS_SYNC_SECRET as string | undefined
@@ -88,19 +88,27 @@ function reportSuccess(): void {
 // ── Shared payload builder ────────────────────────────────────────────────────
 
 function toPayload(booking: BookingRecord) {
-  const clientTotal    = getBookingClientTotal(booking)
   // The Invoice document's own total is Breakdown grand total + addons —
   // that's correct for what the client is billed, but addons have nothing
   // to do with the sheet's Gross/NETT/LLTP reporting (which is meant to
   // tie out: Gross = NETT + LLTP, both breakdown-only). So the sheet's
   // Gross column uses the Breakdown total on its own, never the addon-
   // inflated invoice total — addons only ever show on the printed Invoice.
-  const breakdownGrossTotal = getBreakdownTotal(booking)
+  // If a discount is applied to the Invoice, it's real money taken off what
+  // gets billed, so it's deducted from the Breakdown total here too.
+  const breakdownGrossTotal = getBookingReportingGrossTotal(booking)
   const nettTotal      = getBookingReportingNettTotal(booking)
   const lltpAmount     = getBookingLltpAmount(booking)
   const hasLltp        = bookingHasLltpInput(booking)
+  // The actual amount due — Breakdown + addons, minus the Invoice discount
+  // (if applied). This (not the pre-discount subtotal) is what "sellingPrice"
+  // means to the sheet-writer: it's the basis for the Balance column and the
+  // PAID/PARTIALLY PAID status, so a fully-paid discounted booking correctly
+  // shows PAID with a blank balance instead of looking like it still owes
+  // the discount amount.
+  const invoiceTotal   = getBookingInvoiceTotal(booking)
   const amountPaid     = parseFloat(booking.invoiceAmountPaid || '0')
-  const invoiceBalance = Math.max(clientTotal - amountPaid, 0)
+  const invoiceBalance = Math.max(invoiceTotal - amountPaid, 0)
   const taComm          = getBookingTaCommInfo(booking)
 
   return {
@@ -110,7 +118,7 @@ function toPayload(booking: BookingRecord) {
     travelStart:       booking.travelStart,
     travelEnd:         booking.travelEnd,
     packageName:       booking.packageName,
-    sellingPrice:      String(clientTotal),
+    sellingPrice:      String(invoiceTotal),
     breakdownGrossTotal: String(breakdownGrossTotal),
     nettCost:          String(nettTotal),
     lltpAmount:        String(lltpAmount),
